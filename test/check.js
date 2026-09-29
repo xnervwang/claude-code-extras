@@ -557,5 +557,63 @@ console.log('\nabandoned work plans');
   }
 }
 
+/* ── 9. one live stylesheet, several windows ──
+   The file belongs to the Claude Code install; an extension host belongs to a window, and every one of them writes it.
+   Two windows that disagree about its content put their own version back in turn, and the panel reloads the stylesheet
+   each time - which is a setting that appears and disappears on a timer. A regression here is silent, hence these. */
+console.log('\none live stylesheet, several windows');
+{
+  const tasks = require('../src/tasks');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-live-'));
+  const project = (name, n, tag) => {
+    const d = path.join(root, name);
+    fs.mkdirSync(path.join(d, '.claude'), { recursive: true });
+    const list = [];
+    for (let i = 0; i < n; i++) list.push({ id: tag + i, cron: '* * * * *', createdBySessionId: 's-' + tag });
+    fs.writeFileSync(path.join(d, '.claude', 'scheduled_tasks.json'), JSON.stringify({ tasks: list }));
+    return d;
+  };
+
+  /* The directories reach this most recently opened first, so their order differs per window. */
+  const a = project('alpha', 1, 'a'), b = project('beta', 1, 'b');
+  if (JSON.stringify(tasks.readTasks([a, b])) === JSON.stringify(tasks.readTasks([b, a]))) {
+    ok('two windows listing the same projects in a different order agree');
+  } else bad('the task list still follows the order the directories arrived in');
+
+  /* Stronger: with more tasks than the cap, WHICH of them survive must not depend on that order either. */
+  const c = project('gamma', tasks.MAX_TASKS - 5, 'g'), e = project('delta', tasks.MAX_TASKS - 5, 'd');
+  if (JSON.stringify(tasks.readTasks([c, e])) === JSON.stringify(tasks.readTasks([e, c]))) {
+    ok(`at the cap of ${tasks.MAX_TASKS}, which tasks survive does not depend on that order either`);
+  } else bad('at the cap, the surviving tasks still depend on the order the directories arrived in');
+
+  const wv = path.join(root, 'webview');
+  fs.mkdirSync(wv, { recursive: true });
+  const css = path.join(wv, 'claude-code-extras.css');
+  const ours = require('../package.json').version;
+  const head = () => fs.readFileSync(css, 'utf8').split('\n')[0];
+  const opts = { enabled: true, userEdge: true };
+
+  if (webview.writeLive(root, opts) && head().includes(ours)) ok('the stylesheet records which build wrote it');
+  else bad('the stylesheet does not carry the writing build, so nothing can tell two of them apart');
+
+  if (webview.writeLive(root, opts) === false) ok('the same settings again writes nothing');
+  else bad('an unchanged stylesheet is rewritten, which reloads it in every panel');
+
+  fs.writeFileSync(css, fs.readFileSync(css, 'utf8').replace('Extras ' + ours, 'Extras 9.9.9'));
+  if (webview.writeLive(root, { enabled: true, userEdge: false }) === false && head().includes('9.9.9')) {
+    ok('what a newer build wrote is left alone');
+  } else bad('an older build overwrites a newer one, which is the flicker this prevents');
+
+  fs.writeFileSync(css, fs.readFileSync(css, 'utf8').replace('Extras 9.9.9', 'Extras 0.0.1'));
+  if (webview.writeLive(root, opts) === true && head().includes(ours)) ok('what an older build wrote is taken over');
+  else bad('an older build keeps the file, so an upgrade never reaches the panel');
+
+  fs.writeFileSync(css, '/* Claude Code Extras live settings - written by the extension */\n');
+  if (webview.writeLive(root, opts) === true) ok('a file from before this rule is taken over');
+  else bad('a stylesheet carrying no version is never replaced');
+
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

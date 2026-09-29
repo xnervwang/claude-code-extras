@@ -108,11 +108,30 @@ function scheduleProperty(tasks) {
   return `:root{--cce-schedule:"${Buffer.from(JSON.stringify(tasks), 'utf8').toString('base64')}";}\n`;
 }
 
+/*
+ * This extension's own version, taken from its manifest rather than passed in by a caller, so that forgetting to thread
+ * it through could not quietly disable the rule in writeLive that depends on it.
+ */
+const OURS = (() => {
+  try { return String(require('../package.json').version || ''); } catch (_) { return ''; }
+})();
+const VERSION_LINE = /^\/\* Claude Code Extras ([0-9][0-9.]*) live settings/m;
+
+/** Whether the first version is behind the second, comparing dot-separated numbers. */
+function older(a, b) {
+  const pa = String(a).split('.'), pb = String(b).split('.');
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = Number(pa[i]) || 0, y = Number(pb[i]) || 0;
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+
 /** The live stylesheet for one set of settings. */
 function liveCss(opts = {}) {
   const on = opts.enabled !== false;
   const color = safeColor(opts.userColor);
-  let css = `/* Claude Code Extras live settings - written by the extension */\n:root{--cce-on:${on ? 1 : 0};}\n`;
+  let css = `/* Claude Code Extras ${OURS} live settings - written by the extension */\n:root{--cce-on:${on ? 1 : 0};}\n`;
   if (on) css += STAMP_CSS + '\n';
   if (color) css += `${USER_SELECTOR},${USER_SELECTOR} *{color:${color} !important;}\n`;
   /*
@@ -304,6 +323,21 @@ function writeLive(claudeExtensionPath, opts = {}) {
   let current = null;
   try { current = fs.readFileSync(css, 'utf8'); } catch (_) {}
   if (current === next && fs.existsSync(rev)) return false;
+  /*
+   * Leave alone what a newer build of this extension wrote.
+   *
+   * One VS Code window is one extension host, each with its own copy of this code loaded when it activated, and this
+   * file belongs to the Claude Code install rather than to a window - so all of them write it. Installing an upgrade
+   * therefore leaves older hosts running until every window has been reloaded, and without this rule the old and the
+   * new one would put their own version back in turn, for as long as that took: the panel reloads the stylesheet
+   * whenever it changes, so a setting would appear and disappear on a timer.
+   *
+   * It is the rule the patched bundles already follow - a marker carries a version, and an older patcher does not touch
+   * what a newer one owns. The cost is that a setting changed in a window running the older build does not reach the
+   * panel until that window is reloaded.
+   */
+  const there = (VERSION_LINE.exec(current || '') || [])[1];
+  if (there && OURS && older(OURS, there)) return false;
   let n = 0;
   try { n = Number((fs.readFileSync(rev, 'utf8').match(/width="(\d+)"/) || [])[1]) || 0; } catch (_) {}
   n = (n % 60000) + 1;

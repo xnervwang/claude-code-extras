@@ -36,11 +36,23 @@ function readFile(file) {
 const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
 const str = (v) => (typeof v === 'string' ? v : '');
 
-/** Every task found under the given directories, trimmed to the fields the panel shows. */
+/**
+ * Every task found under the given directories, trimmed to the fields the panel shows.
+ *
+ * The directories are read in sorted order, which is what keeps the answer from depending on who asked for it. They
+ * arrive most recently opened first - useful for deciding which to drop at the cap, and different in every window - and
+ * both the order of this list and, through the cap below, its membership followed that. Two windows then disagreed about
+ * a file they both write, so each put its own version back every thirty seconds and every panel reloaded its stylesheet
+ * that often.
+ *
+ * Sorting the input rather than the output, on purpose: collecting everything and ordering it afterwards would turn the
+ * early stop at the cap into reading every directory on every pass, which is real file work on a path that runs on a
+ * timer.
+ */
 function readTasks(dirs) {
   const out = [];
   const seen = new Set();
-  for (const dir of dirs || []) {
+  for (const dir of (dirs || []).slice().sort()) {
     if (!dir) continue;
     for (const file of candidates(dir)) {
       for (const t of readFile(file)) {
