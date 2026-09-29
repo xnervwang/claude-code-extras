@@ -4,6 +4,7 @@
   "description": "Interface additions for the Claude Code chat panel in VS Code: real timestamps, per-reply duration, context share and estimated spend, sub-agent tags, a view filter for main thread vs each sub-agent, a table of contents of your own messages, and a chime when a turn finishes.",
   "version": "1.0.0",
   "publisher": "xnerv",
+  "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.94.0"
   },
