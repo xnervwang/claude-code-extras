@@ -36,25 +36,35 @@
     var tB = clock();
     var prompts = [], lastBubble = bubbles.length ? bubbles[bubbles.length - 1] : null;
     groups.forEach(function(list, m){
-      /* Only the newest message is rebuilt; the rest are recalled. What still happens for every one of them is the mark
-         and the owner, and neither is optional: the set of marked elements is rebuilt each sweep and anything missing
-         from it has its mark stripped, and a view switch reaches a message only through applyOwner. */
-      var live = list.indexOf(lastBubble) >= 0, pick = null, row = null;
-      if (!live) {
-        for (var k = 0; k < list.length && !row; k++) { row = PROMPT_OF.get(list[k]); if (row) pick = list[k]; }
+      /*
+       * One row for each thing you said, not one for each message you sent.
+       *
+       * Send two lines in quick succession and they arrive as a single message carrying two blocks of text - the panel
+       * draws a box for each, so two appear on screen. Marking the message rather than the blocks then gave the first
+       * box a time and left the second without one, and put a single row in the list of your messages for the two. The
+       * replies have always been marked per block, so this is the side that was out of step.
+       *
+       * Only the newest message is built; the rest are recalled against the block they were read from. What still
+       * happens for every block on every sweep is the mark and the owner, and neither is optional: the set of marked
+       * elements is rebuilt each sweep and anything missing from it has its mark stripped, and a view switch reaches a
+       * message only through applyOwner.
+       */
+      var live = list.indexOf(lastBubble) >= 0, mark = '';
+      for (var bi = 0; bi < list.length; bi++) {
+        var b = list[bi];
+        applyOwner(b, 'main');
+        var row = live ? null : PROMPT_OF.get(b);
+        if (!row) {
+          var line = textOf(b, b === lastBubble);
+          // An attachment or an image carries no line, so it gets no row - and a message that is only an attachment
+          // keeps its mark through the block below rather than being skipped altogether.
+          row = { node: b, top: b, ts: m.timestamp, text: line, mark: '' };
+          if (!live) PROMPT_OF.set(b, row);
+        }
+        if (live || !row.mark) { if (!mark) mark = fmt(m.timestamp) + agentTag(agentOf(m)); row.mark = mark; }
+        set(b, row.mark);
+        if (row.text) prompts.push(row);
       }
-      if (!row) {
-        pick = list.find(function(x){ return textOf(x, x === lastBubble) !== ''; }) || list[0];
-        /* `pick` is where the text comes from - the first block of the message that has any. `top` is where the message
-           starts on screen, which is the first block whatever it holds. They differ whenever a message opens with an
-           attachment or an image, and landing on `pick` in that case puts the start of the message above the viewport. */
-        row = { node: pick, top: list[0] || pick, ts: m.timestamp, text: textOf(pick, pick === lastBubble), mark: '' };
-        if (!live) PROMPT_OF.set(pick, row);
-      }
-      if (live || !row.mark) row.mark = fmt(m.timestamp) + agentTag(agentOf(m));
-      set(pick, row.mark);
-      prompts.push(row);
-      for (var bi = 0; bi < list.length; bi++) applyOwner(list[bi], 'main');
     });
     var promptTs = [], ordered = true;
     for (var pi = 0; pi < prompts.length; pi++) {
