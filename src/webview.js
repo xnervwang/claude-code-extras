@@ -89,6 +89,28 @@ const STAMP_CSS = `[${ATTR}]::before{content:attr(${ATTR});display:inline-block;
   + 'unicode-bidi:isolate;vertical-align:baseline;font-family:var(--vscode-editor-font-family,monospace);'
   + 'font-size:.8em;font-weight:normal;font-style:normal;opacity:.6;white-space:nowrap;}';
 
+/*
+ * A bar down the left edge of what you said - carried by the injected script rather than by the live stylesheet.
+ *
+ * The panel does tell your messages apart already, with a one pixel border and a background from theme variables, and in
+ * most themes both land within a shade of the editor's own background, so a question and the reply to it read as one
+ * stream. This raises the contrast of the distinction that is there instead of adding a second one, and it does it on an
+ * edge rather than as a fill: a coloured block behind text competes with the text, and every hue this panel uses already
+ * means something - green succeeded, red failed, amber warned - so a tinted message would read as one carrying a status.
+ *
+ * It lives here because the live stylesheet is a single file shared by every window, and the rule kept appearing and
+ * disappearing: a window still running an older build of this extension overwrites that file without knowing the rule
+ * exists, and nothing can be written today that stops a host already running. The injected script comes from the patched
+ * bundle, which every host patches to the same bytes, so this is the same for all of them.
+ *
+ * Which leaves the switch, and the switch is a multiplier: an absent custom property counts as 1, so the bar is on unless
+ * the stylesheet says otherwise, and a stylesheet written by a build that knows nothing about it cannot turn it off.
+ */
+const EDGE_CSS = `${USER_SELECTOR}{`
+  + 'border-left:calc(3px * var(--cce-edge, 1) * var(--cce-on, 1)) solid '
+  + 'var(--vscode-focusBorder, var(--vscode-textLink-foreground)) !important;'
+  + 'padding-left:calc(6px + 2px * var(--cce-edge, 1) * var(--cce-on, 1)) !important;}';
+
 /** A CSS colour the user typed, or '' when it is not a plain colour - nothing else may reach the stylesheet. */
 function safeColor(value) {
   const v = String(value || '').trim();
@@ -134,25 +156,9 @@ function liveCss(opts = {}) {
   let css = `/* Claude Code Extras ${OURS} live settings - written by the extension */\n:root{--cce-on:${on ? 1 : 0};}\n`;
   if (on) css += STAMP_CSS + '\n';
   if (color) css += `${USER_SELECTOR},${USER_SELECTOR} *{color:${color} !important;}\n`;
-  /*
-   * A bar down the left edge of what you said.
-   *
-   * The panel already tells your messages apart - a one pixel border and a background, both from theme variables - and
-   * in most themes both land within a shade of the editor's own background, so a reply and a question read as one
-   * stream. This raises the contrast of the distinction that is already there rather than adding a second one, and it
-   * does it on an edge rather than as a fill: a coloured block behind text competes with the text, and every hue this
-   * panel uses already means something - green succeeded, red failed, amber warned - so a tinted message would read as
-   * a message with a status.
-   *
-   * The colour is the theme's focus ring, so it is an accent the reader already sees elsewhere in the editor rather than
-   * a value chosen here, in either theme. The left corners are squared because a bar this wide on a rounded box reads as
-   * a smear rather than an edge, and the padding keeps the text off it.
-   */
-  if (on && opts.userEdge) {
-    css += `${USER_SELECTOR}{border-left:3px solid var(--vscode-focusBorder,var(--vscode-textLink-foreground))`
-      + ' !important;border-top-left-radius:0 !important;border-bottom-left-radius:0 !important;'
-      + 'padding-left:8px !important;}\n';
-  }
+  /* The bar itself is in the injected script; this is only the switch that turns it off, written as nothing at all when
+     it is on so that a stylesheet carries no trace of a setting left at its default. */
+  if (opts.userEdge === false) css += ':root{--cce-edge:0;}\n';
   if (on) css += scheduleProperty(opts.tasks);
   return css;
 }
@@ -183,6 +189,7 @@ function configBlock() {
   return [
     `  var ATTR = ${JSON.stringify(ATTR)};`,
     `  var STAMP_CSS = ${JSON.stringify(STAMP_CSS)};`,
+    `  var EDGE_CSS = ${JSON.stringify(EDGE_CSS)};`,
     `  var LIVE_CSS = ${JSON.stringify(LIVE_CSS)};`,
     `  var LIVE_REV = ${JSON.stringify(LIVE_REV)};`,
     `  var POLL_MS = ${POLL_MS};`,

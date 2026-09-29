@@ -612,6 +612,21 @@ console.log('\none live stylesheet, several windows');
   if (webview.writeLive(root, opts) === true) ok('a file from before this rule is taken over');
   else bad('a stylesheet carrying no version is never replaced');
 
+  /* And the part that does not depend on winning that race at all. A build old enough to predate the version rule
+     overwrites the file without knowing what it dropped, and nothing written today stops a host that is already running
+     - so the bar on your own messages is carried by the injected script, switched by a property that counts as on when
+     it is absent. That is what makes an older build unable to turn it off. */
+  const edge = webview.SCRIPT.includes('var EDGE_CSS =');
+  const onByDefault = /var\(--cce-edge,\s*1\)/.test(webview.SCRIPT);
+  const notInSheet = !webview.liveCss({ enabled: true, userEdge: true }).includes('--cce-edge');
+  const offWhenAsked = webview.liveCss({ enabled: true, userEdge: false }).includes('--cce-edge:0');
+  if (edge && onByDefault && notInSheet && offWhenAsked) {
+    ok('the bar is in the injected script and defaults to on, so an older build cannot drop it');
+  } else {
+    bad('the bar depends on the shared stylesheet again'
+      + ` (in script: ${edge}, defaults on: ${onByDefault}, absent when on: ${notInSheet}, off when asked: ${offWhenAsked})`);
+  }
+
   fs.rmSync(root, { recursive: true, force: true });
 }
 

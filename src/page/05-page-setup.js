@@ -20,6 +20,17 @@
   var SEND = 'button[type="submit"][data-permission-mode]';
   var head = document.head || document.documentElement;
 
+  /* The bar on your own messages, put in once and never touched again. It is here rather than in the live stylesheet
+     because that file is shared by every window: a window running an older build rewrites it without knowing the rule
+     exists, which made the bar blink. Its switch is a custom property the stylesheet may set, and an absent property
+     counts as on - so a stylesheet that knows nothing about it leaves the bar alone. */
+  (function(){
+    var edge = document.createElement('style');
+    edge.setAttribute('data-cce-edge', '1');
+    edge.textContent = EDGE_CSS;
+    head.appendChild(edge);
+  })();
+
   /*
    * Hover text for the controls this script adds, drawn rather than left to the browser.
    *
