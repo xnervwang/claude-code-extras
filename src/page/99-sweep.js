@@ -1,6 +1,16 @@
 // The sweep itself, and what starts it. Runs last, so every function it calls is assigned.
 // Fragment of the in-page script - see README.md in this folder.
 
+  /*
+   * The directory row already built for a message of yours, kept against the block it was read from.
+   *
+   * A message that is not the newest cannot change its text, its time or its place again, so building its row a second
+   * time can only produce the same answer. Keeping it removes a closure, a walk for its text and an object from every
+   * sweep for every message you have ever sent - which at four sweeps a second is the part that grew with the length of
+   * the conversation. Weak, so nothing is held after the panel drops the block.
+   */
+  var PROMPT_OF = new WeakMap();
+
   var stamp = function(){
     if (!isOn()) { sweep(); return; }
     var tA = clock(), wF = WALK.fiber, wT = WALK.text;
@@ -26,21 +36,41 @@
     var tB = clock();
     var prompts = [], lastBubble = bubbles.length ? bubbles[bubbles.length - 1] : null;
     groups.forEach(function(list, m){
-      var pick = list.find(function(x){ return textOf(x, x === lastBubble) !== ''; }) || list[0];
-      set(pick, fmt(m.timestamp) + agentTag(agentOf(m)));
-      /* `pick` is where the text comes from - the first block of the message that has any. `top` is where the message
-         starts on screen, which is the first block whatever it holds. They differ whenever a message opens with an
-         attachment or an image, and landing on `pick` in that case puts the start of the message above the viewport. */
-      prompts.push({ node: pick, top: list[0] || pick, ts: m.timestamp, text: textOf(pick, pick === lastBubble) });
+      /* Only the newest message is rebuilt; the rest are recalled. What still happens for every one of them is the mark
+         and the owner, and neither is optional: the set of marked elements is rebuilt each sweep and anything missing
+         from it has its mark stripped, and a view switch reaches a message only through applyOwner. */
+      var live = list.indexOf(lastBubble) >= 0, pick = null, row = null;
+      if (!live) {
+        for (var k = 0; k < list.length && !row; k++) { row = PROMPT_OF.get(list[k]); if (row) pick = list[k]; }
+      }
+      if (!row) {
+        pick = list.find(function(x){ return textOf(x, x === lastBubble) !== ''; }) || list[0];
+        /* `pick` is where the text comes from - the first block of the message that has any. `top` is where the message
+           starts on screen, which is the first block whatever it holds. They differ whenever a message opens with an
+           attachment or an image, and landing on `pick` in that case puts the start of the message above the viewport. */
+        row = { node: pick, top: list[0] || pick, ts: m.timestamp, text: textOf(pick, pick === lastBubble), mark: '' };
+        if (!live) PROMPT_OF.set(pick, row);
+      }
+      if (live || !row.mark) row.mark = fmt(m.timestamp) + agentTag(agentOf(m));
+      set(pick, row.mark);
+      prompts.push(row);
       for (var bi = 0; bi < list.length; bi++) applyOwner(list[bi], 'main');
     });
-    var promptTs = [];
+    var promptTs = [], ordered = true;
     for (var pi = 0; pi < prompts.length; pi++) {
-      if (typeof prompts[pi].ts === 'number') promptTs.push(prompts[pi].ts);
+      var pts = prompts[pi].ts;
+      if (typeof pts !== 'number') continue;
+      if (promptTs.length && pts < promptTs[promptTs.length - 1]) ordered = false;
+      promptTs.push(pts);
     }
-    promptTs.sort(function(a, b){ return a - b; });
+    /* Document order is the order they were sent in, so this is sorted already and the sort was work with no result.
+       The check stays because the binary search in turnStartFor depends on the order: an assumption that quietly stopped
+       holding would hand every reply the wrong turn start, with nothing to show it had. */
+    if (!ordered) promptTs.sort(function(a, b){ return a - b; });
     var tC = clock();
     var msgs = document.querySelectorAll(ASSIST);
+    // Both are already in hand, so aiming the text observer costs one walk up to the scrolling ancestor and a compare.
+    aimText(bubbles[0] || msgs[0]);
     var seen = [], seenSet = {}, shownRows = 0, fullMsgs = 0, settledMsgs = 0, blocks = 0;
     var agentView = (VIEW !== 'all' && VIEW !== 'main'), acts = [];
     for (var j = 0; j < msgs.length; j++) {
@@ -205,6 +235,29 @@
   };
 
   /*
+   * Watch for changing text only inside the list the messages are in.
+   *
+   * It used to be watched on the whole document, which made a sweep out of every character typed into the composer as
+   * well as every character streamed into a reply - and a character in the composer cannot change anything about a
+   * message that has already been sent. At four sweeps a second against work that grows with the conversation, that is
+   * the multiplier rather than any one line inside a sweep.
+   *
+   * Re-aimed from the sweep rather than bound once, because at boot the list does not exist yet - an empty conversation
+   * has no messages at all - and the panel may replace it. The element passed in is one already in hand, so finding the
+   * list costs nothing beyond walking up to the scrolling ancestor.
+   */
+  var aimed = null, aimer = null;
+  var aimText = function(anyMessage){
+    if (!anyMessage) return;
+    var root = scrollerOf(anyMessage) || anyMessage.parentElement;
+    if (!root || root === aimed) return;
+    if (aimer) aimer.disconnect();
+    aimer = new MutationObserver(schedule);
+    aimer.observe(root, { childList: true, subtree: true, characterData: true });
+    aimed = root;
+  };
+
+  /*
    * One line, once, after the first sweep, into the panel's devtools console. That console is the only place a page
    * script can write - the panel has no file system, and the channel to the extension runs one way - so a question
    * like "why was opening this slow" has to be answered from here. The resource timings are the browser's own, which
@@ -240,7 +293,9 @@
     if (booted) return;
     booted = true;
     bootAt = clock();
-    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    /* Structure anywhere on the page, which is what tells us a message arrived, a block opened, or the list itself was
+       replaced. Deliberately without characterData: see aimText below. */
+    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
     probe();
     setInterval(probe, POLL_MS);
     // The chime and the low-context outline must not depend on DOM churn: a turn can end without
