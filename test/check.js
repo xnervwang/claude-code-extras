@@ -686,6 +686,42 @@ console.log('\nwhat is left to do, drawn first');
   if (moved && idOf(before, 'b') === idOf(after, 'b') && idOf(before, 'c') === idOf(after, 'c')) {
     ok('a row that closes moves on screen and keeps its id');
   } else bad(`closing a row renames it (moved: ${moved}, was ${idOf(before, 'b')}, now ${idOf(after, 'b')})`);
+
+  /* The number a person says out loud, which the tree and the injected rows both show. It comes from the file for the
+     same reason the id does, so finishing something does not renumber what is left - dense numbering over the visible
+     rows alone would mean a number quoted an hour ago points at a different row now. */
+  const cp = require('child_process');
+  const hook = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks', 'inject-work-plan.py');
+  const numbers = (nodes) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-num-'));
+    const session = '40000000-0000-0000-0000-000000000000';
+    fs.writeFileSync(path.join(dir, session + '.json'), JSON.stringify({ nodes }));
+    const r = cp.spawnSync('python3', [hook, dir], {
+      encoding: 'utf8',
+      input: JSON.stringify({ session_id: session, hook_event_name: 'UserPromptSubmit' }),
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+    let said = '';
+    try { said = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) { return []; }
+    return said.split('\n').map((l) => (/^\s*[?o=+x] ([0-9.]+) /.exec(l) || [])[1]).filter(Boolean);
+  };
+  {
+    const got = numbers([
+      N('one', 'todo'),
+      Object.assign(N('two', 'todo'), { children: [N('two-a', 'todo'), N('two-b', 'todo')] }),
+      N('three', 'todo'),
+    ]);
+    if (got.join(',') === '1,2,2.1,2.2,3') ok('rows are numbered 1, 2, 2.1, 2.2, 3 - children under their parent');
+    else bad(`the numbering came out ${JSON.stringify(got)}`);
+  }
+  {
+    /* Closing the first row must not move the numbers of the rest. */
+    const open = numbers([N('one', 'todo'), N('two', 'todo'), N('three', 'todo')]);
+    const closed = numbers([N('one', 'done'), N('two', 'todo'), N('three', 'todo')]);
+    if (open.join(',') === '1,2,3' && closed.join(',') === '2,3') {
+      ok('a row that closes leaves a gap rather than renumbering what follows');
+    } else bad(`before ${JSON.stringify(open)}, after closing the first ${JSON.stringify(closed)}`);
+  }
 }
 
 /* ── 11. what the Stop hook says, and how often ──

@@ -30,10 +30,18 @@ GLYPH = {"discussing": "?", "todo": "o", "parked": "=", "done": "+", "dropped": 
 MAX_ROWS = 40
 
 
-def rows(nodes, depth, out):
-    for node in nodes or []:
+def rows(nodes, depth, out, prefix=""):
+    """Render the open rows, each numbered by where it sits in the file.
+
+    The number is what a person says to point at a row, so it comes from the file rather than from what is on screen:
+    closed rows are skipped when drawing but still counted, or finishing one would renumber everything after it and a
+    number quoted yesterday would mean a different row today. The same numbers appear in the tree view, computed the same
+    way, because two places disagreeing about which row is 3 would be worse than neither showing a number.
+    """
+    for i, node in enumerate(nodes or []):
         if len(out) >= MAX_ROWS:
             return
+        num = "%s%d" % (prefix + "." if prefix else "", i + 1)
         state = node.get("state", "todo")
         title = str(node.get("title", "")).strip()
         if not title:
@@ -43,9 +51,9 @@ def rows(nodes, depth, out):
         if state not in STATES_OPEN and not any_open(kids):
             continue
         note = str(node.get("note", "")).strip()
-        out.append("%s%s %s%s" % ("  " * depth, GLYPH.get(state, "o"), title,
-                                  "   [%s%s]" % (state, " · " + note if note else "")))
-        rows(kids, depth + 1, out)
+        out.append("%s%s %s %s%s" % ("  " * depth, GLYPH.get(state, "o"), num, title,
+                                     "   [%s%s]" % (state, " · " + note if note else "")))
+        rows(kids, depth + 1, out, num)
 
 
 def any_open(nodes):

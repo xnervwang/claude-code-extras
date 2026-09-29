@@ -144,7 +144,8 @@ class WorkPlanProvider {
     }
     if (element.kind === 'root') return this.rowsFor(element.plan);
     if (element.kind === 'node') {
-      return this.rowsOf(element.node.children, element.plan, element.key, element.path.concat(element.node.title));
+      return this.rowsOf(element.node.children, element.plan, element.key,
+        element.path.concat(element.node.title), element.num);
     }
     return [];
   }
@@ -162,13 +163,17 @@ class WorkPlanProvider {
    * of context the row cannot carry itself - which is what makes the dialog worth opening even where there is no
    * description to read.
    */
-  rowsOf(nodes, plan, parentKey, path) {
+  rowsOf(nodes, plan, parentKey, path, prefix = '') {
     /* Numbered by where the row sits in the file rather than by where it is drawn. The number is part of the id, the id
        is all the view has to remember which branches were open, and the drawn order changes the moment a row closes - so
        numbering by position on screen would hand a row a new id for having been reordered, and the tree would fold
        itself up as work got done. */
+    /* The number shown in front of a row comes from its place in the file, like the id above and for the same reason: it
+       is what someone says out loud to point at a row, so it must not change because the row moved on screen or because
+       another one closed. Numbering the display order would renumber half the tree every time something got done. */
     const rows = (nodes || []).map((n, i) => ({
       kind: 'node', node: n, plan, path, key: parentKey + '/' + i + ':' + n.title,
+      num: (prefix ? prefix + '.' : '') + (i + 1),
     }));
     return openFirst(rows, (r) => r.node.state);
   }
@@ -207,7 +212,7 @@ class WorkPlanProvider {
     const node = element.node;
     const look = LOOK[node.state] || LOOK.todo;
     const kids = node.children || [];
-    const item = new vscode.TreeItem(node.title, kids.length
+    const item = new vscode.TreeItem(`${element.num} ${node.title}`, kids.length
       ? (hasOpen(node) ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed)
       : vscode.TreeItemCollapsibleState.None);
     item.id = element.key;
