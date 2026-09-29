@@ -1,0 +1,381 @@
+// The list of your own messages, and stepping between them.
+// Fragment of the in-page script - see README.md in this folder.
+
+  // Prompt table of contents. A small handle sits on the right edge; hovering it opens a list of
+  // your own messages (time plus opening words). Clicking a row scrolls that message into view.
+  // Built from the node list the stamper already gathered, so it adds no DOM query of its own.
+  var HANDLE = null, PANEL = null, PLIST = null, PFILTER = null, TIP = null, SIG = '';
+  var outsideWired = false, MUTE = null, RAILBOX = null, PROMPT_EL = [];
+  var ROWS = [];  // {row, hay} for the filter box
+  var PANEL_W = 280, PANEL_GAP = 22;
+
+  var ensureTip = function(){
+    if (TIP && TIP.isConnected) return;
+    TIP = document.createElement('div');
+    TIP.id = 'cce-toc-tip';
+    var s = TIP.style;
+    s.position = 'fixed'; s.zIndex = '31'; s.display = 'none';
+    s.maxWidth = '360px'; s.maxHeight = '40vh'; s.overflow = 'hidden';
+    s.padding = '6px 9px'; s.borderRadius = '4px';
+    s.fontSize = '11px'; s.lineHeight = '1.45';
+    s.whiteSpace = 'pre-wrap'; s.wordBreak = 'break-word';
+    s.background = 'var(--vscode-editorHoverWidget-background, rgba(30,30,30,0.98))';
+    s.color = 'var(--vscode-editorHoverWidget-foreground, #ddd)';
+    s.border = '1px solid var(--vscode-editorHoverWidget-border, rgba(255,255,255,0.18))';
+    s.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
+    s.pointerEvents = 'none';  // never steal hover from the row underneath
+    document.body.appendChild(TIP);
+  };
+  var showTip = function(row, text){
+    ensureTip();
+    TIP.textContent = text;
+    TIP.style.display = 'block';
+    var r = row.getBoundingClientRect();
+    var h = TIP.offsetHeight || 60;
+    TIP.style.top = Math.min(Math.max(8, r.top - 6), Math.max(8, window.innerHeight - h - 8)) + 'px';
+    TIP.style.right = (PANEL_GAP + PANEL_W + 8) + 'px';
+  };
+  var hideTip = function(){ if (TIP) TIP.style.display = 'none'; };
+
+  var ARROW_SHUT = String.fromCharCode(8249), ARROW_OPEN = String.fromCharCode(8250);
+  var panelOpen = function(){ return !!(PANEL && PANEL.style.display === 'block'); };
+  // The list grows from the top of the window, so on a long conversation it would reach down over the composer row
+  // and swallow clicks meant for the send - or stop - button. Its height is capped just above that row instead.
+  var fitPanel = function(){
+    if (!PANEL) return;
+    var send = document.querySelector(SEND);
+    var floor = send ? send.getBoundingClientRect().top - 12 : window.innerHeight - 16;
+    PANEL.style.maxHeight = Math.max(120, floor - 8) + 'px';
+  };
+  var openPanel = function(){
+    if (PANEL) PANEL.style.display = 'block';
+    if (HANDLE) { HANDLE.style.opacity = '1'; HANDLE.textContent = ARROW_OPEN; }
+    fitPanel();
+    // The caret is deliberately left where it was: taking it for the filter box would mean Escape goes to that box
+    // instead of to the panel, and Escape is how a running turn is stopped. Click the box to type in it.
+    // open on the newest message, which is the one most likely wanted
+    if (PANEL) PANEL.scrollTop = PANEL.scrollHeight;
+  };
+  var closePanel = function(){
+    if (PANEL) PANEL.style.display = 'none';
+    if (HANDLE) { HANDLE.style.opacity = '0.6'; HANDLE.textContent = ARROW_SHUT; }
+    hideTip();
+  };
+
+  // Step between your own messages. The list comes from the panel build, so this adds no scanning of its own;
+  // rects are measured only on a click.
+  //
+  // The landing line is the TOP of a message rather than its centre: a message taller than the viewport, centred,
+  // shows its middle, which reads as having stopped between two messages. The same line then decides which message
+  // we are currently on, so the measurement that picks the next target and the place we scroll to agree - measuring
+  // against a different line lets a click resolve to the message just left and appear to do nothing.
+  var TOP_MARGIN = 12, LAND_TOL = 6, JUMP_HOLD = 600, SETTLE_MS = 80, SETTLE_TRIES = 14;
+  var jumpIdx = -1, jumpAt = 0;
+  var scrollerOf = function(el){
+    for (var p = el.parentElement; p; p = p.parentElement) {
+      var oy = '';
+      try { oy = getComputedStyle(p).overflowY; } catch (e) {}
+      if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight + 4) return p;
+    }
+    return null;
+  };
+  var offsetIn = function(el, sc){
+    return el.getBoundingClientRect().top - (sc ? sc.getBoundingClientRect().top : 0);
+  };
+  /*
+   * The position is set at once and then held, rather than animated and checked once.
+   *
+   * The panel moves the conversation while we are moving it: three of its own effects call scrollIntoView, it keeps a
+   * stick-to-bottom notion, and content above the target can still be settling. An animated scroll spends a few hundred
+   * milliseconds inside that, and one correction at a fixed delay can read the position mid-animation or before the
+   * last shift - which lands short of the line and reads as a jump that missed.
+   *
+   * The hold yields to the person at once: a wheel, a touch or a key means they are scrolling now, and pulling the view
+   * back from under them would be the same defect seen from the other side.
+   */
+  var landOn = function(el){
+    if (!el || !el.isConnected) return;
+    var r = el.getBoundingClientRect();
+    // No box at all means hidden, or replaced by a re-render. Every number in its rect is zero, so a position computed
+    // from it is arbitrary - and moving the view somewhere arbitrary is exactly what a missed jump looks like.
+    if (!r.height && !r.width) return;
+    var sc = scrollerOf(el);
+    var go = function(){
+      var delta = offsetIn(el, sc) - TOP_MARGIN;
+      var opt = { top: (sc ? sc.scrollTop : window.scrollY) + delta, behavior: 'auto' };
+      if (sc) sc.scrollTo(opt); else window.scrollTo(opt);
+    };
+    go();
+    var target = sc || window, tries = 0, still = 0, tick = 0;
+    var stop = function(){
+      if (tick) clearInterval(tick);
+      tick = 0;
+      target.removeEventListener('wheel', stop);
+      target.removeEventListener('touchstart', stop);
+      window.removeEventListener('keydown', stop);
+    };
+    tick = setInterval(function(){
+      if (!el.isConnected || ++tries > SETTLE_TRIES) { stop(); return; }
+      if (Math.abs(offsetIn(el, sc) - TOP_MARGIN) <= LAND_TOL) {
+        if (++still >= 2) stop();
+        return;
+      }
+      still = 0;
+      go();
+    }, SETTLE_MS);
+    target.addEventListener('wheel', stop, { passive: true });
+    target.addEventListener('touchstart', stop, { passive: true });
+    window.addEventListener('keydown', stop);
+  };
+  var jumpPrompt = function(dir){
+    var alive = [];
+    for (var i = 0; i < PROMPT_EL.length; i++) if (PROMPT_EL[i].isConnected) alive.push(PROMPT_EL[i]);
+    if (!alive.length) return;
+    var from;
+    if (jumpIdx >= 0 && jumpIdx < alive.length && Date.now() - jumpAt < JUMP_HOLD) {
+      from = jumpIdx;                   // the previous jump is still settling; count from its target
+    } else {
+      var sc = scrollerOf(alive[0]), best = 0, bestD = Infinity;
+      for (var j = 0; j < alive.length; j++) {
+        var d = Math.abs(offsetIn(alive[j], sc) - TOP_MARGIN);
+        if (d < bestD) { bestD = d; best = j; }
+      }
+      from = best;
+    }
+    var t = from + dir;
+    if (t < 0) t = 0;
+    if (t > alive.length - 1) t = alive.length - 1;
+    jumpIdx = t; jumpAt = Date.now();
+    landOn(alive[t]);
+  };
+  var navButton = function(glyph, dir, label){
+    var b = document.createElement('div');
+    b.textContent = glyph;
+    b.title = label;
+    var s = b.style;
+    s.width = '20px'; s.height = '18px';
+    s.display = 'flex'; s.alignItems = 'center'; s.justifyContent = 'center';
+    s.cursor = 'pointer'; s.opacity = '0.55'; s.fontSize = '10px';
+    s.userSelect = 'none'; s.borderRadius = '3px 0 0 3px';
+    s.background = 'var(--vscode-editorWidget-background, rgba(40,40,40,0.92))';
+    s.border = '1px solid var(--vscode-widget-border, rgba(255,255,255,0.14))';
+    s.borderRight = 'none';
+    s.color = 'var(--vscode-foreground, #ccc)';
+    b.addEventListener('mouseenter', function(){ s.opacity = '1'; });
+    b.addEventListener('mouseleave', function(){ s.opacity = '0.55'; });
+    b.addEventListener('click', function(ev){ ev.stopPropagation(); jumpPrompt(dir); });
+    return b;
+  };
+  // ',' and '.' step between your messages, but only when the caret is not in an editable field.
+  // The guard is deliberately broad: skipping a keystroke is harmless, swallowing one meant for the
+  // composer is not. Modifier combinations are left alone so host shortcuts still work.
+  var keysWired = false;
+  var wireKeys = function(){
+    if (keysWired) return;
+    keysWired = true;
+    document.addEventListener('keydown', function(ev){
+      if (ev.key !== ',' && ev.key !== '.') return;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return;
+      var a = document.activeElement;
+      if (a) {
+        var tag = a.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (a.isContentEditable) return;
+        if (typeof a.closest === 'function' &&
+            a.closest('[contenteditable="true"], [contenteditable=""], input, textarea')) return;
+      }
+      if (!PROMPT_EL.length) return;
+      ev.preventDefault();
+      jumpPrompt(ev.key === ',' ? -1 : 1);
+    });
+  };
+  var ensureUI = function(){
+    if (RAILBOX && RAILBOX.isConnected && PANEL && PANEL.isConnected) return;
+    SIG = '';  // rebuilt containers hold no rows
+    HANDLE = document.createElement('div');
+    HANDLE.id = 'cce-toc-handle';
+    var h = HANDLE.style;
+    h.width = '20px'; h.height = '48px';
+    h.display = 'flex'; h.alignItems = 'center'; h.justifyContent = 'center';
+    h.cursor = 'pointer'; h.opacity = '0.6'; h.transition = 'opacity 120ms';
+    h.borderRadius = '4px 0 0 4px';
+    h.background = 'var(--vscode-editorWidget-background, rgba(40,40,40,0.92))';
+    h.border = '1px solid var(--vscode-widget-border, rgba(255,255,255,0.14))';
+    h.borderRight = 'none';
+    h.color = 'var(--vscode-foreground, #ccc)';
+    h.fontSize = '14px'; h.userSelect = 'none';
+    HANDLE.textContent = ARROW_SHUT;
+    setLabel(HANDLE, 'Your messages in this conversation - click one to jump to it');
+    HANDLE.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      if (panelOpen()) closePanel(); else openPanel();
+    });
+    // One vertical strip: up arrow, handle, down arrow. Its layer sits under the panel so an open
+    // panel covers it rather than the other way round.
+    RAILBOX = document.createElement('div');
+    RAILBOX.id = 'cce-toc-rail';
+    var rb = RAILBOX.style;
+    rb.position = 'fixed'; rb.right = '0'; rb.top = '50%';
+    rb.transform = 'translateY(-50%)'; rb.zIndex = '29';
+    rb.display = 'flex'; rb.flexDirection = 'column'; rb.alignItems = 'flex-end';
+    RAILBOX.appendChild(navButton(String.fromCharCode(9652), -1, 'Previous message'));
+    RAILBOX.appendChild(HANDLE);
+    RAILBOX.appendChild(navButton(String.fromCharCode(9662), 1, 'Next message'));
+    document.body.appendChild(RAILBOX);
+    wireKeys();
+
+    PANEL = document.createElement('div');
+    PANEL.id = 'cce-toc';
+    var p = PANEL.style;
+    p.position = 'fixed'; p.right = PANEL_GAP + 'px'; p.top = '8px';
+    p.width = PANEL_W + 'px'; p.maxHeight = 'calc(100vh - 16px)';
+    p.zIndex = '30'; p.display = 'none'; p.overflowY = 'auto';
+    p.padding = '5px 0'; p.borderRadius = '5px'; p.boxSizing = 'border-box';
+    p.background = 'var(--vscode-editorWidget-background, rgba(35,35,35,0.98))';
+    p.border = '1px solid var(--vscode-widget-border, rgba(255,255,255,0.14))';
+    p.boxShadow = '0 4px 14px rgba(0,0,0,0.45)';
+    p.fontSize = '11px'; p.lineHeight = '1.4';
+    if (!outsideWired) {
+      outsideWired = true;
+      // an outside click dismisses it; clicks inside the panel or on the handle do not
+      document.addEventListener('click', function(ev){
+        if (!panelOpen()) return;
+        var t = ev.target;
+        if ((PANEL && PANEL.contains(t)) || (HANDLE && HANDLE.contains(t))) return;
+        closePanel();
+      });
+    }
+
+    var head = document.createElement('div');
+    head.style.display = 'flex'; head.style.alignItems = 'center';
+    head.style.gap = '6px'; head.style.padding = '3px 8px 6px 8px';
+    // sticky so the filter stays reachable after the list is scrolled to the newest entry
+    head.style.position = 'sticky'; head.style.top = '0'; head.style.zIndex = '1';
+    head.style.background = 'var(--vscode-editorWidget-background, rgba(35,35,35,0.98))';
+
+    PFILTER = document.createElement('input');
+    PFILTER.type = 'text';
+    PFILTER.placeholder = 'Filter your messages';
+    var fi = PFILTER.style;
+    fi.flex = '1 1 auto'; fi.minWidth = '0'; fi.margin = '0'; fi.width = '100%';
+    fi.padding = '3px 6px'; fi.boxSizing = 'border-box';
+    fi.fontSize = '11px'; fi.borderRadius = '3px';
+    fi.background = 'var(--vscode-input-background, rgba(0,0,0,0.3))';
+    fi.color = 'var(--vscode-input-foreground, #ddd)';
+    fi.border = '1px solid var(--vscode-input-border, rgba(255,255,255,0.16))';
+    fi.outline = 'none';
+    PFILTER.addEventListener('input', applyFilter);
+    head.appendChild(PFILTER);
+
+    PANEL.appendChild(head);
+    PLIST = document.createElement('div');
+    PANEL.appendChild(PLIST);
+    document.body.appendChild(PANEL);
+  };
+  var applyFilter = function(){
+    var q = (PFILTER && PFILTER.value || '').toLowerCase().trim();
+    for (var i = 0; i < ROWS.length; i++) {
+      ROWS[i].row.style.display = (!q || ROWS[i].hay.indexOf(q) !== -1) ? 'block' : 'none';
+    }
+  };
+
+  // Label for one tool call, used as a table-of-contents entry inside a sub-agent view.
+  var toolLabel = function(c){
+    var name = (c && c.name) || 'tool', arg = '';
+    var inp = c && c.input;
+    if (inp && typeof inp === 'object') {
+      var keys = ['file_path', 'command', 'pattern', 'path', 'url', 'query', 'description'];
+      for (var i = 0; i < keys.length; i++) {
+        var v = inp[keys[i]];
+        if (typeof v === 'string' && v) { arg = v.replace(/\s+/g, ' ').trim(); break; }
+      }
+    }
+    if (arg.length > 34) arg = arg.slice(0, 34) + '..';
+    return arg ? name + ' ' + arg : name;
+  };
+  var syncMap = function(items, compEls){
+    var texts = [], nodes = [], whens = [];
+    for (var i = 0; i < items.length; i++) {
+      var t = items[i].text;
+      if (!t) continue;
+      /* Landing goes to where the message starts, which is not always the block the text was read from. */
+      texts.push(t); nodes.push(items[i].top || items[i].node); whens.push(fmt(items[i].ts));
+    }
+    if (!texts.length) {
+      if (RAILBOX) RAILBOX.style.display = 'none';
+      if (PANEL) PANEL.style.display = 'none';
+      return;
+    }
+    // Compaction points are timeline landmarks, so they get a rule in the list. Their position is
+    // resolved by document order against the prompt nodes already gathered.
+    // Compaction rules belong to the conversation timeline, not to a single agent's tool trace.
+    var marks = [];
+    var comps = (VIEW === 'all' || VIEW === 'main') ? (compEls || []) : [];
+    for (var q = 0; q < comps.length; q++) {
+      var ce = comps[q], after = 0;
+      for (var w = 0; w < nodes.length; w++) {
+        if (nodes[w].compareDocumentPosition(ce) & 4) after = w + 1; else break;
+      }
+      var head = ce.querySelector('summary') || ce;
+      marks.push({ after: after, label: ((head.textContent || 'Compacted').replace(/\s+/g, ' ').trim()) });
+    }
+    var sig = VIEW + '|' + texts.length + '|' + marks.length + '|' + texts.map(function(t, k){ return whens[k] + t.slice(0, 12); }).join('\x1f');
+    ensureUI();
+    RAILBOX.style.display = 'flex';
+    if (panelOpen()) fitPanel();
+    PROMPT_EL = nodes;
+    if (sig === SIG) return;
+    SIG = sig;
+    PLIST.textContent = '';
+    ROWS = [];
+    var rule = function(label){
+      var d = document.createElement('div');
+      d.style.display = 'flex'; d.style.alignItems = 'center'; d.style.gap = '6px';
+      d.style.padding = '4px 10px'; d.style.opacity = '0.6';
+      var line = function(){
+        var l = document.createElement('div');
+        l.style.flex = '1 1 auto'; l.style.height = '1px';
+        l.style.background = 'var(--vscode-widget-border, rgba(255,255,255,0.22))';
+        return l;
+      };
+      var t = document.createElement('span');
+      t.textContent = label.slice(0, 34);
+      t.style.flex = '0 0 auto'; t.style.whiteSpace = 'nowrap';
+      t.style.fontSize = '10px';
+      d.appendChild(line()); d.appendChild(t); d.appendChild(line());
+      PLIST.appendChild(d);
+      ROWS.push({ row: d, hay: label.toLowerCase() });
+    };
+    var placeMarks = function(upto){
+      for (var mi = 0; mi < marks.length; mi++) if (marks[mi].after === upto) rule(marks[mi].label);
+    };
+    for (var j = 0; j < texts.length; j++) {
+      placeMarks(j);
+      (function(node, text, when){
+        var row = document.createElement('div');
+        var s = row.style;
+        s.padding = '4px 10px'; s.cursor = 'pointer';
+        s.whiteSpace = 'nowrap'; s.overflow = 'hidden'; s.textOverflow = 'ellipsis';
+        s.color = 'var(--vscode-foreground, #ccc)';
+        row.textContent = (when ? when + '  ' : '') + text.slice(0, 44);
+        row.addEventListener('mouseenter', function(){
+          row.style.background = 'var(--vscode-list-hoverBackground, rgba(255,255,255,0.08))';
+          showTip(row, (when ? when + String.fromCharCode(10) : '') + text.slice(0, 220));
+        });
+        row.addEventListener('mouseleave', function(){
+          row.style.background = 'transparent';
+          hideTip();
+        });
+        row.addEventListener('click', function(ev){
+          ev.stopPropagation();
+          hideTip();
+          jumpAt = 0;        // drop the stepping cursor: the next arrow press re-reads the position
+          landOn(node);
+        });
+        PLIST.appendChild(row);
+        ROWS.push({ row: row, hay: (when + ' ' + text).toLowerCase() });
+      })(nodes[j], texts[j], whens[j]);
+    }
+    placeMarks(texts.length);
+    applyFilter();
+  };

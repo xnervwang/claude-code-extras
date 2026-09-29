@@ -1,0 +1,93 @@
+# Claude Code ships often - twice in one day has happened - and an update that changes the shape of any patched code
+# costs the panel every addition at once. On a machine that is noticed only after the update is installed, because the
+# extension refuses to patch a build it does not recognise. Checking the published build on a schedule moves the news
+# to before the update arrives.
+name: upstream check
+
+on:
+  schedule:
+    # Four times a day, offset off the hour to avoid the minute everyone else picks.
+    - cron: '17 1,7,13,19 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check every edit against the newest published build
+        id: upstream
+        shell: bash
+        run: |
+          set -o pipefail
+          node test/against-latest.js 2>&1 | tee report.txt
+
+      - name: Put the report in the run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Upstream check'
+            echo '```'
+            cat report.txt || echo 'the check produced no report'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open an issue when an edit stopped matching
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const version = '${{ steps.upstream.outputs.version }}' || 'an unknown build';
+            const title = `Claude Code ${version} no longer matches one of the edits`;
+
+            // One issue per build: a four-times-a-day schedule would otherwise file the same news repeatedly.
+            const existing = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
+            });
+            if (existing.some((i) => i.title === title)) {
+              core.info('already reported for this build');
+              return;
+            }
+
+            let report = 'the check produced no report';
+            try { report = fs.readFileSync('report.txt', 'utf8'); } catch (_) {}
+
+            const body = [
+              `The upstream check ran against Claude Code **${version}** and at least one edit did not match exactly once.`,
+              '',
+              'Until it is fixed, the extension will refuse to patch that build - deliberately, since a partial patch',
+              'is worse than none - so anyone who updates loses the additions and gets a warning instead.',
+              '',
+              '### What the check said',
+              '',
+              '```',
+              report.trim(),
+              '```',
+              '',
+              '### Where to look',
+              '',
+              'Each edit in `src/webview.js` and `src/host.js` matches a shape rather than a name. An edit that now',
+              'matches zero times means the code it anchors on was reshaped; find the new shape in the published',
+              'bundle and widen the pattern to the part that is stable. An edit matching more than once means the',
+              'pattern lost the detail that told its site apart from its siblings.',
+              '',
+              'Run `node test/against-latest.js` to reproduce, and bump the adapter `VERSION` with any change so an',
+              'already-patched install is repatched rather than skipped.',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo, title, body,
+            });

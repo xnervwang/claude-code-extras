@@ -1,0 +1,132 @@
+{
+  "name": "claude-code-extras",
+  "displayName": "Claude Code Extras for VS Code",
+  "description": "Interface additions for the Claude Code chat panel in VS Code: real timestamps, per-reply duration, context share and estimated spend, sub-agent tags, a view filter for main thread vs each sub-agent, a table of contents of your own messages, and a chime when a turn finishes.",
+  "version": "1.0.0",
+  "publisher": "xnerv",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "anthropic",
+    "timestamp",
+    "subagent"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudeCodeExtras.toggle",
+        "title": "Claude Code Extras: Toggle On/Off"
+      },
+      {
+        "command": "claudeCodeExtras.enable",
+        "title": "Claude Code Extras: Turn On"
+      },
+      {
+        "command": "claudeCodeExtras.disable",
+        "title": "Claude Code Extras: Turn Off"
+      },
+      {
+        "command": "claudeCodeExtras.remove",
+        "title": "Claude Code Extras: Remove from Claude Code (restore original files)"
+      },
+      {
+        "command": "claudeCodeExtras.status",
+        "title": "Claude Code Extras: Show Status"
+      },
+      {
+        "command": "claudeCodeExtras.refreshWorkPlan",
+        "title": "Claude Code Extras: Refresh Work Plan",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "claudeCodeExtras.openWorkPlanFile",
+        "title": "Claude Code Extras: Open the Work Plan File",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "claudeCodeExtras.installWorkPlanPlugin",
+        "title": "Claude Code Extras: Install the Work Plan Plugin for Claude Code"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeCodeExtras",
+          "title": "Claude Code Extras",
+          "icon": "images/workplan.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeCodeExtras": [
+        {
+          "id": "claudeCodeExtras.workPlan",
+          "name": "Work plan"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "claudeCodeExtras.workPlan",
+        "contents": "No work plan for this conversation yet."
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "claudeCodeExtras.openWorkPlanFile",
+          "when": "view == claudeCodeExtras.workPlan",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeCodeExtras.refreshWorkPlan",
+          "when": "view == claudeCodeExtras.workPlan",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "claudeCodeExtras.openWorkPlanFile",
+          "when": "view == claudeCodeExtras.workPlan",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Code Extras",
+      "properties": {
+        "claudeCodeExtras.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show what this extension adds to the panel: a timestamp on every message and content block, a line on each reply with its duration, context share, estimated cost and model, and a name tag on sub-agent messages. Off leaves those out and the panel reads as Claude Code renders it. The **Extras: On/Off** status bar item is the same setting. Changes apply live, without a reload."
+        },
+        "claudeCodeExtras.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the **Extras: On/Off** toggle in the status bar."
+        },
+        "claudeCodeExtras.userMessageColor": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Text color of **your own messages** in the Claude Code panel, as a CSS color — e.g. `#90EE90`, `lightgreen` or `rgb(144,238,144)`. Leave empty to keep the panel's own color. Changes apply live."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:uninstall": "node ./uninstall.js"
+  }
+}

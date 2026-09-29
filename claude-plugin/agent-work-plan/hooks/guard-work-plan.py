@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Refuse a write to the work plan that carries a description longer than the view will show.
+
+The limit itself is explained in the skill: a description is what the next person needs in order to pick the task up,
+not the story of how the task got there, and given room the story is what gets written. Until now the limit lived in two
+places that both come after the fact - the skill asking for it, and the view cutting what it was given. Neither stops an
+over-long description from being written, and the one that cuts it does so where the reader is, not where the writer is.
+
+So this refuses the write. The criterion is exactly the one the view uses, which is the only way the two can agree: what
+is rejected here is precisely what would have been cut there.
+
+What it does not cover: a plan file written through Bash - a heredoc, python -c, sed. Finding a JSON payload inside a
+shell command is not something that can be done reliably, and a gate that half-reads shell would refuse legitimate
+commands while still missing the ones that mattered. The tools that actually write this file are Write and Edit.
+"""
+import json
+import os
+import re
+import sys
+
+# Set before the import below: see inject-work-plan.py. A hook that runs on every turn leaves no bytecode behind in the
+# installed plugin directory.
+sys.dont_write_bytecode = True
+
+from plan_path import data_dir
+
+# Kept the same as MAX_DETAIL_LINES and MAX_DETAIL_CHARS in the extension's src/workplan.js, and as the numbers the
+# skill quotes. Three copies, so test/check.js asserts they are equal - a gate that refuses at one length while the view
+# cuts at another would be a gate nobody could satisfy.
+MAX_DETAIL_LINES = 12
+MAX_DETAIL_CHARS = 900
+# Enough of a title to recognise the row by; a rejection has to say which description, not merely that there was one.
+TITLE_SHOWN = 60
+
+
+def over(value):
+    """How the description breaks the limit, or None. Mirrors detail() in the extension's src/workplan.js.
+
+    The character count is taken over the lines that would survive, not over the whole value, because that is what the
+    view measures after dropping the rest - counting the whole thing would refuse a description the view shows in full.
+    """
+    lines = str(value).strip().split("\n")
+    kept = "\n".join(lines[:MAX_DETAIL_LINES])
+    if len(lines) > MAX_DETAIL_LINES:
+        return "%d lines" % len(lines)
+    if len(kept) > MAX_DETAIL_CHARS:
+        return "%d characters" % len(kept)
+    return None
+
+
+def walk(nodes, found, depth=0):
+    """Every description in the tree that breaks the limit, as (title, how)."""
+    if depth > 16 or not isinstance(nodes, list):
+        return
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        how = over(node.get("detail") or "")
+        if how:
+            found.append((str(node.get("title") or "(untitled)")[:TITLE_SHOWN], how))
+        walk(node.get("children"), found, depth + 1)
+
+
+def from_json(body):
+    """The offending rows in a whole plan file, or None when this is not one.
+
+    A document with no list of nodes in it is not a plan, whatever else it parses as - so it is reported as unreadable
+    rather than as clean. Returning an empty answer for it would say the opposite: an over-long description under a key
+    spelled some other way would have been let through in silence, which is the one outcome this must not produce.
+    """
+    try:
+        parsed = json.loads(body)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("nodes"), list):
+        return None
+    found = []
+    walk(parsed.get("nodes"), found)
+    return found
+
+
+def from_fragment(body):
+    """The offending rows in a piece of a plan file, found by reading the JSON strings assigned to "detail".
+
+    For an Edit whose result could not be assembled. A description is written as one JSON string, so the value is intact
+    here even though the document around it is not; what is lost is the title next to it, hence the placeholder.
+    """
+    found = []
+    for raw in re.findall(r'"detail"\s*:\s*("(?:[^"\\]|\\.)*")', body):
+        try:
+            how = over(json.loads(raw))
+        except Exception:
+            continue
+        if how:
+            found.append(("(a row in this edit)", how))
+    return found
+
+
+def after_edit(path, tool_input):
+    """The file as this edit would leave it, or None when that cannot be worked out."""
+    old = tool_input.get("old_string")
+    new = tool_input.get("new_string")
+    if not isinstance(old, str) or not isinstance(new, str):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            body = fh.read()
+    except Exception:
+        return None
+    if tool_input.get("replace_all"):
+        return body.replace(old, new)
+    # Exactly one occurrence is also Edit's own requirement, so anything else is a call that will fail on its own terms.
+    if body.count(old) != 1:
+        return None
+    return body.replace(old, new, 1)
+
+
+def guarded(path):
+    """Whether this path is a work plan: the plugin's own data directory, and a name a plan is given."""
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        here = os.path.realpath(path)
+    except Exception:
+        return False
+    if os.path.dirname(here) != os.path.realpath(data_dir()):
+        return False
+    return bool(re.match(r"^[0-9A-Fa-f][0-9A-Fa-f-]{7,}\.json$", os.path.basename(here)))
+
+
+def main():
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        return 0
+    # Valid JSON that is not an object parses without complaint, so the guard above does not cover it. A hook that ends
+    # in a traceback puts its own failure in front of the reader, in place of the tool call it was asked about.
+    if not isinstance(payload, dict):
+        return 0
+    tool = payload.get("tool_name")
+    tool_input = payload.get("tool_input") or {}
+    if tool not in ("Write", "Edit") or not isinstance(tool_input, dict):
+        return 0
+    path = tool_input.get("file_path")
+    if not guarded(path):
+        return 0
+
+    if tool == "Write":
+        body = tool_input.get("content")
+        body = body if isinstance(body, str) else ""
+        found = from_json(body)
+        if found is None:
+            # Not valid JSON at all. That is a defect in what wrote it, but it is not this gate's business: refusing
+            # here would mean this hook decides what a plan file may contain, which is a much larger claim.
+            found = from_fragment(body)
+    else:
+        result = after_edit(path, tool_input)
+        found = from_json(result) if result is not None else None
+        if found is None:
+            found = from_fragment(tool_input.get("new_string") or "")
+
+    if not found:
+        return 0
+
+    rows = "\n".join("  - %s  (%s)" % (title, how) for title, how in found[:8])
+    if len(found) > 8:
+        rows += "\n  - ... and %d more" % (len(found) - 8)
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": payload.get("hook_event_name", "PreToolUse"),
+        "permissionDecision": "deny",
+        "permissionDecisionReason": (
+            "A work plan description is limited to %d lines and %d characters, and the view cuts it there. These are "
+            "over:\n%s\n\nShorten them and write again. A description is what the next person needs in order to pick "
+            "the task up - the user's own words, what is already settled, the trap to avoid - not how the task got "
+            "here. The reasoning belongs in the commit message, a rule that came out of it in that rule, a "
+            "measurement where the measurement lives." % (MAX_DETAIL_LINES, MAX_DETAIL_CHARS, rows)),
+    }}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

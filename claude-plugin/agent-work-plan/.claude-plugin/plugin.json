@@ -1,0 +1,8 @@
+{
+  "name": "agent-work-plan",
+  "version": "1.0.0",
+  "description": "Keeps a per-conversation tree of what is still to do, so a long non-linear conversation does not lose the thread it started on.",
+  "author": {
+    "name": "xnerv"
+  }
+}

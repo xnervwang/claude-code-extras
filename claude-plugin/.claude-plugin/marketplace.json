@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-code-extras",
+  "description": "Keeps each conversation's work plan: a tree of what is still to do, with the state of every row. Shipped with the Claude Code Extras VS Code extension, which displays it, but it stands alone.",
+  "owner": {
+    "name": "xnerv"
+  },
+  "plugins": [
+    {
+      "name": "agent-work-plan",
+      "source": "./agent-work-plan",
+      "version": "1.0.0"
+    }
+  ]
+}
