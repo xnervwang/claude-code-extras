@@ -6,4 +6,4 @@
  * deliberate: when these were two separate hardcoded arrays, adding the host target to one of them and forgetting
  * the other left an orphaned patch behind on uninstall.
  */
-module.exports = [require('./webview'), require('./host')];
+module.exports = [require('./webview'), require('./host'), require('./logo')];

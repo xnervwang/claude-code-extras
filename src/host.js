@@ -122,6 +122,6 @@ function restore(claudeExtensionPath) {
 module.exports = {
   id: 'anthropic.claude-code', name: 'Claude Code host',
   VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS,
-  patchSource, status, apply, restore, hostFile,
+  patchSource, status, apply, restore, hostFile, targetFile: hostFile,
   findInstalls: require('./webview').findInstalls,
 };

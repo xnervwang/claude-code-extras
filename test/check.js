@@ -220,8 +220,8 @@ const explicit = process.argv.slice(2);
 if (explicit.length) {
   for (const arg of explicit) {
     const base = path.basename(arg).replace(/\.[^.]*\.bak$/, '');
-    const adapter = base.startsWith('index.js') ? webview : base.startsWith('extension.js') ? host : null;
-    if (!adapter) { bad(`${arg}: cannot tell whether this is the panel or the host bundle`); continue; }
+    const adapter = ADAPTERS.find((a) => base === path.basename(a.targetFile('')));
+    if (!adapter) { bad(`${arg}: no patch target is named ${base}`); continue; }
     if (!fs.existsSync(arg)) { bad(`${arg}: not found`); continue; }
     const src = fs.readFileSync(arg, 'utf8');
     if (src.includes(adapter.ANY_MARK)) { bad(`${arg}: already carries our marker, so it is not pristine`); continue; }
@@ -233,7 +233,7 @@ if (explicit.length) {
     for (const install of webview.findInstalls(dir)) {
       seen++;
       for (const adapter of ADAPTERS) {
-        const file = adapter === host ? adapter.hostFile(install) : adapter.webviewFile(install);
+        const file = adapter.targetFile(install);
         const p = pristine(file, adapter);
         const where = `${adapter.name} (${path.basename(install)})`;
         if (!p) { bad(`${where}: no pristine source available (patched, and no backup)`); continue; }

@@ -343,5 +343,5 @@ function findInstalls(extensionsDir) {
 module.exports = {
   id: 'anthropic.claude-code', name: 'Claude Code panel',
   VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, SCRIPT,
-  safeColor, patchSource, status, apply, restore, findInstalls, webviewFile, writeLive, liveCss,
+  safeColor, patchSource, status, apply, restore, findInstalls, webviewFile, targetFile: webviewFile, writeLive, liveCss,
 };
