@@ -751,5 +751,94 @@ console.log('\nwhat the Stop hook says, and how often');
   }
 }
 
+/* ── 12. the waiting, paired out of the official extension's log ──
+   Every figure this produces is a subtraction between two lines that are far apart, so the risk is not arithmetic: it
+   is pairing the wrong two. A trigger that never matches reports nothing and looks like a fast machine, and a gap that
+   is really someone leaving the window alone reports minutes that nobody waited. Both are tested here. */
+console.log('\nthe waiting, paired out of the official log');
+{
+  const L = require('../src/openlatency');
+  const at = (clock, msg) => `2026-09-29 21:0${clock} [info] ${msg}`;
+  const clicked = 'Received message from webview: {"type":"request","requestId":"a","request":{"type":"open_in_editor","sessionId":"s"}}';
+  const up = 'Received message from webview: {"type":"request","requestId":"b","request":{"type":"init"}}';
+
+  const one = (text) => L.readOut(text);
+  const only = (text, what) => one(text).filter((r) => r.what === what);
+
+  {
+    const got = only([at('0:00.000', clicked), at('0:30.000', up)].join('\n'), 'panel');
+    if (got.length === 1 && got[0].waited === 30000 && got[0].trigger === 'click') ok('a panel asked for and slow to answer is 30s under "click"');
+    else bad(`a clicked panel measured ${JSON.stringify(got)}`);
+  }
+  {
+    const text = [at('0:00.000', 'Claude code extension is now active?'), at('0:20.000', up)].join('\n');
+    const got = only(text, 'panel');
+    if (got.length === 1 && got[0].waited === 20000 && got[0].trigger === 'window') ok('a panel the window restored is timed from activation');
+    else bad(`a restored panel measured ${JSON.stringify(got)}`);
+  }
+  {
+    const got = only([at('0:00.000', clicked), at('0:00.900', up)].join('\n'), 'panel');
+    if (!got.length) ok('under the floor nothing is recorded, so ordinary opens do not fill the file');
+    else bad(`a 0.9s open was recorded: ${JSON.stringify(got)}`);
+  }
+  {
+    const text = ['2026-09-29 20:00:00.000 [info] ' + clicked, '2026-09-29 21:00:00.000 [info] ' + up].join('\n');
+    if (!only(text, 'panel').length) ok('an hour of silence is treated as a window left alone, not as an hour of waiting');
+    else bad('an hour-long gap was recorded as a wait');
+  }
+  {
+    /* Two panels coming up after one click: the second must not be credited with the first one's wait. */
+    const got = only([at('0:00.000', clicked), at('0:30.000', up), at('1:10.000', up)].join('\n'), 'panel');
+    if (got.length === 1 && got[0].waited === 30000) ok('a second panel is not credited with the first one\'s wait');
+    else bad(`two panels after one click measured ${JSON.stringify(got)}`);
+  }
+  {
+    /* A gap that ends at a webview message belongs to the pairing above; counting it as host silence too would double it. */
+    const got = one([at('0:00.000', clicked), at('0:30.000', up)].join('\n')).filter((r) => r.what === 'host');
+    if (!got.length) ok('the same silence is not also counted as the host being idle');
+    else bad(`the gap was double-counted: ${JSON.stringify(got)}`);
+  }
+  {
+    const spawn = 'Spawning Claude with SDK query function - cwd: /x, permission mode: default, version: 2.1.1, /bin/claude, resume: undefined';
+    const said = 'From claude: 2026-09-29T21:00:05.000Z [DEBUG] hello';
+    const got = only([at('0:00.000', spawn), at('0:05.000', said)].join('\n'), 'cli');
+    if (got.length === 1 && got[0].waited === 5000 && got[0].trigger === 'new') ok('a CLI slow to print its first line is timed as "new"');
+    else bad(`a slow CLI spawn measured ${JSON.stringify(got)}`);
+  }
+  {
+    const dir = path.join('/a', 'logs', '20260101T000000', 'exthost7', 'xnerv.claude-code-extras');
+    const want = path.join('/a', 'logs', '20260101T000000', 'exthost7', 'Anthropic.claude-code', 'Claude VSCode.log');
+    if (L.logFile(dir) === want) ok('their log is found as a sibling of ours, not by taking the newest directory');
+    else bad(`logFile gave ${L.logFile(dir)}`);
+  }
+  {
+    /* Sampling twice must not count the same wait twice, and the second read starts mid-line. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat-'));
+    const log = path.join(root, 'Claude VSCode.log');
+    const into = path.join(root, 'rec.jsonl');
+    fs.writeFileSync(log, [at('0:00.000', clicked), at('0:30.000', up)].join('\n') + '\n');
+    const first = L.sample({ log, into, state: {}, version: 'v1' });
+    fs.appendFileSync(log, [at('2:00.000', clicked), at('2:40.000', up)].join('\n') + '\n');
+    const second = L.sample({ log, into, state: first.state, version: 'v1' });
+    const all = L.readRecords(into);
+    const waits = all.filter((r) => r.what === 'panel').map((r) => r.waited).sort((a, b) => a - b);
+    if (first.added.length === 1 && second.added.length === 1 && waits.join() === '30000,40000') {
+      ok('a second pass reads only what was appended, and the records are the union');
+    } else bad(`two passes gave ${first.added.length} then ${second.added.length}, records ${JSON.stringify(waits)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    const rows = L.summarise([
+      { what: 'panel', trigger: 'click', version: 'a', waited: 1000 },
+      { what: 'panel', trigger: 'click', version: 'a', waited: 3000 },
+      { what: 'panel', trigger: 'click', version: 'b', waited: 90000 },
+    ]);
+    const worst = rows[0];
+    if (rows.length === 2 && worst.version === 'b' && worst.n === 1 && rows[1].n === 2) {
+      ok('versions are summarised apart, worst first, which is what shows a regression');
+    } else bad(`summarise gave ${JSON.stringify(rows)}`);
+  }
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

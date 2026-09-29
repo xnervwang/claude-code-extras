@@ -24,6 +24,7 @@ const { readTasks } = require('./src/tasks');
 const { countOpen, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
 const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
+const latency = require('./src/openlatency');
 const ADAPTERS = require('./src/adapters');
 
 const SETTING = 'claudeCodeExtras.enabled';
@@ -33,6 +34,7 @@ const STATUS_BAR_SETTING = 'claudeCodeExtras.showStatusBar';
 const REMOVED_KEY = 'claudeCodeExtras.removed';
 const PLUGIN_KEY = 'claudeCodeExtras.workPlanPlugin';
 const SWEEP_KEY = 'claudeCodeExtras.lastOrphanSweep';
+const LATENCY_KEY = 'claudeCodeExtras.latencyOffset';
 
 /** Every install of Claude Code this adapter can see: the active one plus sibling versions in the same folder. */
 function installs(adapter) {
@@ -164,6 +166,15 @@ function activate(context) {
       for (const adapter of ADAPTERS) for (const d of installs(adapter)) lines.push(`${adapter.name} ${path.basename(d)}: ${adapter.status(d)}`);
       vscode.window.showInformationMessage('Claude Code Extras — ' + (lines.join(' | ') || 'Claude Code is not installed') + (removed() ? ' (removed)' : ''));
     }),
+    /* Reads the records rather than measuring anything, so it is also the way to see them after a window restart. */
+    vscode.commands.registerCommand('claudeCodeExtras.showOpenLatency', () => {
+      sampleLatency();
+      const records = latency.readRecords(latencyFile());
+      log.appendLine('');
+      for (const line of latency.report(records)) log.appendLine(line);
+      log.appendLine(`  records: ${latencyFile()}`);
+      log.show(true);
+    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(SETTING) || e.affectsConfiguration(STATUS_BAR_SETTING)) renderBar();
       if (![SETTING, COLOR_SETTING, EDGE_SETTING].some((k) => e.affectsConfiguration(k))) return;
@@ -188,8 +199,46 @@ function activate(context) {
     } catch (e) {
       log.appendLine('live refresh failed: ' + e.message);
     }
+    sampleLatency();
   }, REFRESH_MS);
   context.subscriptions.push({ dispose: () => clearInterval(refresh) });
+
+  /*
+   * How long this window makes you wait, taken from the official extension's log rather than measured here - see
+   * src/openlatency.js for what is paired with what. It rides the timer above because it costs one stat of one file
+   * when nothing has been written, and reads only the bytes appended since the last pass.
+   *
+   * It is deliberately not in the injected script. A readout added there once made reloading the window crash, and the
+   * mechanism was never established; the panel is also the wrong side to measure from, since what is being timed is a
+   * panel that has not started yet.
+   */
+  const latencyFile = () => path.join(context.globalStorageUri.fsPath, 'open-latency.jsonl');
+  const stamp = () => {
+    const ours = context.extension && context.extension.packageJSON && context.extension.packageJSON.version;
+    const ext = vscode.extensions.getExtension(webview.id);
+    const theirs = ext && ext.packageJSON && ext.packageJSON.version;
+    return `${ours || '?'}/${theirs || '?'}`;
+  };
+  function sampleLatency() {
+    try {
+      const r = latency.sample({
+        log: latency.logFile(context.logUri.fsPath),
+        into: latencyFile(),
+        state: context.globalState.get(LATENCY_KEY, {}),
+        version: stamp(),
+      });
+      if (r.state) context.globalState.update(LATENCY_KEY, r.state);
+      /* Only the long ones are worth a line unprompted; the rest are read with the command below. */
+      for (const w of r.added) {
+        if (w.waited >= 20000) {
+          log.appendLine(`waited ${(w.waited / 1000).toFixed(1)}s for ${w.what} (${w.trigger}) at ${w.at}`);
+        }
+      }
+    } catch (e) {
+      log.appendLine('open latency: ' + e.message);
+    }
+  }
+  sampleLatency();
 
   /*
    * The work plan view. This is the one part of the extension that is its own user interface rather than an addition to

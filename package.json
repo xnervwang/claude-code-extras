@@ -61,6 +61,10 @@
       {
         "command": "claudeCodeExtras.installWorkPlanPlugin",
         "title": "Claude Code Extras: Install the Work Plan Plugin for Claude Code"
+      },
+      {
+        "command": "claudeCodeExtras.showOpenLatency",
+        "title": "Claude Code Extras: Show How Long Opening a Panel Took"
       }
     ],
     "viewsContainers": {
