@@ -21,18 +21,55 @@
   var head = document.head || document.documentElement;
 
   /*
-   * Give a control its hover text, and write it only where it changed.
+   * Hover text for the controls this script adds, drawn rather than left to the browser.
    *
-   * The guard is the point of this rather than an economy. Every control this script adds to the footer is repainted on
-   * a 700 ms timer so that it survives the panel replacing the row it sits in - and the browser decides when a tooltip
-   * may appear by watching that same attribute, so rewriting the string twice a second kept the wait from ever
-   * finishing and those buttons had no hover text at all. A button whose whole face is one character has no other way
-   * to say what it does, which is also why the text is set as the accessible name.
+   * The native `title` attribute does not surface in this panel. Its own footer hints are a component it renders on
+   * mouseenter - the context meter's is one of them - and not one control in that row carries a `title` that a reader
+   * ever sees. So relying on the attribute meant these buttons had no hover text at all, however carefully it was set.
+   *
+   * The box is styled from the same theme variables the panel's own hint uses, rather than by borrowing its class: the
+   * build hashes the suffix of every class name, and matching `popup_` by pattern would just as happily find some other
+   * component's popup. `aria-label` carries the text, which is what the panel's own buttons use for it, and is what the
+   * handler below reads - so changing the label needs no rewiring.
    */
+  var labelBox = null;
+  var hideLabel = function(){
+    if (labelBox && labelBox.parentNode) labelBox.parentNode.removeChild(labelBox);
+    labelBox = null;
+  };
+  var showLabel = function(el){
+    var text = el && el.getAttribute('aria-label');
+    if (!text) return;
+    hideLabel();
+    var box = document.createElement('div');
+    box.setAttribute('data-cce-label', '1');
+    var s = box.style;
+    s.position = 'fixed'; s.zIndex = '1000'; s.pointerEvents = 'none';
+    s.maxWidth = '260px'; s.padding = '8px';
+    s.background = 'var(--app-menu-background, var(--vscode-editorWidget-background, #252526))';
+    s.border = '1px solid var(--app-input-border, var(--vscode-widget-border, #454545))';
+    s.borderRadius = 'var(--corner-radius-large, 6px)';
+    s.color = 'var(--app-primary-foreground, var(--vscode-foreground, #ccc))';
+    s.fontSize = '.9em'; s.lineHeight = '1.35';
+    box.textContent = text;
+    document.body.appendChild(box);
+    /* Measured after it is in the document, because its height depends on how many lines the text wrapped to. Above the
+       button when there is room, and kept inside the panel on both sides - the footer's rightmost controls would
+       otherwise put the box off the edge. */
+    var r = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+    s.left = Math.max(8, Math.min(window.innerWidth - b.width - 8, r.left + r.width / 2 - b.width / 2)) + 'px';
+    s.top = (r.top - b.height - 8 >= 8 ? r.top - b.height - 8 : r.bottom + 8) + 'px';
+    labelBox = box;
+  };
   var setLabel = function(el, text){
-    if (!el || el.title === text) return;
-    el.title = text;
-    el.setAttribute('aria-label', text);
+    if (!el) return;
+    if (el.getAttribute('aria-label') !== text) el.setAttribute('aria-label', text);
+    if (el.hasAttribute('data-cce-labelled')) return;
+    el.setAttribute('data-cce-labelled', '1');
+    el.addEventListener('mouseenter', function(){ showLabel(el); });
+    el.addEventListener('mouseleave', hideLabel);
+    // A box left hanging over a control the reader has just acted on reads as stuck rather than as informative.
+    el.addEventListener('click', hideLabel);
   };
   /* Same reason, for the properties those repaints write: an unchanged value is not worth a mutation. */
   var setStyle = function(el, prop, value){

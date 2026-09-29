@@ -143,6 +143,7 @@
     try { ensureViewControl(); } catch (e) {}
     try { ensurePlainControl(); } catch (e) {}
     try { ensureInfo(); } catch (e) {}
+    try { orderControls(); } catch (e) {}
     try { wireCtxButton(); } catch (e) {}
     try { watchIdle(); } catch (e) {}
     try { markCtxLow(); } catch (e) {}
@@ -246,6 +247,36 @@
    * has no messages at all - and the panel may replace it. The element passed in is one already in hand, so finding the
    * list costs nothing beyond walking up to the scrolling ancestor.
    */
+  /*
+   * The controls this script adds, in one fixed left-to-right order.
+   *
+   * Each of them puts itself immediately before the permission-mode selector, so without this their order is whichever
+   * was created first - and that changes with what the conversation holds, since the view filter only appears once there
+   * is a sub-agent to switch between. The reader would find them somewhere different in each conversation.
+   *
+   * Nothing is moved while they are already in this order: rearranging the row on a timer would pull a button out from
+   * under the pointer, and a click that lands on the wrong control is worse than an order nobody chose.
+   */
+  var ORDER = ['[data-cce-mute]', '[data-cce-view]', '[data-cce-info]', '[data-cce-plain-btn]'];
+  var orderControls = function(){
+    var send = document.querySelector(SEND);
+    if (!send) return;
+    var mode = send.previousElementSibling;
+    if (!mode || !mode.parentElement) return;
+    var want = [];
+    for (var i = 0; i < ORDER.length; i++) {
+      var el = document.querySelector(ORDER[i]);
+      if (el && el.parentElement === mode.parentElement) want.push(el);
+    }
+    if (!want.length) return;
+    var placed = true;
+    for (var j = 0; j < want.length && placed; j++) {
+      placed = (j + 1 < want.length) ? want[j].nextElementSibling === want[j + 1] : want[j].nextElementSibling === mode;
+    }
+    if (placed) return;
+    for (var k = 0; k < want.length; k++) mode.parentElement.insertBefore(want[k], mode);
+  };
+
   var aimed = null, aimer = null;
   var aimText = function(anyMessage){
     if (!anyMessage) return;
@@ -300,7 +331,7 @@
     setInterval(probe, POLL_MS);
     // The chime and the low-context outline must not depend on DOM churn: a turn can end without
     // any further mutation, which would leave the last sweep observing a still-busy state.
-    setInterval(function(){ try { watchIdle(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensurePlainControl(); } catch (e) {} }, 700);
+    setInterval(function(){ try { watchIdle(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensurePlainControl(); } catch (e) {} try { orderControls(); } catch (e) {} }, 700);
     run();
     report();
   };

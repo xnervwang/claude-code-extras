@@ -75,11 +75,44 @@
    * size like every other icon in the editor. The code points were read out of that font's own glyph table rather than
    * copied from a list - a wrong one draws an empty box and nothing else says why.
    */
-  var EYE_OPEN = String.fromCharCode(0xEA70), EYE_SHUT = String.fromCharCode(0xEAE7);
+  /*
+   * Drawn rather than taken from the icon font.
+   *
+   * The font route produced an empty box: the family never took effect on this button, and whatever it fell back to has
+   * nothing at that code point. The class these buttons copy already sizes an `svg` child, which says what this row is
+   * built to hold - so this is what the panel's own controls do, and it cannot fail the way a missing glyph does.
+   */
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var eyeIcon = function(shut){
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.4');
+    svg.setAttribute('stroke-linecap', 'round');
+    var lens = document.createElementNS(SVG_NS, 'path');
+    lens.setAttribute('d', 'M1.6 8S3.9 4 8 4s6.4 4 6.4 4-2.3 4-6.4 4S1.6 8 1.6 8z');
+    svg.appendChild(lens);
+    var pupil = document.createElementNS(SVG_NS, 'circle');
+    pupil.setAttribute('cx', '8'); pupil.setAttribute('cy', '8'); pupil.setAttribute('r', '1.9');
+    svg.appendChild(pupil);
+    if (shut) {
+      var slash = document.createElementNS(SVG_NS, 'path');
+      slash.setAttribute('d', 'M2.6 2.6l10.8 10.8');
+      svg.appendChild(slash);
+    }
+    return svg;
+  };
   var paintPlain = function(){
     if (!PLAINBTN) return;
     var on = plainOn();
-    if (PLAINBTN.textContent !== (on ? EYE_SHUT : EYE_OPEN)) PLAINBTN.textContent = on ? EYE_SHUT : EYE_OPEN;
+    // Replaced only where the state turned over, so a repaint on the timer does not rebuild the icon twice a second.
+    var want = on ? 'shut' : 'open';
+    if (PLAINBTN.getAttribute('data-cce-eye') !== want) {
+      PLAINBTN.setAttribute('data-cce-eye', want);
+      while (PLAINBTN.firstChild) PLAINBTN.removeChild(PLAINBTN.firstChild);
+      PLAINBTN.appendChild(eyeIcon(on));
+    }
     setStyle(PLAINBTN, 'opacity', on ? '1' : '0.6');
     setLabel(PLAINBTN, on
       ? 'Showing the conversation only - click to bring back thinking and tool calls'
@@ -98,10 +131,6 @@
     PLAINBTN = document.createElement('button');
     PLAINBTN.type = 'button';
     PLAINBTN.setAttribute('data-cce-plain-btn', '1');
-    /* The icon font by name rather than by the panel's own `codicon` class: that class appears in a great many rules
-       here, each qualified by an ancestor this button does not have, and inheriting whichever of them happened to match
-       is not something to rely on. The face is set by paintPlain below. */
-    PLAINBTN.style.fontFamily = 'codicon';
     var proto = document.querySelector('button[class*="menuButton"]');
     if (proto) PLAINBTN.className = proto.className;
     else {
