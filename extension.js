@@ -28,6 +28,7 @@ const EDGE_SETTING = 'claudeCodeExtras.userMessageEdge';
 const STATUS_BAR_SETTING = 'claudeCodeExtras.showStatusBar';
 const REMOVED_KEY = 'claudeCodeExtras.removed';
 const PLUGIN_KEY = 'claudeCodeExtras.workPlanPlugin';
+const SWEEP_KEY = 'claudeCodeExtras.lastOrphanSweep';
 
 /** Every install of Claude Code this adapter can see: the active one plus sibling versions in the same folder. */
 function installs(adapter) {
@@ -225,7 +226,27 @@ function activate(context) {
     const v = globalThis.__cceActiveChat;
     return typeof v === 'string' ? v : '';
   };
+  /*
+   * Delete the plans of conversations that no longer exist, at most once a calendar day.
+   *
+   * There is no timer for this, deliberately. It is reached from activation and from the periodic refresh below noticing
+   * that the day has changed - so opening a window is what triggers it, and a window left open for weeks still gets a
+   * turn. On every other call the whole cost is one string compare.
+   *
+   * The day is recorded before the work, not after: several windows are separate extension hosts sharing one unlocked
+   * directory, and a reading that keeps failing should not be retried twice a minute until midnight.
+   */
+  const sweepPlans = async () => {
+    if (removed()) return;
+    const day = new Date().toISOString().slice(0, 10);
+    if (context.globalState.get(SWEEP_KEY, '') === day) return;
+    await context.globalState.update(SWEEP_KEY, day);
+    const r = workplan.sweepOrphans();
+    if (r.why) log.appendLine('orphan work plans: ' + r.why);
+    else if (r.deleted) log.appendLine(`orphan work plans: deleted ${r.deleted}, kept ${r.kept}`);
+  };
   const refreshPlans = () => {
+    sweepPlans().catch((e) => log.appendLine('orphan work plans: ' + e.message));
     const moved = workplan.setFocus(activeChat());
     if (workplan.refresh() || moved) paintBadge();
   };

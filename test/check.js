@@ -484,5 +484,78 @@ console.log('\none limit on a description');
   else bad(`the view cuts at ${want[0]}/${want[1]} but ${off.join(', ')}`);
 }
 
+/* ── 8. deleting the plans of conversations that no longer exist ──
+   The only code here that removes a file somebody wrote, so the cases that must NOT delete matter more than the one that
+   must. Everything below runs against a directory made for the purpose; the real one is never named. */
+console.log('\nabandoned work plans');
+{
+  const plan = require('../src/workplan');
+  const OLD = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const NEW = Date.now();
+  const id = (n) => `${n}${'0'.repeat(7)}-0000-0000-0000-000000000000`;
+
+  /* A tree holding the transcripts named in `live` and a plan for each id in `plans`, with the given age. */
+  const build = (live, plans) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-sweep-'));
+    const projects = path.join(root, 'projects');
+    const dir = path.join(root, 'plans');
+    fs.mkdirSync(path.join(projects, '-some-project'), { recursive: true });
+    fs.mkdirSync(dir, { recursive: true });
+    for (const s of live) fs.writeFileSync(path.join(projects, '-some-project', s + '.jsonl'), '{}\n');
+    for (const [s, age] of plans) {
+      const f = path.join(dir, s + '.json');
+      fs.writeFileSync(f, '{"nodes":[]}');
+      fs.utimesSync(f, age / 1000, age / 1000);
+    }
+    return { root, projects, dir };
+  };
+  const left = (dir) => fs.readdirSync(dir).sort();
+
+  const cases = [
+    ['an abandoned plan that has settled is deleted',
+      () => build([id(1)], [[id(1), OLD], [id(2), OLD]]),
+      (t, r) => r.deleted === 1 && r.kept === 1 && left(t.dir).join() === id(1) + '.json'],
+    ['a plan whose conversation is still there is kept',
+      () => build([id(1), id(2)], [[id(1), OLD], [id(2), OLD]]),
+      (t, r) => r.deleted === 0 && r.kept === 2 && left(t.dir).length === 2],
+    ['an abandoned plan written this week is kept',
+      () => build([id(1)], [[id(2), NEW]]),
+      (t, r) => r.deleted === 0 && r.kept === 1 && left(t.dir).length === 1],
+    ['nothing is deleted when no transcript can be read',
+      () => { const t = build([], [[id(1), OLD], [id(2), OLD]]); return t; },
+      (t, r) => r.deleted === 0 && !!r.why && left(t.dir).length === 2],
+    ['nothing is deleted when the transcript directory is missing',
+      () => { const t = build([id(1)], [[id(2), OLD]]); fs.rmSync(t.projects, { recursive: true }); return t; },
+      (t, r) => r.deleted === 0 && !!r.why && left(t.dir).length === 1],
+    ['a sub-agent transcript does not count as a conversation',
+      () => {
+        const t = build([id(1)], [[id(2), OLD]]);
+        const deep = path.join(t.projects, '-some-project', id(2), 'subagents');
+        fs.mkdirSync(deep, { recursive: true });
+        fs.writeFileSync(path.join(deep, 'agent-abc.jsonl'), '{}\n');
+        return t;
+      },
+      (t, r) => r.deleted === 1 && left(t.dir).length === 0],
+    ['a file that is not a plan is left where it is',
+      () => {
+        const t = build([id(1)], []);
+        fs.writeFileSync(path.join(t.dir, 'notes.txt'), 'mine');
+        fs.mkdirSync(path.join(t.dir, 'archive'));
+        return t;
+      },
+      (t, r) => r.deleted === 0 && left(t.dir).join() === 'archive,notes.txt'],
+  ];
+
+  for (const [what, make, want] of cases) {
+    const t = make();
+    let r;
+    try { r = plan.sweepOrphans({ dir: t.dir, projects: t.projects }); }
+    catch (e) { bad(`${what}: threw ${e.message}`); fs.rmSync(t.root, { recursive: true, force: true }); continue; }
+    if (want(t, r)) ok(what);
+    else bad(`${what}: got ${JSON.stringify(r)} leaving ${JSON.stringify(left(t.dir))}`);
+    fs.rmSync(t.root, { recursive: true, force: true });
+  }
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

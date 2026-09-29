@@ -182,6 +182,73 @@ function readPlans() {
   return out;
 }
 
+/*
+ * Where Claude Code keeps its transcripts: one directory per starting directory, and inside it one file per conversation
+ * named by the same session id a plan is named by.
+ *
+ * Only that one level is read. Deeper down are the transcripts of sub-agents, which are not conversations - reading them
+ * as though they were would count sessions that never had a plan, and a recursive walk costs a thousand files more.
+ */
+const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
+/* A plan younger than this is left alone whatever the transcripts say. Its real job is not to wait longer - a transcript
+   survives months of silence before Claude Code removes it - but to be certain that nothing still being written is ever
+   touched, whatever went wrong with the reading below. */
+const SETTLED_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Every session id that still has a transcript, or null when that could not be established.
+ *
+ * Null rather than an empty set, because the two mean opposite things and only one of them is safe: an unreadable or
+ * empty transcript directory would make every plan on the machine look abandoned, and deleting all of them is exactly
+ * the accident this returns null to prevent. A machine really holding no conversations also holds no plans, so nothing
+ * is lost by refusing that case too.
+ */
+function liveSessions(projects = PROJECTS) {
+  let dirs;
+  try { dirs = fs.readdirSync(projects, { withFileTypes: true }); } catch (_) { return null; }
+  const live = new Set();
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    let names;
+    try { names = fs.readdirSync(path.join(projects, d.name)); } catch (_) { continue; }
+    for (const n of names) if (n.endsWith('.jsonl')) live.add(n.slice(0, -6));
+  }
+  return live.size ? live : null;
+}
+
+/**
+ * Delete the plans of conversations that no longer exist. Returns what happened, for the log.
+ *
+ * A conversation whose transcript is gone can never be resumed, so its plan is a file nothing can reach: not this view,
+ * which reads only the conversation in front of the reader, and not Claude Code. Left alone they only accumulate - at the
+ * rate this machine starts conversations, thousands within a year.
+ *
+ * It deletes rather than moving them aside. An archive was the first shape of this and it was the wrong one: it has no
+ * bound, so the files it saves from deletion are the same files somebody has to deal with later.
+ */
+function sweepOrphans(opts = {}) {
+  const now = opts.now || Date.now();
+  const dir = opts.dir || planDir();
+  const live = liveSessions(opts.projects || PROJECTS);
+  if (!live) return { deleted: 0, kept: 0, why: 'no transcripts could be read, so nothing was treated as abandoned' };
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return { deleted: 0, kept: 0, why: '' }; }
+  let deleted = 0, kept = 0;
+  for (const name of names) {
+    if (!PLAN_FILE.test(name)) continue;
+    if (live.has(name.replace(/\.json$/i, ''))) { kept++; continue; }
+    const file = path.join(dir, name);
+    let st;
+    try { st = fs.statSync(file); } catch (_) { continue; }
+    if (now - st.mtimeMs < SETTLED_MS) { kept++; continue; }
+    // Already gone means another window got here first, which is the ordinary outcome of two of them starting on one
+    // day rather than a fault: several extension hosts share this directory and nothing locks it.
+    try { fs.unlinkSync(file); deleted++; }
+    catch (e) { if (e.code !== 'ENOENT') kept++; }
+  }
+  return { deleted, kept, why: '' };
+}
+
 /** Open counts, which is what the view puts in its title so the shape of the work is legible without expanding it. */
 function countOpen(nodes, acc = { discussing: 0, todo: 0, parked: 0, done: 0, dropped: 0 }) {
   for (const n of nodes || []) {
@@ -192,6 +259,7 @@ function countOpen(nodes, acc = { discussing: 0, todo: 0, parked: 0, done: 0, dr
 }
 
 module.exports = {
-  readPlan, readPlans, countOpen, planDir,
-  DATA_ROOT, PLAN_DIR, PLAN_FILE, STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
+  readPlan, readPlans, countOpen, planDir, liveSessions, sweepOrphans,
+  DATA_ROOT, PLAN_DIR, PLAN_FILE, PROJECTS, SETTLED_MS,
+  STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
 };
