@@ -83,15 +83,27 @@ function kindOf(text) {
  * `panel` pairs each `init` with the most recent thing that asked for a panel and has no other `init` after it, so two
  * panels opening together are not both credited with the first one's wait.
  */
-function readOut(text) {
+function readOut(text, pending = {}) {
   const rows = lines(text);
   const out = [];
-  let asked = null;         // the pending panel request or activation
-  let spawned = null;       // the pending CLI spawn
+  /* Carried in and back out, because the log is read in pieces: a wait longer than the gap between two reads has its
+     start in one piece and its end in another, and a pairing that only lived inside one call could never join them. That
+     silently dropped exactly the waits worth recording - the short ones fit in one piece and the long ones did not. */
+  let asked = pending.asked || null;
+  let spawned = pending.spawned || null;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const kind = kindOf(row.text);
     if (kind === 'activate' || kind === 'panel-asked') {
+      /* A fresh request while one is still pending, long after it: the first panel never came up and was given up on.
+         Quick succession is two panels opening together instead, so the gap has to be worth calling a wait - and that
+         same gap is how long someone sat there before closing it, which is the only figure this case can report. */
+      if (asked && row.ms - asked.ms >= HOST_FLOOR_MS) {
+        out.push({
+          what: 'abandoned', trigger: asked.trigger,
+          at: new Date(asked.ms).toISOString(), waited: row.ms - asked.ms,
+        });
+      }
       asked = { ms: row.ms, trigger: kind === 'activate' ? 'window' : 'click' };
       continue;
     }
@@ -129,7 +141,7 @@ function readOut(text) {
       }
     }
   }
-  return out;
+  return { waits: out, pending: { asked, spawned } };
 }
 
 /**
@@ -154,7 +166,9 @@ function split(waits, thresholdMs = THRESHOLD_MS) {
   const fast = {};
   for (const w of waits || []) {
     if (w.waited >= thresholdMs) { slow.push(w); continue; }
-    if (w.what === 'host') continue;
+    /* Neither of these is an opening that finished, so neither belongs in a count of how many did. A short `abandoned`
+       is someone clicking twice in a row rather than giving up on anything. */
+    if (w.what === 'host' || w.what === 'abandoned') continue;
     const key = `${w.what}/${w.trigger}`;
     fast[key] = (fast[key] || 0) + 1;
   }
@@ -244,7 +258,13 @@ function sample(opts) {
   let stat;
   try { stat = fs.statSync(log); } catch (_) { return { added: [], state, why: 'no log for this window yet' }; }
   const from = (state.file === log && state.size <= stat.size) ? state.size : 0;
-  if (from === stat.size) return { added: [], state: { file: log, size: stat.size }, why: '' };
+  /* Nothing new still has to hand the state back whole. Returning a trimmed copy loses the half-finished pairing and the
+     day's count, so the wait in progress right now would end up with no beginning. */
+  const carry = (size) => ({
+    file: log, size, day: state.day, counts: state.counts, version: state.version || version,
+    pending: state.pending,
+  });
+  if (from === stat.size) return { added: [], state: carry(stat.size), why: '' };
   /* One byte before the offset comes too, and it is what says whether the offset sat on a line boundary. Without it a
      resume that landed exactly after a newline discards the first whole line - which is usually the trigger, so the
      wait that follows pairs with nothing and the file silently records fewer waits than happened. */
@@ -254,14 +274,29 @@ function sample(opts) {
     const fd = fs.openSync(log, 'r');
     try {
       const buf = Buffer.allocUnsafe(stat.size - from + back);
-      fs.readSync(fd, buf, 0, buf.length, from - back);
-      text = buf.toString('utf8');
+      /* Only as far as the read actually got. The log is being appended to while this runs, so a short read is ordinary,
+         and the rest of an unsafely allocated buffer is whatever was in that memory - which parses as garbage. */
+      const got = fs.readSync(fd, buf, 0, buf.length, from - back);
+      text = buf.toString('utf8', 0, got);
     } finally { fs.closeSync(fd); }
   } catch (e) { return { added: [], state, why: 'could not read the log: ' + e.message }; }
 
   if (back) text = text[0] === '\n' ? text.slice(1) : text.slice(text.indexOf('\n') + 1);
 
-  const { slow, fast } = split(readOut(text), thresholdMs);
+  const read = readOut(text, state.pending || {});
+  const pending = Object.assign({}, read.pending);
+  /* A request still waiting once the ceiling has passed never arrived at all. Recorded rather than forgotten, because
+     otherwise the worst case - a panel that simply does not open - is the one case that leaves nothing behind. Its
+     figure is how long it had been waiting when it was written off, which is a floor on the real answer, not the answer.
+     A panel that turns up later has nothing left to pair with, and that is the right outcome: it was already counted. */
+  if (pending.asked && now - pending.asked.ms > CEILING_MS) {
+    read.waits.push({
+      what: 'abandoned', trigger: pending.asked.trigger,
+      at: new Date(pending.asked.ms).toISOString(), waited: now - pending.asked.ms, open: true,
+    });
+    pending.asked = null;
+  }
+  const { slow, fast } = split(read.waits, thresholdMs);
   const added = slow.map((r) => Object.assign({ seen: new Date(now).toISOString(), version }, r));
 
   /* The day's count carries over between calls; when the day turns, the finished day goes out as its own line. */
@@ -284,7 +319,7 @@ function sample(opts) {
   }
   return {
     added,
-    state: { file: log, size: stat.size, day: today, counts, version },
+    state: { file: log, size: stat.size, day: today, counts, version, pending },
     why: '',
   };
 }

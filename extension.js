@@ -241,7 +241,10 @@ function activate(context) {
         latencyState = r.state;
         /* Only the offset needs to survive a restart; a half-finished day's count does not, and writing it on every tick
            would put a shared store back in the path of something each window counts for itself. */
-        context.globalState.update(LATENCY_KEY, { file: r.state.file, size: r.state.size });
+        /* The offset and any half-finished pairing survive a restart; a half-counted day does not, and writing the count
+           on every tick would put a store every window shares back in the path of something each counts for itself. */
+        context.globalState.update(LATENCY_KEY,
+          { file: r.state.file, size: r.state.size, pending: r.state.pending });
       }
       /* Anything recorded is already past the threshold, so it is worth saying without being asked. */
       for (const w of r.added) {

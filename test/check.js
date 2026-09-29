@@ -762,7 +762,7 @@ console.log('\nthe waiting, paired out of the official log');
   const clicked = 'Received message from webview: {"type":"request","requestId":"a","request":{"type":"open_in_editor","sessionId":"s"}}';
   const up = 'Received message from webview: {"type":"request","requestId":"b","request":{"type":"init"}}';
 
-  const one = (text) => L.readOut(text);
+  const one = (text) => L.readOut(text).waits;
   const only = (text, what) => one(text).filter((r) => r.what === what);
 
   {
@@ -924,6 +924,74 @@ console.log('\nthe waiting, paired out of the official log');
       ok('trimming keeps the newest and says how many it dropped');
     } else bad(`trim left ${kept.length} ending at ${kept.length && kept[kept.length - 1].waited}, dropped ${dropped}`);
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+  {
+    /* The failure this whole design turns on: a wait longer than the gap between two reads has its start in one piece of
+       log and its end in another. Pairing that only lived inside one read dropped every one of them, which meant it
+       dropped exactly the waits worth recording and kept the short ones. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat7-'));
+    const log = path.join(root, 'Claude VSCode.log');
+    const dir = path.join(root, 'rec');
+    /* `now` has to sit near the log's own clock, or the pending request is older than the ceiling and gets written off
+       as one that never arrived - which is the other new behaviour, not this one. */
+    const t0 = Date.parse('2026-09-29T21:00:05Z');
+    fs.writeFileSync(log, at('0:00.000', clicked) + '\n');
+    const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 808, thresholdMs: 10000 });
+    fs.appendFileSync(log, at('1:30.000', up) + '\n');
+    const second = L.sample({
+      log, dir, state: first.state, version: 'v1', now: t0 + 95000, pid: 808, thresholdMs: 10000,
+    });
+    if (!first.added.length && first.state.pending.asked
+        && second.added.length === 1 && second.added[0].waited === 90000) {
+      ok('a wait split across two reads is still paired, and measures 90s');
+    } else bad(`split across reads gave ${first.added.length} then ${JSON.stringify(second.added)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* Clicking again long after the first attempt never opened: the abandoned one has to be recorded, and the new one
+       timed from the new click rather than the old. Without this the total someone actually sat through is nowhere. */
+    const waits = one([at('0:00.000', clicked), at('1:30.000', clicked), at('1:40.000', up)].join('\n'));
+    const gone = waits.find((w) => w.what === 'abandoned');
+    const got = waits.find((w) => w.what === 'panel');
+    if (gone && gone.waited === 90000 && got && got.waited === 10000) {
+      ok('a panel given up on is recorded at 90s, and the retry at 10s from its own click');
+    } else bad(`retry after abandoning gave ${JSON.stringify(waits)}`);
+  }
+  {
+    /* Two panels opened one after the other is not an abandonment, and must not be reported as one. */
+    const waits = one([at('0:00.000', clicked), at('0:00.400', clicked), at('0:05.000', up)].join('\n'));
+    if (!waits.some((w) => w.what === 'abandoned')) ok('two clicks in quick succession are not called an abandonment');
+    else bad(`a quick second click was reported as abandoned: ${JSON.stringify(waits)}`);
+  }
+  {
+    /* A panel that never opens at all: the ceiling is what decides it, and it leaves a record rather than silence. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat8-'));
+    const log = path.join(root, 'Claude VSCode.log');
+    const dir = path.join(root, 'rec');
+    const t0 = Date.parse('2026-09-29T21:00:00Z');
+    fs.writeFileSync(log, at('0:00.000', clicked) + '\n');
+    const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 909, thresholdMs: 10000 });
+    fs.appendFileSync(log, at('0:30.000', 'AuthManager initialized') + '\n');
+    const late = L.sample({
+      log, dir, state: first.state, version: 'v1', now: t0 + L.CEILING_MS + 1000, pid: 909, thresholdMs: 10000,
+    });
+    const gone = late.added.find((w) => w.what === 'abandoned');
+    if (gone && gone.open === true && !late.state.pending.asked) {
+      ok('a panel that never opens is written off at the ceiling, marked as still open');
+    } else bad(`a never-opening panel gave ${JSON.stringify(late.added)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* A read that returns short must not turn the rest of an unsafely allocated buffer into records. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat9-'));
+    const log = path.join(root, 'Claude VSCode.log');
+    const dir = path.join(root, 'rec');
+    fs.writeFileSync(log, [at('0:00.000', clicked), at('0:30.000', up)].join('\n') + '\n');
+    const r = L.sample({ log, dir, state: {}, version: 'v1', pid: 1010, thresholdMs: 10000 });
+    const junk = L.readRecords(L.recordFile(dir, 1010)).filter((x) => x.what !== 'panel' && x.what !== 'tally');
+    if (r.added.length === 1 && !junk.length) ok('nothing but real records reaches the file');
+    else bad(`the file also holds ${JSON.stringify(junk)}`);
+    fs.rmSync(root, { recursive: true, force: true });
   }
   {
     const rows = L.summarise([
