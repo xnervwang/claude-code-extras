@@ -24,6 +24,7 @@ const ADAPTERS = require('./src/adapters');
 
 const SETTING = 'claudeCodeExtras.enabled';
 const COLOR_SETTING = 'claudeCodeExtras.userMessageColor';
+const EDGE_SETTING = 'claudeCodeExtras.userMessageEdge';
 const STATUS_BAR_SETTING = 'claudeCodeExtras.showStatusBar';
 const REMOVED_KEY = 'claudeCodeExtras.removed';
 const PLUGIN_KEY = 'claudeCodeExtras.workPlanPlugin';
@@ -88,7 +89,10 @@ function activate(context) {
     return kept;
   }
 
-  const options = () => ({ enabled: enabled(), userColor: cfg().get(COLOR_SETTING, ''), tasks: readTasks(knownDirs()) });
+  const options = () => ({
+    enabled: enabled(), userColor: cfg().get(COLOR_SETTING, ''), userEdge: cfg().get(EDGE_SETTING, true) !== false,
+    tasks: readTasks(knownDirs()),
+  });
 
   /* Bring every install in line with the current settings. Only installing, upgrading or removing the patch itself
      asks for a reload; on and off and the color are picked up by an open panel within a couple of seconds. */
@@ -157,7 +161,7 @@ function activate(context) {
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(SETTING) || e.affectsConfiguration(STATUS_BAR_SETTING)) renderBar();
-      if (![SETTING, COLOR_SETTING].some((k) => e.affectsConfiguration(k))) return;
+      if (![SETTING, COLOR_SETTING, EDGE_SETTING].some((k) => e.affectsConfiguration(k))) return;
       const c = cfg().get(COLOR_SETTING, '');
       if (c && !safeColor(c)) vscode.window.showWarningMessage(`Claude Code Extras: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
       sync();

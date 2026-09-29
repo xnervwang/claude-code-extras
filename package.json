@@ -122,6 +122,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Text color of **your own messages** in the Claude Code panel, as a CSS color — e.g. `#90EE90`, `lightgreen` or `rgb(144,238,144)`. Leave empty to keep the panel's own color. Changes apply live."
+        },
+        "claudeCodeExtras.userMessageEdge": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Mark **your own messages** in the Claude Code panel with a bar down their left edge, in the theme's focus colour. The panel already outlines them, but in most themes that outline lands within a shade of the editor background, so a question and a reply read as one stream. Off leaves the panel's own outline alone. Changes apply live."
         }
       }
     }

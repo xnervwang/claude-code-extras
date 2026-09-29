@@ -115,6 +115,25 @@ function liveCss(opts = {}) {
   let css = `/* Claude Code Extras live settings - written by the extension */\n:root{--cce-on:${on ? 1 : 0};}\n`;
   if (on) css += STAMP_CSS + '\n';
   if (color) css += `${USER_SELECTOR},${USER_SELECTOR} *{color:${color} !important;}\n`;
+  /*
+   * A bar down the left edge of what you said.
+   *
+   * The panel already tells your messages apart - a one pixel border and a background, both from theme variables - and
+   * in most themes both land within a shade of the editor's own background, so a reply and a question read as one
+   * stream. This raises the contrast of the distinction that is already there rather than adding a second one, and it
+   * does it on an edge rather than as a fill: a coloured block behind text competes with the text, and every hue this
+   * panel uses already means something - green succeeded, red failed, amber warned - so a tinted message would read as
+   * a message with a status.
+   *
+   * The colour is the theme's focus ring, so it is an accent the reader already sees elsewhere in the editor rather than
+   * a value chosen here, in either theme. The left corners are squared because a bar this wide on a rounded box reads as
+   * a smear rather than an edge, and the padding keeps the text off it.
+   */
+  if (on && opts.userEdge) {
+    css += `${USER_SELECTOR}{border-left:3px solid var(--vscode-focusBorder,var(--vscode-textLink-foreground))`
+      + ' !important;border-top-left-radius:0 !important;border-bottom-left-radius:0 !important;'
+      + 'padding-left:8px !important;}\n';
+  }
   if (on) css += scheduleProperty(opts.tasks);
   return css;
 }
