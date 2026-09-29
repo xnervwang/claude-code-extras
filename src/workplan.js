@@ -51,6 +51,10 @@ const PLAN_DIR = require('./plugin-install').DATA_DIR;
 /* A conversation's file is named by its session id and nothing else, so anything else in that directory belongs to
    something else and is left alone. */
 const PLAN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.json$/i;
+/* The Stop hook offers once, per conversation, to start a plan where none exists, and remembers having offered by
+   leaving one of these behind. It outlives the conversation the same way a plan does, so it is swept the same way -
+   otherwise the only trace of a conversation that declined would accumulate here for ever. */
+const OFFER_FILE = /^[0-9a-f][0-9a-f-]{7,}\.offered$/i;
 const STATES = ['discussing', 'todo', 'parked', 'done', 'dropped'];
 /* Depth and count are bounded because the file is written by another process: a cycle turned into JSON, or a runaway
    generator, would otherwise be rendered forever. Both are far above any plan a person reads. */
@@ -239,8 +243,8 @@ function sweepOrphans(opts = {}) {
   try { names = fs.readdirSync(dir); } catch (_) { return { deleted: 0, kept: 0, why: '' }; }
   let deleted = 0, kept = 0;
   for (const name of names) {
-    if (!PLAN_FILE.test(name)) continue;
-    if (live.has(name.replace(/\.json$/i, ''))) { kept++; continue; }
+    if (!PLAN_FILE.test(name) && !OFFER_FILE.test(name)) continue;
+    if (live.has(name.replace(/\.(json|offered)$/i, ''))) { kept++; continue; }
     const file = path.join(dir, name);
     let st;
     try { st = fs.statSync(file); } catch (_) { continue; }
@@ -286,6 +290,6 @@ function countOpen(nodes, acc = { discussing: 0, todo: 0, parked: 0, done: 0, dr
 
 module.exports = {
   readPlan, readPlans, countOpen, planDir, liveSessions, sweepOrphans, openFirst,
-  DATA_ROOT, PLAN_DIR, PLAN_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
+  DATA_ROOT, PLAN_DIR, PLAN_FILE, OFFER_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
   STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
 };

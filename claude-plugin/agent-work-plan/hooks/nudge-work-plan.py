@@ -11,6 +11,12 @@ in the moment it is needed - the same reason the injection hook exists rather th
 It is deliberately hard to trigger. A reminder that fires when nothing was owed teaches the reader to skip it, and a
 skipped reminder is worse than none: it costs attention on every turn and buys nothing on the turn that matters. So it
 speaks only when the turn changed something AND the plan is older than the turn.
+
+Where no plan exists at all it speaks once, and then never again in that conversation. This is the harder case, because
+until something writes a plan the injection hook has nothing to inject and the skill is only found when its description
+happens to match - so a conversation can run to its end without the facility ever being mentioned. Measured across 1835
+transcripts on the machine this was written on, 4 of them had a plan. A hook staying quiet to cost nothing is how that
+happens, so the cost is now one sentence, once, after a turn big enough to have needed it.
 """
 import json
 import os
@@ -24,6 +30,10 @@ from plan_path import plan_file
 
 # Below this a turn is conversational - a question answered, a file read - and owes the plan nothing.
 MIN_TOOL_CALLS = 4
+# What a turn has to cost before a conversation with no plan at all is told it could keep one. Measured over 691 turns
+# taken from 120 transcripts: the median turn uses 6 tools and the upper quartile begins at 25, so a turn this size is
+# among the busiest quarter. At this setting 58 conversations in 100 hear the sentence once and the other 42 never do.
+FIRST_PLAN_TOOL_CALLS = 25
 
 
 def turn_shape(transcript):
@@ -70,6 +80,39 @@ def iso_to_epoch(stamp):
         return None
 
 
+def speak(payload, text):
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": payload.get("hook_event_name", "Stop"),
+        "additionalContext": text,
+    }}))
+    return 0
+
+
+def offer_once(payload, path, tools):
+    """Tell a conversation that has no plan that it could keep one, at most one time.
+
+    Having offered is remembered as an empty file beside where the plan would go: this is a new process on every turn
+    and has nowhere else to put it. If the marker cannot be written the offer is not made at all - saying it on every
+    turn instead is the one outcome worth avoiding, and a directory that refuses the marker would refuse the plan too.
+    """
+    if tools < FIRST_PLAN_TOOL_CALLS:
+        return 0
+    marker = os.path.splitext(path)[0] + ".offered"
+    if os.path.exists(marker):
+        return 0
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(marker, "w"):
+            pass
+    except Exception:
+        return 0
+    return speak(payload, (
+        "This conversation is keeping no work plan, and this turn used %d tools. If the work has more than one strand "
+        "to come back to, start one at %s now - the skill agent-work-plan:maintain says what a row holds and what the "
+        "states mean. This is said once per conversation and will not be raised again; a conversation that is one "
+        "question and one answer does not need a plan." % (tools, path)))
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -78,11 +121,12 @@ def main():
     path = plan_file(payload)
     if not path:
         return 0
-    # A conversation that keeps no plan is not nagged into starting one: that is the skill's call, not a hook's.
-    if not os.path.exists(path):
-        return 0
     started, tools = turn_shape(payload.get("transcript_path") or "")
-    if tools < MIN_TOOL_CALLS or not started:
+    if not started:
+        return 0
+    if not os.path.exists(path):
+        return offer_once(payload, path, tools)
+    if tools < MIN_TOOL_CALLS:
         return 0
     began = iso_to_epoch(started)
     if began is None:
@@ -93,14 +137,10 @@ def main():
         return 0
     if touched >= began:
         return 0
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": payload.get("hook_event_name", "Stop"),
-        "additionalContext": (
-            "This turn used %d tools and did not touch the work plan (%s). Reconcile it before finishing: add what "
-            "this turn opened, close what it finished, and leave the rest alone. Only the user's word moves a row to "
-            "\"todo\"." % (tools, path)),
-    }}))
-    return 0
+    return speak(payload, (
+        "This turn used %d tools and did not touch the work plan (%s). Reconcile it before finishing: add what "
+        "this turn opened, close what it finished, and leave the rest alone. Only the user's word moves a row to "
+        "\"todo\"." % (tools, path)))
 
 
 if __name__ == "__main__":

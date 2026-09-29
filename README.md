@@ -84,7 +84,7 @@ The tones are synthesised, so no audio files are shipped, and they play **in the
 machine — so they are heard there even when the editor is attached to a remote host over SSH. The note button in the
 footer toolbar mutes all three, and that choice survives reloads.
 
-**A work plan**, in a view of its own behind the burst-and-wrench icon in the activity bar: what the conversation you are
+**A work plan**, in a view of its own behind the list-and-burst icon in the activity bar: what the conversation you are
 in still has to do, as a real tree with a state on every row — under discussion, to do, parked, done,
 dropped — carried by the row's icon rather than written out beside it. A child is something that has to be finished
 before its parent can be, so a digression discovered while doing
@@ -304,7 +304,7 @@ written at all. A partial patch is worse than none, and a patch applied on a gue
 | `src/workplan.js` | reads the plan files; the whole contract between the two halves is in its header |
 | `src/workplan-view.js` | the work plan tree view |
 | `src/plugin-install.js` | registers the companion Claude Code plugin, and unregisters it on uninstall |
-| `claude-plugin/` | that plugin: the skill that maintains a plan and the two hooks that keep it honest |
+| `claude-plugin/` | that plugin: the skill that maintains a plan and the three hooks that keep it honest |
 | `test/check.js` | parses everything, and verifies every edit against a pristine bundle |
 | `test/against-latest.js` | the same check against whatever the marketplace is shipping |
 | `build/pack.sh` | produces the `.vsix`, without npm |

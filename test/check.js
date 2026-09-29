@@ -498,18 +498,25 @@ console.log('\nabandoned work plans');
   const NEW = Date.now();
   const id = (n) => `${n}${'0'.repeat(7)}-0000-0000-0000-000000000000`;
 
-  /* A tree holding the transcripts named in `live` and a plan for each id in `plans`, with the given age. */
-  const build = (live, plans) => {
+  /* A tree holding the transcripts named in `live`, a plan for each id in `plans`, and an offered-mark for each id in
+     `marks` - all with the age given beside them. */
+  const build = (live, plans, marks) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-sweep-'));
     const projects = path.join(root, 'projects');
     const dir = path.join(root, 'plans');
     fs.mkdirSync(path.join(projects, '-some-project'), { recursive: true });
     fs.mkdirSync(dir, { recursive: true });
     for (const s of live) fs.writeFileSync(path.join(projects, '-some-project', s + '.jsonl'), '{}\n');
-    for (const [s, age] of plans) {
+    const age = (f, at) => fs.utimesSync(f, at / 1000, at / 1000);
+    for (const [s, at] of plans) {
       const f = path.join(dir, s + '.json');
       fs.writeFileSync(f, '{"nodes":[]}');
-      fs.utimesSync(f, age / 1000, age / 1000);
+      age(f, at);
+    }
+    for (const [s, at] of marks || []) {
+      const f = path.join(dir, s + '.offered');
+      fs.writeFileSync(f, '');
+      age(f, at);
     }
     return { root, projects, dir };
   };
@@ -548,6 +555,17 @@ console.log('\nabandoned work plans');
         return t;
       },
       (t, r) => r.deleted === 0 && left(t.dir).join() === 'archive,notes.txt'],
+    /* The Stop hook leaves one of these behind for a conversation it offered a plan to and that never wrote one. It is
+       the only trace such a conversation leaves, so nothing else would ever remove it. */
+    ['the mark saying a plan was offered goes when its conversation does',
+      () => build([id(1)], [], [[id(2), OLD]]),
+      (t, r) => r.deleted === 1 && left(t.dir).length === 0],
+    ['that mark is kept while the conversation is still there',
+      () => build([id(2)], [], [[id(2), OLD]]),
+      (t, r) => r.deleted === 0 && r.kept === 1 && left(t.dir).join() === id(2) + '.offered'],
+    ['and kept while it is younger than the settling time, like a plan',
+      () => build([id(1)], [], [[id(2), NEW]]),
+      (t, r) => r.deleted === 0 && r.kept === 1 && left(t.dir).length === 1],
   ];
 
   for (const [what, make, want] of cases) {
@@ -668,6 +686,69 @@ console.log('\nwhat is left to do, drawn first');
   if (moved && idOf(before, 'b') === idOf(after, 'b') && idOf(before, 'c') === idOf(after, 'c')) {
     ok('a row that closes moves on screen and keeps its id');
   } else bad(`closing a row renames it (moved: ${moved}, was ${idOf(before, 'b')}, now ${idOf(after, 'b')})`);
+}
+
+/* ── 11. what the Stop hook says, and how often ──
+   The hook is the only part of the plugin that can start a plan existing, because until one does the injection has
+   nothing to inject and the skill is found only when its description happens to match. Both halves of that are worth
+   a test: it has to speak on a conversation keeping no plan, and it has to do so exactly once. Run as a process, since
+   the thing under test is the whole script including the marker it writes. */
+console.log('\nwhat the Stop hook says, and how often');
+{
+  const hook = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks', 'nudge-work-plan.py');
+  const session = '30000000-0000-0000-0000-000000000000';
+
+  /* One turn: a message from the user, then `tools` calls. The hook reads the transcript backwards to the message. */
+  const stage = (tools, plan) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-nudge-'));
+    const data = path.join(dir, 'data');
+    fs.mkdirSync(data);
+    const transcript = path.join(dir, 'transcript.jsonl');
+    const lines = [JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:00:00.000Z', message: { content: 'go' } })];
+    for (let i = 0; i < tools; i++) {
+      lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read' }] } }));
+    }
+    fs.writeFileSync(transcript, lines.join('\n') + '\n');
+    if (plan) {
+      const f = path.join(data, session + '.json');
+      fs.writeFileSync(f, JSON.stringify(plan));
+      const back = Date.parse('2025-01-01T00:00:00Z') / 1000;
+      fs.utimesSync(f, back, back);
+    }
+    return { dir, data, transcript };
+  };
+  const run = (t) => {
+    const r = cp.spawnSync('python3', [hook, t.data], {
+      encoding: 'utf8',
+      input: JSON.stringify({ session_id: session, transcript_path: t.transcript, hook_event_name: 'Stop' }),
+    });
+    const said = (r.stdout || '').trim();
+    return { said, marked: fs.existsSync(path.join(t.data, session + '.offered')), status: r.status };
+  };
+
+  {
+    const t = stage(30, null);
+    const first = run(t), second = run(t);
+    if (first.said.includes('keeping no work plan') && first.marked) ok('a busy turn with no plan at all is told it could keep one');
+    else bad(`a busy turn with no plan said ${JSON.stringify(first.said.slice(0, 80))}, marked ${first.marked}`);
+    if (!second.said) ok('and is not told a second time');
+    else bad(`the offer repeats: ${JSON.stringify(second.said.slice(0, 80))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  {
+    const t = stage(5, null);
+    const r = run(t);
+    if (!r.said && !r.marked) ok('a small turn with no plan is left alone, and no mark is spent on it');
+    else bad(`a 5-tool turn was spoken to: ${JSON.stringify(r.said.slice(0, 80))}, marked ${r.marked}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  {
+    const t = stage(10, { nodes: [{ title: 'x', state: 'todo' }] });
+    const r = run(t);
+    if (r.said.includes('did not touch the work plan')) ok('a plan left untouched by the turn is still the other message');
+    else bad(`an untouched plan said ${JSON.stringify(r.said.slice(0, 80))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
