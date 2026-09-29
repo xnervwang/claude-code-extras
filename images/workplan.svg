@@ -4,9 +4,11 @@
 
   VS Code masks this shape and colours it itself, so only the silhouette is ever seen and the colour here is never used.
 
-  The marks are inset by exactly what images/icon.svg insets them by, so the two are the same drawing at the same scale
-  and not merely the same shapes. Filling this canvas while the coloured one inset its content made the same geometry read
-  as two different sizes - and comparing them with the inset undone hid that, which is a comparison worth not repeating.
+  This one FILLS its canvas; images/icon.svg insets the same marks inside its tile. That is not an inconsistency: the
+  inset exists so content does not touch a rounded edge, and here there is no tile - matching it only made this icon
+  smaller than the icons beside it. Measured: the neighbouring Claude Code icon inks 23.9 by 23.9 of the 24 box, this one
+  inked 17.5 by 15.8 while it carried that inset, and 23.6 by 21.4 without it. The transform above is what scales the
+  marks to that, computed from their own bounding box rather than chosen.
 
   The list is drawn whole and the burst laid over it, rather than the list being shaped to make room. Only the rows the
   burst actually reaches are cut back, and only to where its rays are - which was measured by rasterising the burst and
@@ -22,7 +24,7 @@
   white seam through the burst, and on this file the mask makes it do nothing at all).
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-  <g transform="translate(2.6,2.6) scale(0.783)">
+  <g transform="translate(-1.39,1.02) scale(1.0583)">
   <g fill="currentColor">
     <circle cx="3.4" cy="5.4" r="1.9"/>
     <circle cx="3.4" cy="12.0" r="1.9"/>
