@@ -7,6 +7,33 @@ one agent at a time, a table of contents of your own messages, and a chime when 
 Nearly all of it appears inside the Claude Code panel rather than in an interface of its own. The one exception is the
 work plan, which is a view this extension owns, for the reason given where it is described below.
 
+Not affiliated with Anthropic. It works by editing files inside the installed Claude Code extension, which is why
+[How it works, and why it is safe to remove](#how-it-works-and-why-it-is-safe-to-remove) is worth reading before you
+install it.
+
+## Installing
+
+You need VS Code and the Claude Code extension already installed; this one adds to that panel and does nothing without
+it. There is no published package — build it from this repository, which needs `node` and nothing else. No npm install,
+no bundler:
+
+```bash
+git clone git@github.com:xnervwang/claude-code-extras-for-vscode.git
+cd claude-code-extras-for-vscode
+node test/check.js                 # confirms every edit still matches the Claude Code build you have
+bash build/pack.sh                 # writes build/xnerv.claude-code-extras-<version>.vsix
+code --install-extension build/xnerv.claude-code-extras-*.vsix --force
+```
+
+Then reload the window twice: the first reload lets this extension write its changes into the Claude Code files, the
+second lets the panel load them. `Claude Code Extras: Show Status` reports what it managed to patch.
+
+Working over SSH in a remote window installs it on the remote, which is where it has to be — the files it edits are the
+ones the remote is running.
+
+To undo everything, run `Claude Code Extras: Remove from Claude Code (restore original files)`, or just uninstall the
+extension; both put the originals back from the backups it keeps beside them.
+
 ## What it adds
 
 **Times.** A timestamp in front of your messages, in front of every block of a reply, and on tool calls as
