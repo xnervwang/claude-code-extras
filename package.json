@@ -133,6 +133,12 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Mark **your own messages** in the Claude Code panel with a bar down their left edge, in the theme's focus colour. The panel already outlines them, but in most themes that outline lands within a shade of the editor background, so a question and a reply read as one stream. Off leaves the panel's own outline alone. Changes apply live."
+        },
+        "claudeCodeExtras.latencyThresholdSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "markdownDescription": "How long a panel or conversation has to take before it is recorded one by one, in seconds. Anything faster is only counted, so an ordinary day leaves a single line rather than one per open - the count is still what says whether a slow open is the exception or the rule. Read them with **Claude Code Extras: Show How Long Opening a Panel Took**."
         }
       }
     }

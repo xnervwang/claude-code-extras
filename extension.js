@@ -35,6 +35,7 @@ const REMOVED_KEY = 'claudeCodeExtras.removed';
 const PLUGIN_KEY = 'claudeCodeExtras.workPlanPlugin';
 const SWEEP_KEY = 'claudeCodeExtras.lastOrphanSweep';
 const LATENCY_KEY = 'claudeCodeExtras.latencyOffset';
+const THRESHOLD_SETTING = 'claudeCodeExtras.latencyThresholdSeconds';
 
 /** Every install of Claude Code this adapter can see: the active one plus sibling versions in the same folder. */
 function installs(adapter) {
@@ -173,7 +174,7 @@ function activate(context) {
          run this from is rarely the one that was slow. */
       const records = latency.readAll(latencyDir());
       log.appendLine('');
-      for (const line of latency.report(records)) log.appendLine(line);
+      for (const line of latency.report(records, thresholdMs())) log.appendLine(line);
       log.appendLine(`  records: ${path.join(latencyDir(), 'open-latency-<pid>.jsonl')}, one per window`);
       log.show(true);
     }),
@@ -223,26 +224,40 @@ function activate(context) {
     const theirs = ext && ext.packageJSON && ext.packageJSON.version;
     return `${ours || '?'}/${theirs || '?'}`;
   };
+  const thresholdMs = () => Math.max(1, cfg().get(THRESHOLD_SETTING, 10)) * 1000;
+  /* The running count of fast opens lives here rather than in globalState: that store is shared by every window, so two
+     of them incrementing one counter would lose each other's increments - the same reason the records are a file each. */
+  let latencyState = context.globalState.get(LATENCY_KEY, {});
   function sampleLatency() {
     try {
       const r = latency.sample({
         log: latency.logFile(context.logUri.fsPath),
         dir: latencyDir(),
-        state: context.globalState.get(LATENCY_KEY, {}),
+        state: latencyState,
         version: stamp(),
+        thresholdMs: thresholdMs(),
       });
-      if (r.state) context.globalState.update(LATENCY_KEY, r.state);
-      /* Only the long ones are worth a line unprompted; the rest are read with the command below. */
+      if (r.state) {
+        latencyState = r.state;
+        /* Only the offset needs to survive a restart; a half-finished day's count does not, and writing it on every tick
+           would put a shared store back in the path of something each window counts for itself. */
+        context.globalState.update(LATENCY_KEY, { file: r.state.file, size: r.state.size });
+      }
+      /* Anything recorded is already past the threshold, so it is worth saying without being asked. */
       for (const w of r.added) {
-        if (w.waited >= 20000) {
-          log.appendLine(`waited ${(w.waited / 1000).toFixed(1)}s for ${w.what} (${w.trigger}) at ${w.at}`);
-        }
+        log.appendLine(`waited ${(w.waited / 1000).toFixed(1)}s for ${w.what} (${w.trigger}) at ${w.at}`);
       }
     } catch (e) {
       log.appendLine('open latency: ' + e.message);
     }
   }
   sampleLatency();
+  /* The day's count is written out when the window closes, which is the other moment it is known to be complete. */
+  context.subscriptions.push({
+    dispose: () => {
+      try { latency.flush({ dir: latencyDir(), state: latencyState }); } catch (_) { /* closing anyway */ }
+    },
+  });
 
   /*
    * The work plan view. This is the one part of the extension that is its own user interface rather than an addition to

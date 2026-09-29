@@ -777,9 +777,64 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`a restored panel measured ${JSON.stringify(got)}`);
   }
   {
-    const got = only([at('0:00.000', clicked), at('0:00.900', up)].join('\n'), 'panel');
-    if (!got.length) ok('under the floor nothing is recorded, so ordinary opens do not fill the file');
-    else bad(`a 0.9s open was recorded: ${JSON.stringify(got)}`);
+    /* A fast open still has to come out of readOut - it is the denominator - and then be counted rather than recorded. */
+    const waits = one([at('0:00.000', clicked), at('0:00.900', up)].join('\n'));
+    const { slow, fast } = L.split(waits, 10000);
+    if (waits.length === 1 && !slow.length && fast['panel/click'] === 1) {
+      ok('a fast open is counted, not recorded, so an ordinary day does not fill the file');
+    } else bad(`a 0.9s open gave slow ${JSON.stringify(slow)} fast ${JSON.stringify(fast)}`);
+  }
+  {
+    /* The threshold decides which side a wait falls on, and nothing else about it. */
+    const waits = [
+      { what: 'panel', trigger: 'click', waited: 9999 },
+      { what: 'panel', trigger: 'click', waited: 10000 },
+      { what: 'host', trigger: 'x', waited: 3000 },
+    ];
+    const { slow, fast } = L.split(waits, 10000);
+    if (slow.length === 1 && slow[0].waited === 10000 && fast['panel/click'] === 1 && !fast['host/x']) {
+      ok('the threshold is inclusive, and a short host gap is dropped rather than counted');
+    } else bad(`split gave slow ${JSON.stringify(slow)} fast ${JSON.stringify(fast)}`);
+  }
+  {
+    /* The day's count must reach the file, and as one line rather than one per open. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat5-'));
+    const log = path.join(root, 'Claude VSCode.log');
+    const dir = path.join(root, 'rec');
+    const fastPair = (m) => [at(`${m}:00.000`, clicked), at(`${m}:00.500`, up)].join('\n');
+    fs.writeFileSync(log, [fastPair(0), fastPair(1), fastPair(2)].join('\n') + '\n');
+    const day1 = Date.parse('2026-09-29T12:00:00Z');
+    const r1 = L.sample({ log, dir, state: {}, version: 'v1', now: day1, pid: 606, thresholdMs: 10000 });
+    if (!r1.added.length && r1.state.counts['panel/click'] === 3 && !fs.existsSync(L.recordFile(dir, 606))) {
+      ok('three fast opens write nothing yet and are held as a count of three');
+    } else bad(`fast opens gave added ${r1.added.length}, counts ${JSON.stringify(r1.state.counts)}`);
+
+    /* The next day, the finished one goes out. */
+    fs.appendFileSync(log, [at('5:00.000', clicked), at('5:20.000', up)].join('\n') + '\n');
+    const r2 = L.sample({
+      log, dir, state: r1.state, version: 'v1', now: day1 + 24 * 3600 * 1000, pid: 606, thresholdMs: 10000,
+    });
+    const recs = L.readRecords(L.recordFile(dir, 606));
+    const tally = recs.filter((x) => x.what === 'tally');
+    if (tally.length === 1 && tally[0].day === '2026-09-29' && tally[0].counts['panel/click'] === 3
+        && r2.added.length === 1 && r2.added[0].waited === 20000) {
+      ok('when the day turns its count goes out as one line, beside the slow wait itself');
+    } else bad(`day turn left ${JSON.stringify(recs)}`);
+
+    const rows = L.summarise(recs);
+    const click = rows.find((x) => x.what === 'panel' && x.trigger === 'click');
+    if (click && click.n === 1 && click.fast === 3) ok('the summary shows one slow open against three fast ones');
+    else bad(`summarise gave ${JSON.stringify(rows)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* Closing the window is the other moment the count is complete; losing it would lose the denominator. */
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat6-'));
+    const n = L.flush({ dir, state: { day: '2026-09-29', version: 'v1', counts: { 'panel/click': 5 } }, pid: 707 });
+    const recs = L.readRecords(L.recordFile(dir, 707));
+    if (n === 5 && recs.length === 1 && recs[0].counts['panel/click'] === 5) ok('closing the window writes the day\'s count out');
+    else bad(`flush returned ${n} leaving ${JSON.stringify(recs)}`);
+    fs.rmSync(dir, { recursive: true, force: true });
   }
   {
     const text = ['2026-09-29 20:00:00.000 [info] ' + clicked, '2026-09-29 21:00:00.000 [info] ' + up].join('\n');

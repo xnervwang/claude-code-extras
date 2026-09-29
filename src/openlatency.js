@@ -30,10 +30,19 @@ const path = require('path');
 
 /** `2026-09-29 21:04:21.660 [info] message` - a line that is the host's own, rather than a continuation. */
 const LINE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3}) \[(\w+)\] ([\s\S]*)$/;
-/* Below this a gap is ordinary scheduling rather than something a person waited through. */
-const FLOOR_MS = 1500;
+/*
+ * A floor for the host's own silence only.
+ *
+ * Panel and CLI waits have no floor, because every one of them is counted even when it is fast - that count is what says
+ * whether a slow open is the exception or the rule, and a version whose opens went from mostly fast to mostly slow has
+ * regressed even if its worst figure did not move. The host's gaps are different: they are not openings of anything, so
+ * there is no denominator to belong to, and without a floor every pause in its logging would arrive as one.
+ */
+const HOST_FLOOR_MS = 1500;
 /* A gap longer than this is taken to be a window left alone, not a wait, and is dropped rather than recorded. */
 const CEILING_MS = 10 * 60 * 1000;
+/* Waits at or above this are recorded one by one; below it only the count is kept. Overridden from settings. */
+const THRESHOLD_MS = 10000;
 /* How many records to keep per window. One open is one record, so this is months of them. */
 const KEEP = 2000;
 /* Trimming rewrites the file, so it is done in batches rather than on every append. */
@@ -89,7 +98,7 @@ function readOut(text) {
     if (kind === 'panel-up') {
       if (asked) {
         const waited = row.ms - asked.ms;
-        if (waited >= FLOOR_MS && waited <= CEILING_MS) {
+        if (waited <= CEILING_MS) {
           out.push({ what: 'panel', trigger: asked.trigger, at: new Date(asked.ms).toISOString(), waited });
         }
         asked = null;
@@ -102,7 +111,7 @@ function readOut(text) {
     }
     if (kind === 'cli-said' && spawned) {
       const waited = row.ms - spawned.ms;
-      if (waited >= FLOOR_MS && waited <= CEILING_MS) {
+      if (waited <= CEILING_MS) {
         out.push({ what: 'cli', trigger: spawned.resume ? 'resume' : 'new', at: new Date(spawned.ms).toISOString(), waited });
       }
       spawned = null;
@@ -112,7 +121,7 @@ function readOut(text) {
        pairings above and would otherwise be counted twice. */
     if (i > 0 && kind === null && kindOf(rows[i - 1].text) === null) {
       const waited = row.ms - rows[i - 1].ms;
-      if (waited >= FLOOR_MS && waited <= CEILING_MS) {
+      if (waited >= HOST_FLOOR_MS && waited <= CEILING_MS) {
         out.push({
           what: 'host', trigger: rows[i - 1].text.slice(0, 60),
           at: new Date(rows[i - 1].ms).toISOString(), waited,
@@ -132,6 +141,36 @@ function readOut(text) {
  */
 function logFile(ourLogDir) {
   return path.join(path.dirname(ourLogDir), 'Anthropic.claude-code', 'Claude VSCode.log');
+}
+
+/**
+ * Split waits into the ones worth a record of their own and a count of the rest.
+ *
+ * Only openings of something are counted: a host gap under the threshold is dropped rather than tallied, because it is
+ * not an attempt at anything and so has no total it could be a fraction of.
+ */
+function split(waits, thresholdMs = THRESHOLD_MS) {
+  const slow = [];
+  const fast = {};
+  for (const w of waits || []) {
+    if (w.waited >= thresholdMs) { slow.push(w); continue; }
+    if (w.what === 'host') continue;
+    const key = `${w.what}/${w.trigger}`;
+    fast[key] = (fast[key] || 0) + 1;
+  }
+  return { slow, fast };
+}
+
+const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+/** One line standing for every fast open of a day, so a healthy day costs one line rather than a line per open. */
+function tallyRecord(day, version, counts) {
+  return { what: 'tally', day, version, counts };
+}
+
+function addCounts(into, from) {
+  for (const k of Object.keys(from || {})) into[k] = (into[k] || 0) + from[k];
+  return into;
 }
 
 /*
@@ -188,13 +227,19 @@ function prune(dir, now = Date.now(), keepFile = '') {
 }
 
 /**
- * Read whatever is new in the log and append it to this window's record file. Returns what was added.
+ * Read whatever is new in the log and append the slow waits to this window's record file. Returns what was added.
  *
  * `state` is read and written by the caller, since where it is kept belongs to the extension: `{ file, size }` is the
- * log this offset refers to and how far it had been read. A log that shrank or changed name is read from the start.
+ * log this offset refers to and how far it had been read, plus the day's running count of fast opens and which day that
+ * is. A log that shrank or changed name is read from the start.
+ *
+ * Fast opens are held in that state and written out as one line when the day turns, so an ordinary day leaves a line
+ * rather than a line per open. A host that goes away before the day turns loses that day's count for that window, which
+ * costs a denominator and no recorded wait.
  */
 function sample(opts) {
-  const { log, dir, state = {}, version = '', now = Date.now(), pid = process.pid } = opts;
+  const { log, dir, state = {}, version = '', now = Date.now(), pid = process.pid,
+    thresholdMs = THRESHOLD_MS } = opts;
   const into = recordFile(dir, pid);
   let stat;
   try { stat = fs.statSync(log); } catch (_) { return { added: [], state, why: 'no log for this window yet' }; }
@@ -216,18 +261,48 @@ function sample(opts) {
 
   if (back) text = text[0] === '\n' ? text.slice(1) : text.slice(text.indexOf('\n') + 1);
 
-  const added = readOut(text).map((r) => Object.assign({ seen: new Date(now).toISOString(), version }, r));
-  if (added.length) {
+  const { slow, fast } = split(readOut(text), thresholdMs);
+  const added = slow.map((r) => Object.assign({ seen: new Date(now).toISOString(), version }, r));
+
+  /* The day's count carries over between calls; when the day turns, the finished day goes out as its own line. */
+  const today = dayOf(now);
+  const counts = addCounts(state.day === today ? Object.assign({}, state.counts) : {}, fast);
+  const lines = added.slice();
+  if (state.day && state.day !== today && state.counts && Object.keys(state.counts).length) {
+    lines.unshift(tallyRecord(state.day, state.version || version, state.counts));
+  }
+
+  if (lines.length) {
     try {
       fs.mkdirSync(dir, { recursive: true });
       /* One call with every new record in it. Appending is atomic per write on a local filesystem, so a whole buffer
          lands in one piece; writing them one at a time would be several appends that another writer could sit between. */
-      fs.appendFileSync(into, added.map((r) => JSON.stringify(r)).join('\n') + '\n');
+      fs.appendFileSync(into, lines.map((r) => JSON.stringify(r)).join('\n') + '\n');
       trim(into);
       prune(dir, now, into);
     } catch (e) { return { added: [], state, why: 'could not write the records: ' + e.message }; }
   }
-  return { added, state: { file: log, size: stat.size }, why: '' };
+  return {
+    added,
+    state: { file: log, size: stat.size, day: today, counts, version },
+    why: '',
+  };
+}
+
+/**
+ * Write out the day's running count now rather than waiting for the day to turn.
+ *
+ * Called when the window is closing, which is the only other moment the count is certain to be complete.
+ */
+function flush(opts) {
+  const { dir, state = {}, pid = process.pid } = opts;
+  if (!state.day || !state.counts || !Object.keys(state.counts).length) return 0;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(recordFile(dir, pid),
+      JSON.stringify(tallyRecord(state.day, state.version || '', state.counts)) + '\n');
+  } catch (_) { return 0; }
+  return Object.values(state.counts).reduce((a, b) => a + b, 0);
 }
 
 /**
@@ -252,11 +327,26 @@ function quantile(sorted, q) {
   return sorted[i];
 }
 
-/** A readable summary of the records: one block per kind of wait, worst first, split by version. */
+/**
+ * A readable summary: one row per kind of wait, worst first, split by version.
+ *
+ * `fast` comes from the tally lines and is the rest of the denominator - `slow` alone says how bad it got, and the two
+ * together say how often it got there. A version where 2 of 40 opens were slow and one where 19 of 31 were can have the
+ * same worst figure, and only the second has regressed.
+ */
 function summarise(records) {
   const groups = new Map();
+  const fast = new Map();
   for (const r of records || []) {
-    if (!r || typeof r.waited !== 'number') continue;
+    if (!r) continue;
+    if (r.what === 'tally') {
+      for (const k of Object.keys(r.counts || {})) {
+        const key = k.replace('/', '\t') + '\t' + (r.version || '');
+        fast.set(key, (fast.get(key) || 0) + r.counts[k]);
+      }
+      continue;
+    }
+    if (typeof r.waited !== 'number') continue;
     const key = (r.what || '?') + '\t' + (r.trigger || '') + '\t' + (r.version || '');
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(r.waited);
@@ -270,34 +360,45 @@ function summarise(records) {
       trigger: what === 'host' ? trigger.slice(0, 44) : trigger,
       version,
       n: sorted.length,
+      fast: fast.get(key) || 0,
       median: quantile(sorted, 0.5),
       p90: quantile(sorted, 0.9),
       worst: sorted[sorted.length - 1],
     });
+    fast.delete(key);
   }
-  rows.sort((a, b) => b.p90 - a.p90);
+  /* A kind with nothing slow left at all still belongs in the report - that is the healthy case, and leaving it out
+     would make a version that stopped being slow look like a version nobody used. */
+  for (const [key, count] of fast) {
+    const [what, trigger, version] = key.split('\t');
+    rows.push({ what, trigger, version, n: 0, fast: count, median: 0, p90: 0, worst: 0 });
+  }
+  rows.sort((a, b) => b.p90 - a.p90 || b.fast - a.fast);
   return rows;
 }
 
 const secs = (ms) => (ms / 1000).toFixed(1) + 's';
 
 /** The summary as lines for the output channel. */
-function report(records) {
+function report(records, thresholdMs = THRESHOLD_MS) {
   const rows = summarise(records);
   if (!rows.length) return ['open latency: nothing recorded yet'];
-  const out = [`open latency: ${records.length} waits recorded, worst kind first`,
-    '  what    trigger                                       n   median      p90    worst  version'];
+  const out = [
+    `open latency: waits of ${secs(thresholdMs)} or more are recorded one by one; faster ones are counted only`,
+    '  what    trigger                                    slow   fast   median      p90    worst  version',
+  ];
   for (const r of rows) {
     out.push('  ' + [
-      r.what.padEnd(6), r.trigger.padEnd(44),
-      String(r.n).padStart(4), secs(r.median).padStart(8),
-      secs(r.p90).padStart(8), secs(r.worst).padStart(8), r.version,
+      r.what.padEnd(6), r.trigger.padEnd(41),
+      String(r.n).padStart(4), String(r.fast).padStart(6),
+      secs(r.median).padStart(8), secs(r.p90).padStart(8), secs(r.worst).padStart(8), r.version,
     ].join(' '));
   }
   return out;
 }
 
 module.exports = {
-  lines, kindOf, readOut, logFile, recordFile, readRecords, readAll, prune, trim, sample, summarise, report,
-  FLOOR_MS, CEILING_MS, KEEP, TRIM_AT, STALE_MS, NAME,
+  lines, kindOf, readOut, split, tallyRecord, addCounts, dayOf, logFile, recordFile, readRecords, readAll,
+  prune, trim, sample, flush, summarise, report,
+  HOST_FLOOR_MS, CEILING_MS, THRESHOLD_MS, KEEP, TRIM_AT, STALE_MS, NAME,
 };
