@@ -257,7 +257,7 @@
    * Nothing is moved while they are already in this order: rearranging the row on a timer would pull a button out from
    * under the pointer, and a click that lands on the wrong control is worse than an order nobody chose.
    */
-  var ORDER = ['[data-cce-mute]', '[data-cce-view]', '[data-cce-info]', '[data-cce-plain-btn]'];
+  var ORDER = ['[data-cce-info]', '[data-cce-plain-btn]', '[data-cce-mute]', '[data-cce-view]'];
   var orderControls = function(){
     var send = document.querySelector(SEND);
     if (!send) return;

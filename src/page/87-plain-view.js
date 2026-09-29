@@ -76,42 +76,49 @@
    * copied from a list - a wrong one draws an empty box and nothing else says why.
    */
   /*
-   * Drawn rather than taken from the icon font.
+   * Drawn here rather than taken from the icon font, which produced an empty box: the family never took effect on this
+   * button, and whatever it fell back to has nothing at that code point. The class these buttons copy already sizes an
+   * `svg` child, which says what this row is built to hold - so drawing one is what the panel's own controls do, and it
+   * cannot fail the way a missing glyph does.
    *
-   * The font route produced an empty box: the family never took effect on this button, and whatever it fell back to has
-   * nothing at that code point. The class these buttons copy already sizes an `svg` child, which says what this row is
-   * built to hold - so this is what the panel's own controls do, and it cannot fail the way a missing glyph does.
+   * Two arrows facing each other mean folded, facing apart mean open. That pair is the editor's own sign for collapsing
+   * and expanding detail, so it needs no explaining, and it says the right thing: what this hides is still there. The
+   * two it replaced said the wrong thing - a speech balloon picks nothing out in a panel that is all conversation, and
+   * an eye says only that something is hidden, not what.
    */
   var SVG_NS = 'http://www.w3.org/2000/svg';
-  var eyeIcon = function(shut){
+  var foldIcon = function(folded){
     var svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', '0 0 16 16');
+    /* Sized in the style attribute rather than by the width and height attributes, because the class this button copies
+       carries `svg{width:26px;height:26px}` - the size of the button itself - and a presentation attribute loses to a
+       rule. Left to that rule the icon fills the button edge to edge with no room around it. */
+    svg.style.width = '15px'; svg.style.height = '15px';
     svg.setAttribute('fill', 'none');
     svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '1.4');
+    svg.setAttribute('stroke-width', '1.5');
     svg.setAttribute('stroke-linecap', 'round');
-    var lens = document.createElementNS(SVG_NS, 'path');
-    lens.setAttribute('d', 'M1.6 8S3.9 4 8 4s6.4 4 6.4 4-2.3 4-6.4 4S1.6 8 1.6 8z');
-    svg.appendChild(lens);
-    var pupil = document.createElementNS(SVG_NS, 'circle');
-    pupil.setAttribute('cx', '8'); pupil.setAttribute('cy', '8'); pupil.setAttribute('r', '1.9');
-    svg.appendChild(pupil);
-    if (shut) {
-      var slash = document.createElementNS(SVG_NS, 'path');
-      slash.setAttribute('d', 'M2.6 2.6l10.8 10.8');
-      svg.appendChild(slash);
-    }
+    svg.setAttribute('stroke-linejoin', 'round');
+    var add = function(d) {
+      var p = document.createElementNS(SVG_NS, 'path');
+      p.setAttribute('d', d);
+      svg.appendChild(p);
+    };
+    add('M2 8h12');
+    // Pointing in towards the line when folded, away from it when not: the line stays put so only the arrows change.
+    if (folded) { add('M5 3.4l3 2.6 3-2.6'); add('M5 12.6l3-2.6 3 2.6'); }
+    else { add('M5 5.6l3-2.6 3 2.6'); add('M5 10.4l3 2.6 3-2.6'); }
     return svg;
   };
   var paintPlain = function(){
     if (!PLAINBTN) return;
     var on = plainOn();
     // Replaced only where the state turned over, so a repaint on the timer does not rebuild the icon twice a second.
-    var want = on ? 'shut' : 'open';
-    if (PLAINBTN.getAttribute('data-cce-eye') !== want) {
-      PLAINBTN.setAttribute('data-cce-eye', want);
+    var want = on ? 'folded' : 'open';
+    if (PLAINBTN.getAttribute('data-cce-fold') !== want) {
+      PLAINBTN.setAttribute('data-cce-fold', want);
       while (PLAINBTN.firstChild) PLAINBTN.removeChild(PLAINBTN.firstChild);
-      PLAINBTN.appendChild(eyeIcon(on));
+      PLAINBTN.appendChild(foldIcon(on));
     }
     setStyle(PLAINBTN, 'opacity', on ? '1' : '0.6');
     setLabel(PLAINBTN, on
