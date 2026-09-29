@@ -205,30 +205,6 @@
    * "where is the time going" for a conversation that is already open, and this is the only channel a page script
    * has - it has no file system, and the channel to the extension side runs one way.
    */
-  /**
-   * What the sweeps have cost, as rows for the info popup. Null until one has run.
-   *
-   * The share of the main thread leads, because it is the figure that decides whether any of this is worth changing: one
-   * sweep of twenty milliseconds is nothing, and the same sweep four times a second while a reply streams is a tenth of
-   * the thread. The average matters more than the slowest for the same reason.
-   */
-  var sweepCost = function(){
-    try {
-      if (!stats.n) return null;
-      var up = Math.max(1, clock() - T0);
-      var rows = [['Sweeps', stats.n + ' in ' + (up / 1000).toFixed(0) + 's, taking '
-        + (stats.sum / up * 100).toFixed(1) + '% of the main thread, ' + (stats.sum / stats.n).toFixed(1) + 'ms each']];
-      rows.push(['Slowest', Math.round(stats.max) + 'ms' + (stats.max > SLOW_MS ? ' - long enough to be felt' : '')]);
-      var worst = null;
-      for (var i = 0; i < PHASES.length; i++) {
-        var avg = (stats.sum_[PHASES[i]] || 0) / stats.n;
-        if (!worst || avg > worst.avg) worst = { k: PHASES[i], avg: avg };
-      }
-      if (worst) rows.push(['Costliest', LEGEND[worst.k] + ', ' + worst.avg.toFixed(1) + 'ms a sweep']);
-      return rows;
-    } catch (e) { return null; }
-  };
-
   window.__cceStats = function() {
     try {
       var up = clock() - T0, rows = [];
