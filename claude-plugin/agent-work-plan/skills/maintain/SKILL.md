@@ -34,6 +34,28 @@ one, and nothing is reconstructed from what was said before. Start the file when
 before. A conversation that is one question and one answer does not need a plan, and an empty one is noise on every turn
 that follows.
 
+## The number in front of a row
+
+Every injected row carries one - `1`, `2`, then `2.1` and `2.1.1` beneath it - and the tree view shows the same numbers.
+It is how someone names a row out loud instead of quoting its title, so `close 3` and `put 2.1 back to todo` are ordinary
+instructions and mean a specific row.
+
+**The number is not in the file, and it does not have to be looked up.** Every open row arrives with its own number in
+front of it at the start of the turn, so the number and the row reach you together and there is nothing to work out. That
+covers the rows anyone is likely to name, since those are the ones they can see.
+
+For a row that is not in that block - a closed one - the number is an index into the file and resolving it is arithmetic
+rather than a search: `3` is `nodes[2]`, and `2.1.1` is `nodes[1].children[0].children[0]`. Never search the file for the
+digits; they are not written in it.
+
+**Closed rows are counted.** They are skipped when the open rows are drawn, so the fifth row you were handed this turn is
+not row 5 - it might be row 44. Counting what you can see is the one mistake here that silently closes the wrong task.
+That is also what makes a number worth quoting: finishing something leaves a gap rather than moving every number after
+it, so a number said an hour ago still points where it pointed then.
+
+Do not write numbers into a title. A number stored in the text stops agreeing with the position it claims the moment
+anything is inserted, and then the file contradicts itself.
+
 ## The file
 
 ```json

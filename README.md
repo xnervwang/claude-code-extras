@@ -92,6 +92,10 @@ something sits under the thing it interrupted and the way back is visible. The a
 what is still open, which is the part that works without anything being opened; it is absent rather than zero when
 nothing is waiting.
 
+Each row carries a number - 1, 2, then 2.1 beneath them - so a row can be named in conversation instead of having
+its title quoted back. The number is the row's place in the file rather than its place on screen, so finishing
+something leaves a gap instead of moving every number after it, and one quoted an hour ago still points where it did.
+
 Beside the title a row carries its time and nothing else: when it was opened, to the minute, and for a closed one the
 range up to when it ended — `09/28 21:48 → 23:40`. A day's worth of rows all showing one date says nothing about their
 order, which is the only reason a time is on the row at all. The format is the one the session list already uses: month
