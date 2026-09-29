@@ -228,6 +228,7 @@ written at all. A partial patch is worse than none, and a patch applied on a gue
 
 | Command | |
 |---|---|
+| `Claude Code Extras: Settings` | every setting below, in the editor's own settings editor |
 | `Claude Code Extras: Toggle On/Off` | also on the status bar item |
 | `Claude Code Extras: Turn On` / `Turn Off` | |
 | `Claude Code Extras: Remove from Claude Code` | restores the original files and stops patching |
@@ -235,12 +236,22 @@ written at all. A partial patch is worse than none, and a patch applied on a gue
 | `Claude Code Extras: Refresh Work Plan` | also a button in the work plan view |
 | `Claude Code Extras: Open the Work Plan File` | the file behind the view, to correct it by hand |
 | `Claude Code Extras: Install the Work Plan Plugin for Claude Code` | retries a registration that failed |
+| `Claude Code Extras: Show How Long Opening a Panel Took` | the recorded waits, summarised by version |
 
 | Setting | Default | |
 |---|---|---|
 | `claudeCodeExtras.enabled` | `true` | live |
 | `claudeCodeExtras.showStatusBar` | `true` | |
 | `claudeCodeExtras.userMessageColor` | `""` | a CSS color for your own messages, live |
+| `claudeCodeExtras.userMessageEdge` | `true` | a bar down the left of your own messages, live |
+| `claudeCodeExtras.recordOpenLatency` | `true` | off reads nothing and writes nothing |
+| `claudeCodeExtras.latencyThresholdSeconds` | `10` | at or above this a wait is recorded; below it, only counted |
+| `claudeCodeExtras.workPlanOfferMinTurns` | `3` | how often you have to have spoken before a conversation with no plan is told it could keep one |
+| `claudeCodeExtras.workPlanOfferMinToolCalls` | `25` | and how much that turn has to have cost |
+
+The last two reach the plugin's hooks through a small file the extension writes for them - `config.json`,
+beside the plans - because a hook is its own process and cannot read editor settings. The plugin carries the
+same defaults, so it behaves the same way with this extension absent.
 
 ## Known limits
 

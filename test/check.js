@@ -698,13 +698,20 @@ console.log('\nwhat the Stop hook says, and how often');
   const hook = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks', 'nudge-work-plan.py');
   const session = '30000000-0000-0000-0000-000000000000';
 
-  /* One turn: a message from the user, then `tools` calls. The hook reads the transcript backwards to the message. */
-  const stage = (tools, plan) => {
+  /* `turns` messages from the user, the last of them followed by `tools` calls. The hook walks the transcript backwards
+     to that last message for the turn, and over the whole tail for how many times the user has spoken. */
+  const stage = (tools, plan, turns = 3, limits) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-nudge-'));
     const data = path.join(dir, 'data');
     fs.mkdirSync(data);
     const transcript = path.join(dir, 'transcript.jsonl');
-    const lines = [JSON.stringify({ type: 'user', timestamp: '2026-01-01T00:00:00.000Z', message: { content: 'go' } })];
+    const lines = [];
+    for (let t = 0; t < turns; t++) {
+      lines.push(JSON.stringify({
+        type: 'user', timestamp: `2026-01-01T00:0${t}:00.000Z`, message: { content: 'go' },
+      }));
+      if (t < turns - 1) lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } }));
+    }
     for (let i = 0; i < tools; i++) {
       lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read' }] } }));
     }
@@ -715,6 +722,7 @@ console.log('\nwhat the Stop hook says, and how often');
       const back = Date.parse('2025-01-01T00:00:00Z') / 1000;
       fs.utimesSync(f, back, back);
     }
+    if (limits) fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify(limits));
     return { dir, data, transcript };
   };
   const run = (t) => {
@@ -747,6 +755,35 @@ console.log('\nwhat the Stop hook says, and how often');
     const r = run(t);
     if (r.said.includes('did not touch the work plan')) ok('a plan left untouched by the turn is still the other message');
     else bad(`an untouched plan said ${JSON.stringify(r.said.slice(0, 80))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  {
+    /* The case this gate exists for. A session handed one task and left to do it burns tool calls on a single strand and
+       cannot branch, so a plan has nothing to hold - and 53 of 61 offers went to exactly that. Offering anyway costs the
+       sentence and teaches whoever reads it that the sentence can be skipped, which is what the offer had left to lose. */
+    const t = stage(40, null, 1);
+    const r = run(t);
+    if (!r.said && !r.marked) ok('a busy single-turn worker is not offered a plan, and no mark is spent on it');
+    else bad(`a single-turn worker was offered one: ${JSON.stringify(r.said.slice(0, 80))}, marked ${r.marked}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  {
+    /* Both thresholds come from the file the extension writes, and the editor's settings are the only place to edit it. */
+    const t = stage(40, null, 2, { offerMinTurns: 9 });
+    const r = run(t);
+    const u = stage(40, null, 2, { offerMinTurns: 2 });
+    const ru = run(u);
+    if (!r.said && ru.said.includes('keeping no work plan')) ok('the turn threshold is read from the settings file, either way');
+    else bad(`raising it said ${JSON.stringify(r.said.slice(0, 60))}, lowering it said ${JSON.stringify(ru.said.slice(0, 60))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+    fs.rmSync(u.dir, { recursive: true, force: true });
+  }
+  {
+    /* A file that is not there, or is nonsense, leaves the plugin on its own defaults - it ships without this extension. */
+    const t = stage(40, null, 3, { offerMinTurns: 'lots', offerMinToolCalls: 0 });
+    const r = run(t);
+    if (r.said.includes('keeping no work plan')) ok('a nonsense settings file is ignored rather than obeyed');
+    else bad(`nonsense settings changed the outcome: ${JSON.stringify(r.said.slice(0, 80))}`);
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
 }

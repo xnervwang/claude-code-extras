@@ -29,6 +29,10 @@
   "contributes": {
     "commands": [
       {
+        "command": "claudeCodeExtras.openSettings",
+        "title": "Claude Code Extras: Settings"
+      },
+      {
         "command": "claudeCodeExtras.toggle",
         "title": "Claude Code Extras: Toggle On/Off"
       },
@@ -139,6 +143,23 @@
           "default": 10,
           "minimum": 1,
           "markdownDescription": "How long a panel or conversation has to take before it is recorded one by one, in seconds. Anything faster is only counted, so an ordinary day leaves a single line rather than one per open - the count is still what says whether a slow open is the exception or the rule. Read them with **Claude Code Extras: Show How Long Opening a Panel Took**."
+        },
+        "claudeCodeExtras.recordOpenLatency": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Record how long a panel takes before it starts loading, read out of Claude Code's own log. Turned off, nothing is read and nothing is written - not even the check for whether the log grew."
+        },
+        "claudeCodeExtras.workPlanOfferMinTurns": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "markdownDescription": "How many times you have to have spoken before a conversation with no work plan is told it could keep one. A plan is for a conversation that branches, and a session handed one task and left to do it cannot branch: of 61 conversations offered a plan, the 53 that were single-task workers all declined, while every one that wanted a plan had spoken at least three times."
+        },
+        "claudeCodeExtras.workPlanOfferMinToolCalls": {
+          "type": "number",
+          "default": 25,
+          "minimum": 1,
+          "markdownDescription": "How much a turn has to cost before the same offer is made. 25 is where the busiest quarter of turns begins, measured over 691 of them; the median turn uses 6."
         }
       }
     }

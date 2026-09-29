@@ -7,6 +7,7 @@
 Shared by both hooks rather than written twice: one of them reads the file and the other watches its timestamp, so two
 copies of this that drifted apart would leave the nudge watching a path nobody writes - and nothing would say so.
 """
+import json
 import os
 import sys
 
@@ -22,6 +23,46 @@ def data_dir():
     if given and "$" not in given and os.path.isabs(given):
         return given
     return FALLBACK
+
+
+"""What the VS Code extension writes here for the hooks to read, and what it means when it is absent.
+
+The hooks are separate processes started by Claude Code, so they cannot read editor settings. The extension writes the
+few numbers that are worth changing into this one file instead, which keeps the editor's own settings UI as the single
+place a person edits them.
+
+Absent is the ordinary case rather than an error: this plugin is meant to work on its own, with or without that
+extension, so every value here has a default that holds by itself.
+"""
+SETTINGS_FILE = "config.json"
+DEFAULTS = {
+    # A turn below this is conversational and owes the plan nothing.
+    "nudgeMinToolCalls": 4,
+    # What a turn has to cost before a conversation with no plan at all is told it could keep one. The upper quartile of
+    # turns begins at 25 tool calls, measured over 691 of them.
+    "offerMinToolCalls": 25,
+    # How many times the user has to have spoken first. A plan is for a conversation that branches, and a session handed
+    # one task and left to do it cannot branch - measured over 61 offers, 53 went to single-turn workers and none of
+    # them wanted a plan, while every conversation that did want one had spoken at least three times.
+    "offerMinTurns": 3,
+}
+
+
+def settings():
+    """The numbers above, with anything the extension wrote on top. A bad value is ignored rather than fatal."""
+    out = dict(DEFAULTS)
+    try:
+        with open(os.path.join(data_dir(), SETTINGS_FILE), encoding="utf-8") as fh:
+            given = json.load(fh)
+    except Exception:
+        return out
+    for key in DEFAULTS:
+        value = given.get(key) if isinstance(given, dict) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if value >= 1:
+            out[key] = int(value)
+    return out
 
 
 def plan_file(payload):

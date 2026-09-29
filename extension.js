@@ -36,6 +36,12 @@ const PLUGIN_KEY = 'claudeCodeExtras.workPlanPlugin';
 const SWEEP_KEY = 'claudeCodeExtras.lastOrphanSweep';
 const LATENCY_KEY = 'claudeCodeExtras.latencyOffset';
 const THRESHOLD_SETTING = 'claudeCodeExtras.latencyThresholdSeconds';
+const LATENCY_ON_SETTING = 'claudeCodeExtras.recordOpenLatency';
+/* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
+const HOOK_SETTINGS = {
+  offerMinTurns: 'claudeCodeExtras.workPlanOfferMinTurns',
+  offerMinToolCalls: 'claudeCodeExtras.workPlanOfferMinToolCalls',
+};
 
 /** Every install of Claude Code this adapter can see: the active one plus sibling versions in the same folder. */
 function installs(adapter) {
@@ -167,6 +173,10 @@ function activate(context) {
       for (const adapter of ADAPTERS) for (const d of installs(adapter)) lines.push(`${adapter.name} ${path.basename(d)}: ${adapter.status(d)}`);
       vscode.window.showInformationMessage('Claude Code Extras — ' + (lines.join(' | ') || 'Claude Code is not installed') + (removed() ? ' (removed)' : ''));
     }),
+    /* Every setting this extension has, in the editor's own settings UI: search, per-workspace values, sync and a JSON
+       view come with it, and none of it is ours to maintain. */
+    vscode.commands.registerCommand('claudeCodeExtras.openSettings',
+      () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:xnerv.claude-code-extras')),
     /* Reads the records rather than measuring anything, so it is also the way to see them after a window restart. */
     vscode.commands.registerCommand('claudeCodeExtras.showOpenLatency', () => {
       sampleLatency();
@@ -180,6 +190,7 @@ function activate(context) {
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(SETTING) || e.affectsConfiguration(STATUS_BAR_SETTING)) renderBar();
+      if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();
       if (![SETTING, COLOR_SETTING, EDGE_SETTING].some((k) => e.affectsConfiguration(k))) return;
       const c = cfg().get(COLOR_SETTING, '');
       if (c && !safeColor(c)) vscode.window.showWarningMessage(`Claude Code Extras: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
@@ -229,6 +240,9 @@ function activate(context) {
      of them incrementing one counter would lose each other's increments - the same reason the records are a file each. */
   let latencyState = context.globalState.get(LATENCY_KEY, {});
   function sampleLatency() {
+    /* Off means nothing is read either. Stopping only the writing would leave the log being opened and parsed every
+       thirty seconds, which is most of what this costs. */
+    if (!cfg().get(LATENCY_ON_SETTING, true)) return;
     try {
       const r = latency.sample({
         log: latency.logFile(context.logUri.fsPath),
@@ -239,8 +253,6 @@ function activate(context) {
       });
       if (r.state) {
         latencyState = r.state;
-        /* Only the offset needs to survive a restart; a half-finished day's count does not, and writing it on every tick
-           would put a shared store back in the path of something each window counts for itself. */
         /* The offset and any half-finished pairing survive a restart; a half-counted day does not, and writing the count
            on every tick would put a store every window shares back in the path of something each counts for itself. */
         context.globalState.update(LATENCY_KEY,
@@ -255,6 +267,36 @@ function activate(context) {
     }
   }
   sampleLatency();
+
+  /*
+   * Hand the hooks their thresholds.
+   *
+   * They run as their own processes, so the editor's settings cannot reach them directly; this is the one file they read
+   * instead, which keeps the settings UI as the only place a person edits these. Written on activation and whenever one
+   * of them changes, and never required to exist - the plugin ships its own defaults so it works without this extension.
+   */
+  function writeHookSettings() {
+    const values = {};
+    for (const [key, setting] of Object.entries(HOOK_SETTINGS)) {
+      const v = cfg().get(setting);
+      if (typeof v === 'number' && v >= 1) values[key] = Math.floor(v);
+    }
+    const file = path.join(PLAN_DIR, 'config.json');
+    const next = JSON.stringify(values, null, 2) + '\n';
+    try {
+      let current = null;
+      try { current = fs.readFileSync(file, 'utf8'); } catch (_) {}
+      /* Several windows write this, and they all write the same thing from the same settings - so comparing first keeps
+         them from taking turns rewriting one file, the way the live stylesheet already does. */
+      if (current === next) return;
+      fs.mkdirSync(PLAN_DIR, { recursive: true });
+      fs.writeFileSync(file, next);
+    } catch (e) {
+      log.appendLine('work plan hook settings: ' + e.message);
+    }
+  }
+  writeHookSettings();
+
   /* The day's count is written out when the window closes, which is the other moment it is known to be complete. */
   context.subscriptions.push({
     dispose: () => {

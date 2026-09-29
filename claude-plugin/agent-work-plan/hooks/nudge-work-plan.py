@@ -26,21 +26,35 @@ import sys
 # installed plugin directory.
 sys.dont_write_bytecode = True
 
-from plan_path import plan_file
+from plan_path import plan_file, settings
 
-# Below this a turn is conversational - a question answered, a file read - and owes the plan nothing.
-MIN_TOOL_CALLS = 4
-# What a turn has to cost before a conversation with no plan at all is told it could keep one. Measured over 691 turns
-# taken from 120 transcripts: the median turn uses 6 tools and the upper quartile begins at 25, so a turn this size is
-# among the busiest quarter. At this setting 58 conversations in 100 hear the sentence once and the other 42 never do.
-FIRST_PLAN_TOOL_CALLS = 25
+# Every threshold this uses is in plan_path.DEFAULTS, where the editor's settings can override it.
+
+
+def spoke(row):
+    """True when this row is the user actually saying something, rather than a tool handing a result back.
+
+    Both are recorded as `user`, which is why this is asked in two places and not inlined at either.
+    """
+    if row.get("type") != "user":
+        return False
+    content = (row.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        return any(isinstance(b, dict) and b.get("type") == "text" for b in content)
+    return False
 
 
 def turn_shape(transcript):
-    """When this turn began, and how many tools it used.
+    """When this turn began, how many tools it used, and how many times the user has spoken.
 
     The turn begins at the last message the user sent, so the transcript is walked from the end and stops there. Reading
-    it whole would mean parsing megabytes on every turn.
+    it whole would mean parsing megabytes on every turn, so only the tail is read.
+
+    That tail is also where the count of turns comes from, and it is a lower bound rather than a total: a conversation
+    long enough to overflow the window has more turns than are visible here. The bound is in the safe direction - it can
+    only make this quieter, and being too quiet costs a reminder while being too loud costs every reminder's credibility.
     """
     try:
         with open(transcript, "rb") as fh:
@@ -50,25 +64,23 @@ def turn_shape(transcript):
             fh.seek(size - window)
             lines = fh.read().decode("utf-8", "replace").split("\n")
     except Exception:
-        return None, 0
-    started, tools = None, 0
-    for line in reversed(lines):
+        return None, 0, 0
+    rows = []
+    for line in lines:
         if '"type"' not in line:
             continue
         try:
-            row = json.loads(line)
+            rows.append((json.loads(line), '"tool_use"' in line))
         except Exception:
             continue
-        if row.get("type") == "user" and isinstance((row.get("message") or {}).get("content"), (str, list)):
-            content = (row.get("message") or {}).get("content")
-            # A tool result is also recorded as a user message; only a real message ends the walk.
-            if isinstance(content, str) or any(
-                    isinstance(b, dict) and b.get("type") == "text" for b in content):
-                started = row.get("timestamp")
-                break
-        if '"tool_use"' in line:
+    started, tools = None, 0
+    for row, used_tool in reversed(rows):
+        if spoke(row):
+            started = row.get("timestamp")
+            break
+        if used_tool:
             tools += 1
-    return started, tools
+    return started, tools, sum(1 for row, _ in rows if spoke(row))
 
 
 def iso_to_epoch(stamp):
@@ -88,14 +100,14 @@ def speak(payload, text):
     return 0
 
 
-def offer_once(payload, path, tools):
+def offer_once(payload, path, tools, turns, limits):
     """Tell a conversation that has no plan that it could keep one, at most one time.
 
     Having offered is remembered as an empty file beside where the plan would go: this is a new process on every turn
     and has nowhere else to put it. If the marker cannot be written the offer is not made at all - saying it on every
     turn instead is the one outcome worth avoiding, and a directory that refuses the marker would refuse the plan too.
     """
-    if tools < FIRST_PLAN_TOOL_CALLS:
+    if tools < limits["offerMinToolCalls"] or turns < limits["offerMinTurns"]:
         return 0
     marker = os.path.splitext(path)[0] + ".offered"
     if os.path.exists(marker):
@@ -107,10 +119,10 @@ def offer_once(payload, path, tools):
     except Exception:
         return 0
     return speak(payload, (
-        "This conversation is keeping no work plan, and this turn used %d tools. If the work has more than one strand "
-        "to come back to, start one at %s now - the skill agent-work-plan:maintain says what a row holds and what the "
-        "states mean. This is said once per conversation and will not be raised again; a conversation that is one "
-        "question and one answer does not need a plan." % (tools, path)))
+        "This conversation is keeping no work plan. You have spoken %d times and this turn used %d tools, which is "
+        "long enough for the thread it started on to be out of sight. If the work has more than one strand to come "
+        "back to, start one at %s now - the skill agent-work-plan:maintain says what a row holds and what the states "
+        "mean. This is said once per conversation and will not be raised again." % (turns, tools, path)))
 
 
 def main():
@@ -121,12 +133,13 @@ def main():
     path = plan_file(payload)
     if not path:
         return 0
-    started, tools = turn_shape(payload.get("transcript_path") or "")
+    limits = settings()
+    started, tools, turns = turn_shape(payload.get("transcript_path") or "")
     if not started:
         return 0
     if not os.path.exists(path):
-        return offer_once(payload, path, tools)
-    if tools < MIN_TOOL_CALLS:
+        return offer_once(payload, path, tools, turns, limits)
+    if tools < limits["nudgeMinToolCalls"]:
         return 0
     began = iso_to_epoch(started)
     if began is None:
