@@ -249,6 +249,28 @@ function sweepOrphans(opts = {}) {
   return { deleted, kept, why: '' };
 }
 
+/** The states that mean a row still needs something done to it. */
+const OPEN_STATES = ['discussing', 'todo', 'parked'];
+
+/**
+ * The same rows with the unfinished ones first, each group keeping the order it had.
+ *
+ * A plan only grows: rows are added at the end and closed where they sit, so in the file's own order the few that still
+ * need doing end up scattered among the many that are done - and a row added an hour ago sinks towards the middle as
+ * later ones are added and closed after it. Reading "what is left" then means going through everything.
+ *
+ * Nothing is sorted within a group, so no row moves relative to others of its own kind: this separates the two and
+ * changes nothing else. It is a matter of drawing only - the file is untouched, which is what keeps a hand edit
+ * predictable, at the cost that the drawn order is no longer the file's order.
+ */
+function openFirst(items, stateOf = (n) => n && n.state) {
+  const rows = items || [];
+  const isOpen = (n) => OPEN_STATES.includes(stateOf(n));
+  const open = rows.filter(isOpen);
+  if (!open.length || open.length === rows.length) return rows;
+  return open.concat(rows.filter((n) => !isOpen(n)));
+}
+
 /** Open counts, which is what the view puts in its title so the shape of the work is legible without expanding it. */
 function countOpen(nodes, acc = { discussing: 0, todo: 0, parked: 0, done: 0, dropped: 0 }) {
   for (const n of nodes || []) {
@@ -259,7 +281,7 @@ function countOpen(nodes, acc = { discussing: 0, todo: 0, parked: 0, done: 0, dr
 }
 
 module.exports = {
-  readPlan, readPlans, countOpen, planDir, liveSessions, sweepOrphans,
-  DATA_ROOT, PLAN_DIR, PLAN_FILE, PROJECTS, SETTLED_MS,
+  readPlan, readPlans, countOpen, planDir, liveSessions, sweepOrphans, openFirst,
+  DATA_ROOT, PLAN_DIR, PLAN_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
   STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
 };

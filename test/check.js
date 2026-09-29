@@ -630,5 +630,41 @@ console.log('\none live stylesheet, several windows');
   fs.rmSync(root, { recursive: true, force: true });
 }
 
+/* ── 10. what is left to do, drawn first ──
+   A plan only grows, so in the file's own order the few rows that still need doing scatter among the many that are done.
+   The drawing separates them; what must survive that is the row's id, because it is all the view has to remember which
+   branches were open - an id that changed because a row moved would fold the tree up as work got done. */
+console.log('\nwhat is left to do, drawn first');
+{
+  const plan = require('../src/workplan');
+  const N = (title, state) => ({ title, state });
+  const titles = (rows) => rows.map((r) => r.title).join(',');
+
+  const mixed = [N('a', 'done'), N('b', 'todo'), N('c', 'dropped'), N('d', 'discussing'), N('e', 'done'), N('f', 'parked')];
+  if (titles(plan.openFirst(mixed)) === 'b,d,f,a,c,e') ok('unfinished rows come first, each group in the file order');
+  else bad(`the drawn order is ${titles(plan.openFirst(mixed))}, expected b,d,f,a,c,e`);
+
+  const allDone = [N('a', 'done'), N('b', 'dropped')];
+  const allOpen = [N('a', 'todo'), N('b', 'parked')];
+  if (plan.openFirst(allDone) === allDone && plan.openFirst(allOpen) === allOpen) {
+    ok('a list with nothing to separate is handed back as it came');
+  } else bad('a list needing no reordering is copied anyway');
+
+  if (titles(plan.openFirst([])) === '' && titles(plan.openFirst(null)) === '') ok('no rows, and no rows at all, are fine');
+  else bad('an empty or missing list is not handled');
+
+  /* The id is built from the row's place in the file, so closing a row moves it on screen without renaming it. */
+  const rowsOf = (nodes) => plan.openFirst(
+    nodes.map((n, i) => ({ node: n, key: 'p/' + i + ':' + n.title })), (r) => r.node.state);
+  const idOf = (rows, t) => (rows.find((r) => r.node.title === t) || {}).key;
+  const before = rowsOf([N('a', 'done'), N('b', 'todo'), N('c', 'todo')]);
+  const after = rowsOf([N('a', 'done'), N('b', 'done'), N('c', 'todo')]);
+  const moved = before.indexOf(before.find((r) => r.node.title === 'b'))
+    !== after.indexOf(after.find((r) => r.node.title === 'b'));
+  if (moved && idOf(before, 'b') === idOf(after, 'b') && idOf(before, 'c') === idOf(after, 'c')) {
+    ok('a row that closes moves on screen and keeps its id');
+  } else bad(`closing a row renames it (moved: ${moved}, was ${idOf(before, 'b')}, now ${idOf(after, 'b')})`);
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

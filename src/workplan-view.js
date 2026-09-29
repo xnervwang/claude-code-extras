@@ -11,7 +11,7 @@
  * the conversation reads back.
  */
 const vscode = require('vscode');
-const { readPlan, readPlans, countOpen } = require('./workplan');
+const { readPlan, readPlans, countOpen, openFirst } = require('./workplan');
 
 /*
  * Icons say the state, and they are told apart by shape rather than by colour: colour alone disappears for a reader who
@@ -159,9 +159,14 @@ class WorkPlanProvider {
    * description to read.
    */
   rowsOf(nodes, plan, parentKey, path) {
-    return (nodes || []).map((n, i) => ({
+    /* Numbered by where the row sits in the file rather than by where it is drawn. The number is part of the id, the id
+       is all the view has to remember which branches were open, and the drawn order changes the moment a row closes - so
+       numbering by position on screen would hand a row a new id for having been reordered, and the tree would fold
+       itself up as work got done. */
+    const rows = (nodes || []).map((n, i) => ({
       kind: 'node', node: n, plan, path, key: parentKey + '/' + i + ':' + n.title,
     }));
+    return openFirst(rows, (r) => r.node.state);
   }
 
   getTreeItem(element) {
