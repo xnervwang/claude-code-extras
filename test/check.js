@@ -815,17 +815,60 @@ console.log('\nthe waiting, paired out of the official log');
     /* Sampling twice must not count the same wait twice, and the second read starts mid-line. */
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat-'));
     const log = path.join(root, 'Claude VSCode.log');
-    const into = path.join(root, 'rec.jsonl');
+    const dir = path.join(root, 'rec');
     fs.writeFileSync(log, [at('0:00.000', clicked), at('0:30.000', up)].join('\n') + '\n');
-    const first = L.sample({ log, into, state: {}, version: 'v1' });
+    const first = L.sample({ log, dir, state: {}, version: 'v1', pid: 11 });
     fs.appendFileSync(log, [at('2:00.000', clicked), at('2:40.000', up)].join('\n') + '\n');
-    const second = L.sample({ log, into, state: first.state, version: 'v1' });
-    const all = L.readRecords(into);
-    const waits = all.filter((r) => r.what === 'panel').map((r) => r.waited).sort((a, b) => a - b);
+    const second = L.sample({ log, dir, state: first.state, version: 'v1', pid: 11 });
+    const waits = L.readAll(dir).filter((r) => r.what === 'panel').map((r) => r.waited).sort((a, b) => a - b);
     if (first.added.length === 1 && second.added.length === 1 && waits.join() === '30000,40000') {
       ok('a second pass reads only what was appended, and the records are the union');
     } else bad(`two passes gave ${first.added.length} then ${second.added.length}, records ${JSON.stringify(waits)}`);
     fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* Two windows, each with its own log, writing at the same time. Sharing one record file loses whichever wrote
+       first, so this is the check that says they are not sharing it. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat2-'));
+    const dir = path.join(root, 'rec');
+    const one = path.join(root, 'a.log'), two = path.join(root, 'b.log');
+    fs.writeFileSync(one, [at('0:00.000', clicked), at('0:30.000', up)].join('\n') + '\n');
+    fs.writeFileSync(two, [at('1:00.000', clicked), at('1:50.000', up)].join('\n') + '\n');
+    L.sample({ log: one, dir, state: {}, version: 'v1', pid: 101 });
+    L.sample({ log: two, dir, state: {}, version: 'v1', pid: 202 });
+    const waits = L.readAll(dir).filter((r) => r.what === 'panel').map((r) => r.waited).sort((a, b) => a - b);
+    const files = fs.readdirSync(dir).sort();
+    if (waits.join() === '30000,50000' && files.join() === 'open-latency-101.jsonl,open-latency-202.jsonl') {
+      ok('two windows keep both sets of records, in a file each');
+    } else bad(`two windows left ${JSON.stringify(files)} holding ${JSON.stringify(waits)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* A window that is gone leaves its file behind; without pruning a machine collects one per host it ever ran. */
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat3-'));
+    const old = L.recordFile(dir, 303), mine = L.recordFile(dir, 404);
+    for (const f of [old, mine]) fs.writeFileSync(f, JSON.stringify({ what: 'panel', waited: 2000, at: 'x' }) + '\n');
+    const back = (Date.now() - L.STALE_MS - 60000) / 1000;
+    fs.utimesSync(old, back, back);
+    const gone = L.prune(dir, Date.now(), mine);
+    const left = fs.readdirSync(dir);
+    if (gone === 1 && left.join() === path.basename(mine)) ok('a long-dead window\'s file is removed and this one\'s is not');
+    else bad(`prune removed ${gone}, leaving ${JSON.stringify(left)}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  {
+    /* Trimming must not throw away the newest records, which is the only thing it could get wrong. */
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat4-'));
+    const f = L.recordFile(dir, 505);
+    const rows = [];
+    for (let i = 0; i < L.TRIM_AT + 10; i++) rows.push(JSON.stringify({ what: 'panel', waited: i, at: String(i) }));
+    fs.writeFileSync(f, rows.join('\n') + '\n');
+    const dropped = L.trim(f);
+    const kept = L.readRecords(f);
+    if (kept.length === L.KEEP && kept[kept.length - 1].waited === L.TRIM_AT + 9 && dropped === rows.length - L.KEEP) {
+      ok('trimming keeps the newest and says how many it dropped');
+    } else bad(`trim left ${kept.length} ending at ${kept.length && kept[kept.length - 1].waited}, dropped ${dropped}`);
+    fs.rmSync(dir, { recursive: true, force: true });
   }
   {
     const rows = L.summarise([

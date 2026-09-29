@@ -169,10 +169,12 @@ function activate(context) {
     /* Reads the records rather than measuring anything, so it is also the way to see them after a window restart. */
     vscode.commands.registerCommand('claudeCodeExtras.showOpenLatency', () => {
       sampleLatency();
-      const records = latency.readRecords(latencyFile());
+      /* Every window's records, not just this one's - a regression shows up across windows, and the window you happen to
+         run this from is rarely the one that was slow. */
+      const records = latency.readAll(latencyDir());
       log.appendLine('');
       for (const line of latency.report(records)) log.appendLine(line);
-      log.appendLine(`  records: ${latencyFile()}`);
+      log.appendLine(`  records: ${path.join(latencyDir(), 'open-latency-<pid>.jsonl')}, one per window`);
       log.show(true);
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -212,7 +214,9 @@ function activate(context) {
    * mechanism was never established; the panel is also the wrong side to measure from, since what is being timed is a
    * panel that has not started yet.
    */
-  const latencyFile = () => path.join(context.globalStorageUri.fsPath, 'open-latency.jsonl');
+  /* A directory rather than a file: each window writes only its own, since several of them share this folder and
+     nothing locks it. src/openlatency.js says what goes wrong when they share one. */
+  const latencyDir = () => context.globalStorageUri.fsPath;
   const stamp = () => {
     const ours = context.extension && context.extension.packageJSON && context.extension.packageJSON.version;
     const ext = vscode.extensions.getExtension(webview.id);
@@ -223,7 +227,7 @@ function activate(context) {
     try {
       const r = latency.sample({
         log: latency.logFile(context.logUri.fsPath),
-        into: latencyFile(),
+        dir: latencyDir(),
         state: context.globalState.get(LATENCY_KEY, {}),
         version: stamp(),
       });

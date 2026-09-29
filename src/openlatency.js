@@ -34,8 +34,12 @@ const LINE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3}) \[(\w+)\
 const FLOOR_MS = 1500;
 /* A gap longer than this is taken to be a window left alone, not a wait, and is dropped rather than recorded. */
 const CEILING_MS = 10 * 60 * 1000;
-/* How many records to keep. One open is one record, so this is months of them. */
+/* How many records to keep per window. One open is one record, so this is months of them. */
 const KEEP = 2000;
+/* Trimming rewrites the file, so it is done in batches rather than on every append. */
+const TRIM_AT = Math.floor(KEEP * 1.5);
+/* A window's file is removed this long after that window last wrote to it. Its pid is gone by then and will be reused. */
+const STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
 function at(m) {
   return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]);
@@ -130,25 +134,68 @@ function logFile(ourLogDir) {
   return path.join(path.dirname(ourLogDir), 'Anthropic.claude-code', 'Claude VSCode.log');
 }
 
+/*
+ * One file per window, named by the extension host's process id.
+ *
+ * A window is a separate extension host with its own timer, and nothing coordinates them. Sharing one file would mean
+ * read-modify-write from several processes at once: the last writer replaces whatever the others added, and a shared
+ * temporary name lets two of them interleave bytes into it and each rename the result into place, so the file can end up
+ * holding neither version. With one writer per file there is nothing to coordinate - appends go to the end of a file only
+ * this window writes, and trimming it is safe for the same reason.
+ */
+const NAME = /^open-latency-\d+\.jsonl$/;
+
+function recordFile(dir, pid = process.pid) {
+  return path.join(dir, `open-latency-${pid}.jsonl`);
+}
+
 function readRecords(file) {
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch (_) { return []; }
   const out = [];
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    try { out.push(JSON.parse(line)); } catch (_) { /* a half-written last line, which the next write replaces */ }
+    try { out.push(JSON.parse(line)); } catch (_) { /* a torn line from a write that did not finish */ }
   }
   return out;
 }
 
+/** Every window's records together, oldest wait first. Reading is where the per-window files are put back into one set. */
+function readAll(dir) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const out = [];
+  for (const name of names) if (NAME.test(name)) out.push(...readRecords(path.join(dir, name)));
+  out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  return out;
+}
+
+/** Drop the files of windows long gone, so a machine does not collect one per extension host it has ever run. */
+function prune(dir, now = Date.now(), keepFile = '') {
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return 0; }
+  let gone = 0;
+  for (const name of names) {
+    const file = path.join(dir, name);
+    if (!NAME.test(name) || file === keepFile) continue;
+    try {
+      if (now - fs.statSync(file).mtimeMs < STALE_MS) continue;
+      fs.unlinkSync(file);
+      gone++;
+    } catch (_) { /* another window got there first, which is the ordinary outcome rather than a fault */ }
+  }
+  return gone;
+}
+
 /**
- * Read whatever is new in the log and append it to the record file. Returns what was added.
+ * Read whatever is new in the log and append it to this window's record file. Returns what was added.
  *
  * `state` is read and written by the caller, since where it is kept belongs to the extension: `{ file, size }` is the
  * log this offset refers to and how far it had been read. A log that shrank or changed name is read from the start.
  */
 function sample(opts) {
-  const { log, into, state = {}, version = '', now = Date.now() } = opts;
+  const { log, dir, state = {}, version = '', now = Date.now(), pid = process.pid } = opts;
+  const into = recordFile(dir, pid);
   let stat;
   try { stat = fs.statSync(log); } catch (_) { return { added: [], state, why: 'no log for this window yet' }; }
   const from = (state.file === log && state.size <= stat.size) ? state.size : 0;
@@ -171,15 +218,32 @@ function sample(opts) {
 
   const added = readOut(text).map((r) => Object.assign({ seen: new Date(now).toISOString(), version }, r));
   if (added.length) {
-    const kept = readRecords(into).concat(added).slice(-KEEP);
     try {
-      fs.mkdirSync(path.dirname(into), { recursive: true });
-      const tmp = into + '.writing';
-      fs.writeFileSync(tmp, kept.map((r) => JSON.stringify(r)).join('\n') + '\n');
-      fs.renameSync(tmp, into);
+      fs.mkdirSync(dir, { recursive: true });
+      /* One call with every new record in it. Appending is atomic per write on a local filesystem, so a whole buffer
+         lands in one piece; writing them one at a time would be several appends that another writer could sit between. */
+      fs.appendFileSync(into, added.map((r) => JSON.stringify(r)).join('\n') + '\n');
+      trim(into);
+      prune(dir, now, into);
     } catch (e) { return { added: [], state, why: 'could not write the records: ' + e.message }; }
   }
   return { added, state: { file: log, size: stat.size }, why: '' };
+}
+
+/**
+ * Keep this window's file to the newest KEEP records, in batches.
+ *
+ * Safe to rewrite because only this window writes this file. The temporary name carries the pid for the same reason the
+ * file does: two windows trimming at once must not be handed the same scratch path.
+ */
+function trim(file) {
+  const all = readRecords(file);
+  if (all.length <= TRIM_AT) return 0;
+  const kept = all.slice(-KEEP);
+  const tmp = `${file}.${process.pid}.writing`;
+  fs.writeFileSync(tmp, kept.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  fs.renameSync(tmp, file);
+  return all.length - kept.length;
 }
 
 function quantile(sorted, q) {
@@ -233,4 +297,7 @@ function report(records) {
   return out;
 }
 
-module.exports = { lines, kindOf, readOut, logFile, readRecords, sample, summarise, report, FLOOR_MS, CEILING_MS, KEEP };
+module.exports = {
+  lines, kindOf, readOut, logFile, recordFile, readRecords, readAll, prune, trim, sample, summarise, report,
+  FLOOR_MS, CEILING_MS, KEEP, TRIM_AT, STALE_MS, NAME,
+};
