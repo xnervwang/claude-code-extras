@@ -40,6 +40,18 @@
     }
     var size = sigValue('fileSize');
     if (typeof size === 'number') rows.push(['On disk', bytesFmt(size)]);
+    /*
+     * What this extension is costing, in the one place a reader can get at it.
+     *
+     * These numbers were already being kept, and already being printed - to the panel's devtools console, which is
+     * behind a frame selector and turned out to be genuinely hard to reach. A measurement nobody can read does not
+     * answer "is this making the panel slow", so it belongs on a button that is already here.
+     *
+     * The share of the main thread is the figure that matters rather than the slowest single sweep: one sweep of twenty
+     * milliseconds is nothing, and the same sweep four times a second while a reply streams is a tenth of the thread.
+     */
+    var cost = sweepCost();
+    if (cost) for (var i = 0; i < cost.length; i++) rows.push(cost[i]);
     return rows;
   };
 
