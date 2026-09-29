@@ -317,12 +317,17 @@ raises in the panel when it can no longer find a single message.
 
 Two rules when changing the patchers:
 
-- **Nothing to bump.** The marker carries a digest of the injected script and the bundle edits, so a patched file
-  whose contents no longer match this tree is recognised as outdated on its own. `VERSION` is there for a human
-  reading the file and plays no part in that decision. This used to be a hand-maintained number, and forgetting it
-  was silent in the worst way: packaging, installing and reloading all reported success while the panel kept running
-  the old code, so the symptom was an edit that had no effect anywhere and no step that complained.
-- **Reload twice** to see a change: once for this extension to rewrite the file, once for the panel to load it.
+- **Nothing to bump for the panel; raise `VERSION` by hand for the other two.** The panel's marker carries a digest of
+  the injected script and the bundle edits, so a patched file whose contents no longer match this tree is recognised as
+  outdated on its own, and its `VERSION` is read by nobody but a human. The host and icon patches mark themselves with a
+  plain number instead — `/* CLAUDE-CODE-EXTRAS-HOST v4 */`, `<!-- CLAUDE-CODE-EXTRAS-LOGO v1 -->` — so changing an edit
+  in `src/host.js` or `src/logo.js` without raising it leaves an already-patched file recognised as current and never
+  rewritten. That is silent in the worst way: packaging, installing and reloading all report success while the old code
+  keeps running, so the symptom is an edit with no effect anywhere and no step that complains. The digest exists because
+  this used to be true of the panel as well.
+- **Reload twice** to see a change: once for this extension to rewrite the file, once for the panel to load it. The
+  activity bar icon is the exception — a reload never refreshes it, the editor has to be restarted, and several reloads
+  showing the old drawing once sent an afternoon chasing a design problem that had already been fixed.
 
 And one performance rule that has been broken before: the loop in the injected script that walks up the React fiber
 tree runs for every visible row on every refresh, so it must keep its early exit (`!out.message`). Making it search
