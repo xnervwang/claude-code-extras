@@ -1,4 +1,10 @@
 <!--
+  BSD 3-Clause License
+  Copyright (c) 2026, Xnerv Wang
+  All rights reserved.
+-->
+
+<!--
   Activity bar icon: a list of tasks, with the Claude Code burst over it. The same composition, from the same numbers, as
   images/icon.svg - which is what the extensions view shows, so one mark says which extension the side bar belongs to.
 

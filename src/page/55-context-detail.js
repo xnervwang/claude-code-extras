@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 // The context breakdown shown on hovering the usage meter.
 // Fragment of the in-page script - see README.md in this folder.
 

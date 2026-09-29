@@ -1,4 +1,8 @@
 #!/bin/bash
+# BSD 3-Clause License
+# Copyright (c) 2026, Xnerv Wang
+# All rights reserved.
+
 # Build a .vsix without npm. A .vsix is a zip holding the extension under extension/ plus two descriptor files;
 # vsce adds nothing else that VS Code requires for a local install.
 set -euo pipefail
@@ -16,7 +20,7 @@ mkdir -p "$stage/extension"
 cd "$root"
 # claude-plugin/ is the companion Claude Code plugin, carried inside rather than fetched. One download has to be enough;
 # nothing here reaches the network, and shipping both halves together keeps the file format they share on one version.
-cp -r package.json extension.js uninstall.js src images claude-plugin README.md "$stage/extension/"
+cp -r package.json extension.js uninstall.js src images claude-plugin README.md LICENSE "$stage/extension/"
 # Python leaves compiled bytecode beside a module it imports, so running the plugin's hooks locally seeds __pycache__
 # inside the tree that is copied above. It is a build artifact of whoever last ran them, and it has no business in a
 # file other people install.

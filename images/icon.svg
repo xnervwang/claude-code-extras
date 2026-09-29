@@ -1,4 +1,10 @@
 <!--
+  BSD 3-Clause License
+  Copyright (c) 2026, Xnerv Wang
+  All rights reserved.
+-->
+
+<!--
   The icon the extensions view and the marketplace show, rendered to images/icon.png at 128 pixels.
 
   Same composition as images/workplan.svg, from the same numbers. What differs is that colour is real here - nothing

@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 'use strict';
 /*
  * Pre-flight check. Run it after every change to the patchers, before installing.

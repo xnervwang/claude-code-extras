@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 'use strict';
 /*
  * Fetches whatever Claude Code build the marketplace is currently shipping and runs every edit against it.

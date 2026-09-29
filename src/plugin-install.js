@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 'use strict';
 /*
  * Registering the companion Claude Code plugin, once.

@@ -360,3 +360,8 @@ And one performance rule that has been broken before: the loop in the injected s
 tree runs for every visible row on every refresh, so it must keep its early exit (`!out.message`). Making it search
 for more than one thing at a time measured eight to ten times slower. `test/check.js` asserts the early exit is
 still there.
+
+## License
+
+BSD 3-Clause. The full text is in [LICENSE](LICENSE), and every source file carries the notice at its top so a file
+that travels on its own still says what it is under.

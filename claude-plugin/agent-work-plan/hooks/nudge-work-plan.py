@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# BSD 3-Clause License
+# Copyright (c) 2026, Xnerv Wang
+# All rights reserved.
+
 """Say something when a turn did real work and left the work plan untouched.
 
 The skill says when to update the plan. This exists because a rule about noticing a state change is the kind that fails

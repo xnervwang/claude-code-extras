@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 // A toggle that leaves only the conversation: your questions and the replies, without the thinking and the tool calls.
 // Fragment of the in-page script - see README.md in this folder.
 

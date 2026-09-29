@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 'use strict';
 /*
  * Claude Code Extras — user interface additions for the Claude Code panel in VS Code.

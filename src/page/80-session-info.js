@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 // The session id, the directory the conversation started in, where its transcripts are kept, and their size.
 // Fragment of the in-page script - see README.md in this folder.
 

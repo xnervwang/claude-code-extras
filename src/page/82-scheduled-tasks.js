@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 // This session's scheduled prompts, shown as a section of the official agent map.
 // Fragment of the in-page script - see README.md in this folder.
 

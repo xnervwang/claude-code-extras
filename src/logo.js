@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 'use strict';
 /**
  * Third patch target: the tab icon Claude Code shows when a turn has finished and you have not looked yet.

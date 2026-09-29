@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# BSD 3-Clause License
+# Copyright (c) 2026, Xnerv Wang
+# All rights reserved.
+
 """Put this conversation's work plan in front of the model, every turn.
 
 This is the load-bearing half of the plugin, and the reason it is a hook rather than part of the skill: a skill is

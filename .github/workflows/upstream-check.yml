@@ -1,3 +1,7 @@
+# BSD 3-Clause License
+# Copyright (c) 2026, Xnerv Wang
+# All rights reserved.
+
 # Claude Code ships often - twice in one day has happened - and an update that changes the shape of any patched code
 # costs the panel every addition at once. On a machine that is noticed only after the update is installed, because the
 # extension refuses to patch a build it does not recognise. Checking the published build on a schedule moves the news

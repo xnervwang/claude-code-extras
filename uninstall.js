@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 'use strict';
 /*
  * Uninstall hook (package.json "vscode:uninstall"). VS Code runs this with plain Node after the editor restarts.

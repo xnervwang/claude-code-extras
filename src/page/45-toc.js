@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 // The list of your own messages, and stepping between them.
 // Fragment of the in-page script - see README.md in this folder.
 

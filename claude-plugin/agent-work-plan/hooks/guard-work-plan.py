@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# BSD 3-Clause License
+# Copyright (c) 2026, Xnerv Wang
+# All rights reserved.
+
 """Refuse a write to the work plan that carries a description longer than the view will show.
 
 The limit itself is explained in the skill: a description is what the next person needs in order to pick the task up,

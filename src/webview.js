@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 'use strict';
 /*
  * First patch target: the Claude Code chat panel (webview/index.js inside the Claude Code extension).

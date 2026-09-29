@@ -1,3 +1,7 @@
+// BSD 3-Clause License
+// Copyright (c) 2026, Xnerv Wang
+// All rights reserved.
+
 'use strict';
 /*
  * Writes the two descriptor files a .vsix needs, derived from package.json so the identity and version cannot drift

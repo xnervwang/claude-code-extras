@@ -1,3 +1,7 @@
+# BSD 3-Clause License
+# Copyright (c) 2026, Xnerv Wang
+# All rights reserved.
+
 """Where this conversation keeps its work plan.
 
 Shared by both hooks rather than written twice: one of them reads the file and the other watches its timestamp, so two
