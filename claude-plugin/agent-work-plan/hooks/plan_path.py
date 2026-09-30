@@ -36,6 +36,10 @@ extension, so every value here has a default that holds by itself.
 """
 SETTINGS_FILE = "config.json"
 DEFAULTS = {
+    # Off means this plugin does nothing at all: no rows in front of the model, no reminder at the end of a turn, and a
+    # write to the plan refused rather than quietly kept up. Hiding the view alone would be the worst of both - the
+    # whole cost still paid every turn, with nothing to show for it.
+    "enabled": True,
     # A turn below this is conversational and owes the plan nothing.
     "nudgeMinToolCalls": 4,
     # What a turn has to cost before a conversation with no plan at all is told it could keep one. The upper quartile of
@@ -56,8 +60,14 @@ def settings():
             given = json.load(fh)
     except Exception:
         return out
-    for key in DEFAULTS:
+    for key, fallback in DEFAULTS.items():
         value = given.get(key) if isinstance(given, dict) else None
+        # Checked against the default's own type: a number where a flag belongs, or the other way round, is a mistake
+        # rather than an instruction, and the default is the safer of the two readings.
+        if isinstance(fallback, bool):
+            if isinstance(value, bool):
+                out[key] = value
+            continue
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             continue
         if value >= 1:

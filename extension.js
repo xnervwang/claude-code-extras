@@ -39,6 +39,7 @@ const THRESHOLD_SETTING = 'claudeCodeExtras.latencyThresholdSeconds';
 const LATENCY_ON_SETTING = 'claudeCodeExtras.recordOpenLatency';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
+  enabled: 'claudeCodeExtras.workPlan',
   offerMinTurns: 'claudeCodeExtras.workPlanOfferMinTurns',
   offerMinToolCalls: 'claudeCodeExtras.workPlanOfferMinToolCalls',
 };
@@ -179,6 +180,27 @@ function activate(context) {
     }),
     /* Every setting this extension has, in the editor's own settings UI: search, per-workspace values, sync and a JSON
        view come with it, and none of it is ours to maintain. */
+    /*
+     * Take the plugin out of Claude Code's own settings, which is the only way to stop its skill description being
+     * loaded - about a hundred tokens a session that the switch above cannot reach, because the switch only tells the
+     * plugin's hooks to do nothing while the plugin itself stays registered.
+     *
+     * A command rather than something the switch does, because this writes Claude Code's configuration rather than ours,
+     * and an extension that quietly edits another tool's settings is the behaviour nobody wants to discover later.
+     * `disable` and not `uninstall`: uninstalling takes the plugin's data directory with it, and that is where every
+     * conversation's plan lives.
+     */
+    vscode.commands.registerCommand('claudeCodeExtras.disableWorkPlanPlugin', async () => {
+      const yes = await vscode.window.showWarningMessage(
+        'Stop Claude Code loading the work plan plugin? This edits Claude Code\'s own settings, and saves the skill '
+        + 'description it loads every session. Your existing plans are left alone.',
+        { modal: true }, 'Stop loading it');
+      if (yes !== 'Stop loading it') return;
+      const r = await pluginInstall.disable();
+      log.appendLine('work plan plugin: ' + r.said);
+      log.show(true);
+      if (r.ok) await offerReload('The work plan plugin will stop loading in conversations started after a reload.');
+    }),
     vscode.commands.registerCommand('claudeCodeExtras.openSettings',
       () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:xnerv.claude-code-extras')),
     /* Reads the records rather than measuring anything, so it is also the way to see them after a window restart. */
@@ -286,7 +308,8 @@ function activate(context) {
     const values = {};
     for (const [key, setting] of Object.entries(HOOK_SETTINGS)) {
       const v = cfg().get(setting);
-      if (typeof v === 'number' && v >= 1) values[key] = Math.floor(v);
+      if (typeof v === 'boolean') values[key] = v;
+      else if (typeof v === 'number' && v >= 1) values[key] = Math.floor(v);
     }
     const file = path.join(PLAN_DIR, 'config.json');
     const next = JSON.stringify(values, null, 2) + '\n';

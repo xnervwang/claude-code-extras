@@ -134,6 +134,8 @@ def main():
     if not path:
         return 0
     limits = settings()
+    if not limits["enabled"]:
+        return 0
     started, tools, turns = turn_shape(payload.get("transcript_path") or "")
     if not started:
         return 0

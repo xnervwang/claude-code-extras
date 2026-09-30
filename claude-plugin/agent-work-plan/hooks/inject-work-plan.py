@@ -22,7 +22,7 @@ import sys
 # plugin directory, and a hook that runs on every turn should leave nothing behind in a directory the platform manages.
 sys.dont_write_bytecode = True
 
-from plan_path import plan_file
+from plan_path import plan_file, settings
 
 STATES_OPEN = ("discussing", "todo", "doing", "parked")
 GLYPH = {"discussing": "?", "todo": "o", "doing": ">", "parked": "=", "done": "+", "dropped": "x"}
@@ -81,6 +81,8 @@ def main():
     try:
         payload = json.load(sys.stdin)
     except Exception:
+        return 0
+    if not settings()["enabled"]:
         return 0
     path = plan_file(payload)
     if not path:

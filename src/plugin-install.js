@@ -182,6 +182,26 @@ function removeSync(claudeBin, stamp) {
   return saved;
 }
 
+/**
+ * Tell Claude Code to stop loading the plugin, which is what stops its skill description entering every session.
+ *
+ * `disable` rather than `uninstall`: uninstalling takes the plugin's data directory with it, and that is where every
+ * conversation's plan lives. Disabling is a line in Claude Code's own settings and is undone by enabling again, so the
+ * plans stay where they are and come back with it.
+ */
+async function disable() {
+  const claudeBin = findClaude();
+  if (!claudeBin) return { ok: false, said: 'the claude binary is not where this extension can see it' };
+  const r = await run(claudeBin, ['plugin', 'disable', REF]);
+  if (r.ok) return { ok: true, said: 'told Claude Code to stop loading ' + REF };
+  /* Already disabled reads as a failure from the CLI and is the outcome asked for, so it is not reported as one. */
+  if (/not enabled|already disabled|is disabled/i.test(r.said)) {
+    return { ok: true, said: REF + ' was already not being loaded' };
+  }
+  return { ok: false, said: r.said };
+}
+
+
 module.exports = {
-  install, removeSync, rescuePlans, findClaude, digest, MARKETPLACE, PLUGIN, REF, BINARY, DATA_DIR,
+  install, disable, removeSync, rescuePlans, findClaude, digest, MARKETPLACE, PLUGIN, REF, BINARY, DATA_DIR,
 };

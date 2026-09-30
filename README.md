@@ -257,10 +257,19 @@ written at all. A partial patch is worse than none, and a patch applied on a gue
 | `claudeCodeExtras.workPlanOfferMinTurns` | `3` | how often you have to have spoken before a conversation with no plan is told it could keep one |
 | `claudeCodeExtras.workPlanOfferMinToolCalls` | `25` | and how much that turn has to have cost |
 | `claudeCodeExtras.show.*` | `true` | one per addition, listed below |
+| `claudeCodeExtras.workPlan` | `true` | off hides the view and its icon, stops the rows reaching the model, and refuses a write to a plan |
 
 The last two reach the plugin's hooks through a small file the extension writes for them - `config.json`,
 beside the plans - because a hook is its own process and cannot read editor settings. The plugin carries the
 same defaults, so it behaves the same way with this extension absent.
+
+Turning the work plan off is not cosmetic: the view and its activity bar icon go, nothing is put in front of the
+model each turn, the end of a turn says nothing, and a write to a plan file is refused - otherwise a plan would go on
+being kept where nobody can see it, at the full cost. What remains is the skill's own description, around a hundred
+tokens a session, because Claude Code still has the plugin registered. **Claude Code Extras: Stop Loading the Work
+Plan Plugin** removes that as well. It is a command rather than part of the setting because it edits Claude Code's
+own configuration, and it disables rather than uninstalls: uninstalling takes the plugin's data directory with it,
+and that is where every conversation's plan lives.
 
 Each addition has its own switch, `claudeCodeExtras.show.<name>`, and all of them start on:
 `timestamps`, `replyDuration`, `contextShare`, `cost`, `modelName`, `subAgentTags`, `toc`, `contextMeter`, `chime`, `sessionDates`, `footerInfo`, `footerPlainView`, `footerViewFilter`, `footerMute`.

@@ -1165,5 +1165,86 @@ console.log('\none switch per addition, wired at both ends');
   } else bad('turning off timestamps dropped the rule the other three need');
 }
 
+/* ── 14. switched off, the work plan costs nothing and keeps nothing ──
+   Hiding the view alone would be the worst of both: every turn still pays for the rows in front of the model and the
+   reminder at the end of one, with nothing on screen to show for it. So off has to reach the plugin, and the checks here
+   are one per hook, because each falls silent for its own reason and any one of them still speaking gives the cost back. */
+console.log('\nswitched off, the work plan costs nothing and keeps nothing');
+{
+  const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+  const session = '42000000-0000-0000-0000-000000000000';
+
+  const stage = (enabled) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-off-'));
+    fs.writeFileSync(path.join(dir, session + '.json'),
+      JSON.stringify({ title: 'demo', nodes: [{ title: 'a row', state: 'todo' }] }));
+    if (enabled !== undefined) fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ enabled }));
+    /* One turn that just started, against a plan last written an hour ago - the shape the reminder asks for. */
+    const now = new Date();
+    const lines = [JSON.stringify({ type: 'user', timestamp: now.toISOString(), message: { content: 'go' } })];
+    for (let i = 0; i < 10; i++) {
+      lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read' }] } }));
+    }
+    const transcript = path.join(dir, 't.jsonl');
+    fs.writeFileSync(transcript, lines.join('\n') + '\n');
+    const back = (now.getTime() - 3600e3) / 1000;
+    fs.utimesSync(path.join(dir, session + '.json'), back, back);
+    return { dir, transcript };
+  };
+  const run = (script, dir, payload) => (cp.spawnSync('python3', [path.join(hooks, script), dir], {
+    encoding: 'utf8', input: JSON.stringify(payload),
+  }).stdout || '').trim();
+
+  for (const [what, enabled] of [['on by default', undefined], ['on', true]]) {
+    const t = stage(enabled);
+    const injected = run('inject-work-plan.py', t.dir, { session_id: session, hook_event_name: 'UserPromptSubmit' });
+    const nudged = run('nudge-work-plan.py', t.dir,
+      { session_id: session, transcript_path: t.transcript, hook_event_name: 'Stop' });
+    if (injected.includes('a row') && nudged.includes('did not touch the work plan')) ok(`${what}: the rows arrive and the reminder speaks`);
+    else bad(`${what}: injected ${injected.length} bytes, nudge ${nudged.length} bytes`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  {
+    const t = stage(false);
+    const injected = run('inject-work-plan.py', t.dir, { session_id: session, hook_event_name: 'UserPromptSubmit' });
+    if (!injected) ok('off: nothing is put in front of the model, which is where the tokens went');
+    else bad(`off: still injected ${injected.length} bytes`);
+
+    const nudged = run('nudge-work-plan.py', t.dir,
+      { session_id: session, transcript_path: t.transcript, hook_event_name: 'Stop' });
+    if (!nudged) ok('off: the end of a turn says nothing');
+    else bad(`off: still nudged ${JSON.stringify(nudged.slice(0, 80))}`);
+
+    /* The description of the skill stays in context while the plugin is loaded, so an agent can decide to keep a plan on
+       its own. This is the only thing left that can stop one being kept where nobody can see it. */
+    const denied = run('guard-work-plan.py', t.dir, {
+      tool_name: 'Write', hook_event_name: 'PreToolUse',
+      tool_input: { file_path: path.join(t.dir, session + '.json'), content: '{}' },
+    });
+    let decision = '';
+    try { decision = JSON.parse(denied).hookSpecificOutput.permissionDecision; } catch (_) {}
+    if (decision === 'deny' && denied.includes('switched off')) ok('off: a write to a plan is refused, and says why');
+    else bad(`off: the guard said ${JSON.stringify(denied.slice(0, 80))}`);
+
+    /* A write somewhere else is none of this plugin's business, switched off or on. */
+    const other = run('guard-work-plan.py', t.dir, {
+      tool_name: 'Write', hook_event_name: 'PreToolUse',
+      tool_input: { file_path: path.join(t.dir, 'notes.txt'), content: 'hello' },
+    });
+    if (!other) ok('off: a write to anything else is left alone');
+    else bad(`off: the guard interfered with an unrelated write: ${JSON.stringify(other.slice(0, 80))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  {
+    /* The setting has to reach the plugin, and the view has to be hidden by it. Neither is visible from the other side. */
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    const view = manifest.contributes.views.claudeCodeExtras[0];
+    const setting = manifest.contributes.configuration.properties['claudeCodeExtras.workPlan'];
+    if (setting && setting.default === true && view.when === 'config.claudeCodeExtras.workPlan') {
+      ok('the view is hidden by the same setting the hooks read, and starts on');
+    } else bad(`setting ${JSON.stringify(setting && setting.default)}, view when ${JSON.stringify(view.when)}`);
+  }
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

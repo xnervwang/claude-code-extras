@@ -26,7 +26,7 @@ import sys
 # installed plugin directory.
 sys.dont_write_bytecode = True
 
-from plan_path import data_dir
+from plan_path import data_dir, settings
 
 # Kept the same as MAX_DETAIL_LINES and MAX_DETAIL_CHARS in the extension's src/workplan.js, and as the numbers the
 # skill quotes. Three copies, so test/check.js asserts they are equal - a gate that refuses at one length while the view
@@ -147,6 +147,21 @@ def main():
         return 0
     path = tool_input.get("file_path")
     if not guarded(path):
+        return 0
+
+    # Switched off, this is the one place that can still stop a plan being kept. The other two hooks fall silent, but the
+    # skill's description stays in front of the model while the plugin is loaded, so an agent can decide on its own to
+    # maintain the file - and a plan kept where nobody can see it is the cost of the feature with none of the use. Said
+    # out loud rather than refused in silence, or the next thing tried is a way around it.
+    if not settings()["enabled"]:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": payload.get("hook_event_name", "PreToolUse"),
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                "Work plans are switched off for this editor (claudeCodeExtras.workPlan), so nothing reads this file and "
+                "the view for it is hidden. Do not keep one, and do not work around this by writing somewhere else: "
+                "track what is left in your reply instead. Turn the setting back on to use plans again."),
+        }}))
         return 0
 
     if tool == "Write":
