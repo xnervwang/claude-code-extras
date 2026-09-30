@@ -145,6 +145,7 @@ undo.
 |---|---|
 | The user raises something new to be done | Add a node with state `discussing` and an `opened` time |
 | The user says to go ahead with it | Move that node to `todo` |
+| You are about to start on it | Move it to `doing`, before the work rather than after |
 | The work is finished, or the user says it is | Move it to `done` and set `closed` |
 | The user decides against it | Move it to `dropped` and set `closed`, with the reason in `detail` |
 | Doing A turns out to need B finished first | Add B as a child of A, with its own `opened` |
@@ -165,7 +166,11 @@ place. A row cannot reach `doing` without having been `todo`, so the gate is alr
 | `todo` → `doing` → `done` | yours, as it happens |
 | anything → `parked` or `dropped` | the user's, with the reason written down |
 
-**Do this before writing the last paragraph of the turn**, not after. Once the closing summary is written the turn feels
+`doing` is the exception to the timing below: it is written as the work starts. A row marked at the end of a turn is
+already wrong, because by then the turn is over and nothing is running - and the tree is watching the file, so a row
+marked as you begin appears there while you work, which is the only time anyone can act on it.
+
+**Everything else: do it before writing the last paragraph of the turn**, not after. Once the closing summary is written the turn feels
 finished and the plan is what gets left out; and the turn that most needed recording is the one that wandered furthest,
 which is exactly the turn with the longest summary to write.
 

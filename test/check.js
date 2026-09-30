@@ -705,6 +705,17 @@ console.log('\nwhat is left to do, drawn first');
      rows alone would mean a number quoted an hour ago points at a different row now. */
   const cp = require('child_process');
   const hook = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks', 'inject-work-plan.py');
+  const numbersRaw = (nodes) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-raw-'));
+    const session = '41000000-0000-0000-0000-000000000000';
+    fs.writeFileSync(path.join(dir, session + '.json'), JSON.stringify({ nodes }));
+    const r = cp.spawnSync('python3', [hook, dir], {
+      encoding: 'utf8',
+      input: JSON.stringify({ session_id: session, hook_event_name: 'UserPromptSubmit' }),
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+    try { return JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) { return ''; }
+  };
   const numbers = (nodes) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-num-'));
     const session = '40000000-0000-0000-0000-000000000000';
@@ -727,6 +738,14 @@ console.log('\nwhat is left to do, drawn first');
     ]);
     if (got.join(',') === '3,2,2.2,2.1,1') ok('numbers come from the file while the rows are drawn newest first');
     else bad(`the numbering came out ${JSON.stringify(got)}`);
+  }
+  {
+    /* The one instruction that has to arrive before the work rather than after it. Left to the skill alone it reaches an
+       agent only when the description happens to match; here it arrives every turn, which is the difference between the
+       state being used and being decoration. */
+    const said = numbersRaw([N('one', 'todo')]);
+    if (said.includes('`doing` as you start on it')) ok('the injected block asks for doing before the work, every turn');
+    else bad(`the injected block does not mention doing: ${JSON.stringify(said.slice(0, 160))}`);
   }
   {
     /* Closing the first row must not move the numbers of the rest. */

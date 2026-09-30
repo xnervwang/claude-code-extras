@@ -101,8 +101,12 @@ def main():
     closed = n.get("done", 0) + n.get("dropped", 0)
     if closed:
         head += " · %d closed" % closed
+    # The line about `doing` is here rather than in the skill because here is the only moment that comes BEFORE the
+    # work: the other hook speaks at the end of a turn, by which time "being worked on now" can no longer be true of
+    # anything. A row marked here shows up in the tree while the turn runs, which is the whole point of the state.
     text = ("This conversation's work plan (%s). Only open rows are shown; the file is %s.\n"
-            "A child is something that has to be finished before its parent can be.\n\n%s"
+            "A child is something that has to be finished before its parent can be.\n"
+            "Set a row to `doing` as you start on it, not afterwards, and move it off `doing` when you stop.\n\n%s"
             % (head or "nothing open", path, "\n".join(out)))
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": payload.get("hook_event_name", "UserPromptSubmit"),
