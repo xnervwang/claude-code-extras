@@ -1285,27 +1285,33 @@ console.log('\nwhose plan the tree shows');
     Module._resolveFilename = realResolve;
   }
 
+  /* The rule is one line: show the conversation in front of the reader, or nothing. There is no state that shows every
+     conversation - a fresh window that has never been told which one it is looking at shows an empty tree, not the whole
+     machine. */
   const p = new view();
-  if (p.focus === undefined) ok('before anything reports, which conversation is open is unknown rather than none');
-  else bad(`a new provider starts with focus ${JSON.stringify(p.focus)}`);
-
   if (p.setFocus('abc') === true && p.focus === 'abc') ok('a named conversation is recorded');
   else bad(`setFocus('abc') left ${JSON.stringify(p.focus)}`);
 
-  if (p.setFocus('') === true && p.focus === '') ok('the panel reporting none open is recorded as none, not as unknown');
-  else bad(`setFocus('') left ${JSON.stringify(p.focus)}`);
-
-  if (p.setFocus(undefined) === true && p.focus === undefined) ok('and unknown is carried through rather than flattened');
-  else bad(`setFocus(undefined) left ${JSON.stringify(p.focus)}`);
-
-  if (p.setFocus(undefined) === false) ok('the same answer twice is not announced as a change');
+  if (p.setFocus('abc') === false) ok('the same conversation twice is not announced as a change');
   else bad('an unchanged focus reported a move');
 
-  /* The line the bug was in: which of the three readings goes to the directory. */
+  /* Focus but no file. A conversation with no plan yet reads as empty, not as a reason to fall back to everyone else's -
+     the bug this section was rewritten for: a fresh project showed other projects' plans. */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-focus-'));
+  const plan = require('../src/workplan');
+  const seen = plan.readPlan.length; // arity guard: readPlan(session) still takes the id
+  if (seen === 1) ok('a focused conversation is read by id alone');
+  else bad(`readPlan takes ${seen} args, expected 1`);
+
+  /* No path that shows all plans is left in the view: readPlans is gone, and the fallback is the empty list. */
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan-view.js'), 'utf8');
-  if (/this\.focus === undefined \? readPlans\(\)/.test(src)) {
-    ok('only the unknown case reads the directory; reporting none open shows nothing');
-  } else bad('the fallback no longer distinguishes none-open from not-yet-known');
+  if (/this\.focus \? readPlan\(this\.focus\) : \[\]/.test(src) && !/readPlans/.test(src)) {
+    ok('with no conversation in focus the tree is empty, never every conversation on the machine');
+  } else bad('the view can still fall back to showing all plans');
+  if (!/readPlans/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan.js'), 'utf8'))) {
+    ok('the show-everything function is gone, not just unreferenced');
+  } else bad('readPlans is still defined in workplan.js');
+  fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(stub, { force: true });
 }
 

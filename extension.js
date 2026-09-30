@@ -361,25 +361,12 @@ function activate(context) {
     const where = plans.length === 1 ? 'in this conversation' : `across ${plans.length} conversation(s)`;
     view.badge = open ? { value: open, tooltip: `${open} still open ${where}` } : undefined;
   };
-  /*
-   * Which conversation is in front of the reader comes from the Claude Code host, which tracks it and now records it
-   * where this extension can read it - see the "active conversation id" edit in src/host.js. It is a session id, so no
-   * matching or guessing is involved: the tree shows that conversation's plan, and shows every plan only while the host
-   * has said nothing, which is the case before the patch is in or on a build whose shape did not match.
-   *
-   * The patched field calls back the moment it is written, so the view moves with the click rather than on the next scan.
-   */
-  /*
-   * Three answers, not two. An id names the conversation to read; an empty string means the panel reported that
-   * none is open; undefined means nothing has reported at all - the patch is not in place, or no panel has opened
-   * since this window started. Collapsing the last two lost the difference between 'show nothing' and 'not known
-   * yet', and the view read both as the second: with nothing open it drew every conversation on the machine.
-   */
+  /* The id of the conversation in front of the reader, or empty. The patched field writes it on every change; before
+     anything has, or when the panel has no conversation open, it is not a string and reads as empty - the view shows
+     its welcome text there rather than another conversation's plan. */
   const activeChat = () => {
     const v = globalThis.__cceActiveChat;
-    if (typeof v === 'string') return v;
-    /* Written, but not a string: the field holds null or undefined when the panel has no conversation open. */
-    return Object.prototype.hasOwnProperty.call(globalThis, '__cceActiveChat') ? '' : undefined;
+    return typeof v === 'string' ? v : '';
   };
   /*
    * Delete the plans of conversations that no longer exist, at most once a calendar day.

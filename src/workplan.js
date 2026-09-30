@@ -169,27 +169,6 @@ function readPlan(session) {
   return one ? [one] : [];
 }
 
-/**
- * Every plan on the machine, most recently written first.
- *
- * Only for the case where nothing can say which conversation is in front of the reader - a Claude Code build this
- * extension could not patch. Listing them is honest there; picking one would not be.
- */
-function readPlans() {
-  const dir = planDir();
-  let names;
-  // Absent until the plugin is installed, which is ordinary rather than an error.
-  try { names = fs.readdirSync(dir); } catch (_) { return []; }
-  const out = [];
-  for (const name of names) {
-    if (!PLAN_FILE.test(name)) continue;
-    const one = readOne(name.replace(/\.json$/i, ''));
-    if (one) out.push(one);
-  }
-  out.sort((a, b) => b.mtime - a.mtime);
-  return out;
-}
-
 /*
  * Where Claude Code keeps its transcripts: one directory per starting directory, and inside it one file per conversation
  * named by the same session id a plan is named by.
@@ -294,7 +273,7 @@ function countOpen(nodes, acc = { discussing: 0, todo: 0, doing: 0, parked: 0, d
 }
 
 module.exports = {
-  readPlan, readPlans, countOpen, planDir, liveSessions, sweepOrphans, openFirst,
+  readPlan, countOpen, planDir, liveSessions, sweepOrphans, openFirst,
   DATA_ROOT, PLAN_DIR, PLAN_FILE, OFFER_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
   STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
 };

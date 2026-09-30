@@ -15,7 +15,7 @@
  * the conversation reads back.
  */
 const vscode = require('vscode');
-const { readPlan, readPlans, countOpen, openFirst } = require('./workplan');
+const { readPlan, countOpen, openFirst } = require('./workplan');
 
 /*
  * Icons say the state, and they are told apart by shape rather than by colour: colour alone disappears for a reader who
@@ -90,9 +90,7 @@ class WorkPlanProvider {
     /* The session id of the conversation in front of the reader, as the Claude Code host itself reports it. Only that
        conversation's plan is shown. Empty means the host has not said - no conversation open yet, or a build this
        extension could not patch - and then every plan is shown, since listing them is honest where picking one is not. */
-    /* undefined until something says otherwise: nothing has reported which conversation is open, which is not the same
-       as reporting that none is. */
-    this.focus = undefined;
+    this.focus = '';
     /* What went wrong installing the plugin that writes the plans, if anything. It is shown as a row rather than in the
        view's welcome text because the welcome text is fixed in the manifest and cannot carry what a command said - and
        a failure that cannot say what failed leaves the reader nothing to act on. */
@@ -108,9 +106,7 @@ class WorkPlanProvider {
      here made every caller read the file twice, since each one has to call refresh() anyway for the case where the
      conversation stayed put and its plan changed underneath. */
   setFocus(session) {
-    /* undefined is carried through rather than flattened: it is the one value meaning "nothing has said yet", and the
-       whole point of keeping it apart from the empty string is what refresh() does with each. */
-    const next = session === undefined || session === null ? undefined : String(session);
+    const next = String(session || '');
     if (next === this.focus) return false;
     this.focus = next;
     return true;
@@ -128,13 +124,11 @@ class WorkPlanProvider {
    * per item id rather than per item object.
    */
   refresh() {
-    /* One file when the host has named the conversation; nothing at all when it has said none is open; the whole
-       directory only while nothing has said either way. Reading the directory in the middle case is what drew every
-       conversation on the machine as soon as the last panel was closed - other people's leftovers, in a view whose only
-       claim is that it shows what THIS conversation has to do. The last case keeps the old behaviour on purpose: before
-       anything has reported, a window that would otherwise show an empty tree cannot be told apart from a broken patch,
-       and an empty tree reads as "this feature does not work". */
-    const plans = this.focus ? readPlan(this.focus) : (this.focus === undefined ? readPlans() : []);
+    /* The conversation in front of the reader, or nothing. Anything else - no conversation open, or none reported yet -
+       shows an empty tree, where the view's welcome text explains itself. Reading the whole directory here is what once
+       drew every conversation on the machine into a window that had simply not been told which one it was looking at;
+       a view whose only claim is "what THIS conversation has to do" has no business showing other people's leftovers. */
+    const plans = this.focus ? readPlan(this.focus) : [];
     /* The focus is part of the signature because two conversations can hold identical plans - most often two empty ones.
        Comparing only the content would then find no change and leave the previous conversation's tree on screen. */
     const signature = JSON.stringify([this.focus, plans.map((p) => [p.session, p.title, p.error, p.nodes])]);
