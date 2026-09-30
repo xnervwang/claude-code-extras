@@ -24,11 +24,16 @@ const { readPlan, readPlans, countOpen, openFirst } = require('./workplan');
 const LOOK = {
   discussing: { icon: 'comment-discussion', color: 'charts.yellow', word: 'discussing' },
   todo: { icon: 'circle-large-outline', color: 'charts.blue', word: 'to do' },
+  /* A line rather than a circle or a triangle: the five others are two circles, a tick, two bars and a slash, so a
+     jagged line is the one silhouette still telling them apart at sixteen pixels. A play triangle was the obvious
+     choice and the wrong one - it reads as something to press, and nothing in this tree is pressed to start work.
+     Orange is the one colour the others leave free. */
+  doing: { icon: 'pulse', color: 'charts.orange', word: 'doing' },
   parked: { icon: 'debug-pause', color: 'descriptionForeground', word: 'parked' },
   done: { icon: 'pass-filled', color: 'charts.green', word: 'done' },
   dropped: { icon: 'circle-slash', color: 'descriptionForeground', word: 'dropped' },
 };
-const OPEN = ['discussing', 'todo', 'parked'];
+const OPEN = ['discussing', 'todo', 'doing', 'parked'];
 
 const p2 = (n) => (n < 10 ? '0' : '') + n;
 

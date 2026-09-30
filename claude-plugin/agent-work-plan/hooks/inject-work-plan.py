@@ -24,8 +24,8 @@ sys.dont_write_bytecode = True
 
 from plan_path import plan_file
 
-STATES_OPEN = ("discussing", "todo", "parked")
-GLYPH = {"discussing": "?", "todo": "o", "parked": "=", "done": "+", "dropped": "x"}
+STATES_OPEN = ("discussing", "todo", "doing", "parked")
+GLYPH = {"discussing": "?", "todo": "o", "doing": ">", "parked": "=", "done": "+", "dropped": "x"}
 # Enough for a plan a person reads; a runaway file must not turn every turn into a wall of text.
 MAX_ROWS = 40
 

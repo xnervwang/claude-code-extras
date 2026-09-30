@@ -85,8 +85,9 @@ machine — so they are heard there even when the editor is attached to a remote
 footer toolbar mutes all three, and that choice survives reloads.
 
 **A work plan**, in a view of its own behind the list-and-burst icon in the activity bar: what the conversation you are
-in still has to do, as a real tree with a state on every row — under discussion, to do, parked, done,
-dropped — carried by the row's icon rather than written out beside it. A child is something that has to be finished
+in still has to do, as a real tree with a state on every row — under discussion, to do, being done now, parked,
+done, dropped — carried by the row's icon rather than written out beside it. Several rows can be under way at once,
+since one turn can have work going in more than one place, and which of them it is goes in the row's note. A child is something that has to be finished
 before its parent can be, so a digression discovered while doing
 something sits under the thing it interrupted and the way back is visible. The activity bar icon carries a count of
 what is still open, which is the part that works without anything being opened; it is absent rather than zero when

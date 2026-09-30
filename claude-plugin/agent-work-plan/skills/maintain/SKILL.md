@@ -99,10 +99,21 @@ The five `state` values are fixed keywords and are always these:
 | `state` | what it means |
 |---|---|
 | `discussing` | raised, not yet agreed to be done |
-| `todo` | agreed, not started or not finished |
+| `todo` | agreed, not started |
+| `doing` | agreed, and being worked on right now |
 | `parked` | deliberately not being done now, with the reason in `note` |
 | `done` | finished |
 | `dropped` | decided against, with the reason in `detail` |
+
+`doing` sits between `todo` and `done`, and it is a state rather than a mark alongside one: a row being worked on is
+still agreed and still unfinished, which is what `todo` used to cover on its own. Several rows can be `doing` at once -
+each row carries its own state, and one turn can have work going in more than one place. Who is doing it, when that is
+worth saying, goes in `note`: the main thread, a sub-agent, a detached one.
+
+**A `doing` row found at the start of a turn is stale.** Nothing runs between turns, so whatever was being worked on
+when the last one ended is not being worked on now. Put it back to `todo` while reconciling, unless this turn is going
+to continue it - and if it never got finished, that is worth a word in `note` rather than being silently reset. Nothing
+else cleans these up: an agent that was killed did not get to, and no hook can tell which row it had been on.
 
 ## The two times
 
@@ -143,6 +154,16 @@ undo.
 there until they agree. The plan is the user's picture of what is coming, so a row saying `todo` has to mean they said
 so - otherwise reading it tells them what you intend rather than what was agreed, and they lose the one thing it was
 for.
+
+That gate is on `todo`, not on the ones after it. Moving a row you are already agreed on to `doing` and then to `done` is
+reporting what happened, so it needs nobody's permission; what needs permission is calling something agreed in the first
+place. A row cannot reach `doing` without having been `todo`, so the gate is already behind it.
+
+| Move | Whose word |
+|---|---|
+| anything → `todo` | the user's, always |
+| `todo` → `doing` → `done` | yours, as it happens |
+| anything → `parked` or `dropped` | the user's, with the reason written down |
 
 **Do this before writing the last paragraph of the turn**, not after. Once the closing summary is written the turn feels
 finished and the plan is what gets left out; and the turn that most needed recording is the one that wandered furthest,

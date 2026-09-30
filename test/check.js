@@ -666,6 +666,17 @@ console.log('\nwhat is left to do, drawn first');
   if (titles(plan.openFirst(mixed)) === 'b,d,f,a,c,e') ok('unfinished rows come first, each group in the file order');
   else bad(`the drawn order is ${titles(plan.openFirst(mixed))}, expected b,d,f,a,c,e`);
 
+  /* A row being worked on is unfinished, so it belongs in the front group. Leaving it out of the open list would drop it
+     from what is injected, and a row nobody is reminded of is the one that gets abandoned. */
+  const withDoing = [N('a', 'done'), N('b', 'doing'), N('c', 'todo')];
+  if (titles(plan.openFirst(withDoing)) === 'b,c,a' && plan.OPEN_STATES.includes('doing')) {
+    ok('a row being worked on counts as open and is drawn with the unfinished ones');
+  } else bad(`doing sorted to ${titles(plan.openFirst(withDoing))}, open states ${plan.OPEN_STATES.join()}`);
+
+  /* An unknown state falls back to todo, so a plan written by a newer build stays readable rather than half-rendering. */
+  if (plan.STATES.includes('doing') && plan.STATES.length === 6) ok('six states, doing among them');
+  else bad(`the states are ${plan.STATES.join()}`);
+
   const allDone = [N('a', 'done'), N('b', 'dropped')];
   const allOpen = [N('a', 'todo'), N('b', 'parked')];
   if (plan.openFirst(allDone) === allDone && plan.openFirst(allOpen) === allOpen) {

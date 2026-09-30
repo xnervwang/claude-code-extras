@@ -55,7 +55,7 @@ const PLAN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.json$/i;
    leaving one of these behind. It outlives the conversation the same way a plan does, so it is swept the same way -
    otherwise the only trace of a conversation that declined would accumulate here for ever. */
 const OFFER_FILE = /^[0-9a-f][0-9a-f-]{7,}\.offered$/i;
-const STATES = ['discussing', 'todo', 'parked', 'done', 'dropped'];
+const STATES = ['discussing', 'todo', 'doing', 'parked', 'done', 'dropped'];
 /* Depth and count are bounded because the file is written by another process: a cycle turned into JSON, or a runaway
    generator, would otherwise be rendered forever. Both are far above any plan a person reads. */
 const MAX_DEPTH = 8;
@@ -258,7 +258,7 @@ function sweepOrphans(opts = {}) {
 }
 
 /** The states that mean a row still needs something done to it. */
-const OPEN_STATES = ['discussing', 'todo', 'parked'];
+const OPEN_STATES = ['discussing', 'todo', 'doing', 'parked'];
 
 /**
  * The same rows with the unfinished ones first, each group keeping the order it had.
