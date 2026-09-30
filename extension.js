@@ -369,9 +369,17 @@ function activate(context) {
    *
    * The patched field calls back the moment it is written, so the view moves with the click rather than on the next scan.
    */
+  /*
+   * Three answers, not two. An id names the conversation to read; an empty string means the panel reported that
+   * none is open; undefined means nothing has reported at all - the patch is not in place, or no panel has opened
+   * since this window started. Collapsing the last two lost the difference between 'show nothing' and 'not known
+   * yet', and the view read both as the second: with nothing open it drew every conversation on the machine.
+   */
   const activeChat = () => {
     const v = globalThis.__cceActiveChat;
-    return typeof v === 'string' ? v : '';
+    if (typeof v === 'string') return v;
+    /* Written, but not a string: the field holds null or undefined when the panel has no conversation open. */
+    return Object.prototype.hasOwnProperty.call(globalThis, '__cceActiveChat') ? '' : undefined;
   };
   /*
    * Delete the plans of conversations that no longer exist, at most once a calendar day.

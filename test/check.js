@@ -1246,5 +1246,61 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
   }
 }
 
+/* ── 15. whose plan the tree shows ──
+   The view's one claim is that it shows what THIS conversation has to do, and the answer to "which conversation" has three
+   values, not two: a name, "none is open", and "nothing has said yet". Flattening the last two is what drew every
+   conversation on the machine as soon as the last panel closed - other people's leftovers, in a view that promised one
+   thing. Nothing else here loads this module, since it needs the editor's own API; a stub covers the little it uses. */
+console.log('\nwhose plan the tree shows');
+{
+  const Module = require('module');
+  const realResolve = Module._resolveFilename;
+  const stub = path.join(os.tmpdir(), 'cce-vscode-stub.js');
+  fs.writeFileSync(stub, `
+    class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
+    module.exports = {
+      TreeItem,
+      TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+      ThemeIcon: class { constructor(id, color) { this.id = id; this.color = color; } },
+      ThemeColor: class { constructor(id) { this.id = id; } },
+      MarkdownString: class { constructor(v) { this.value = v; } },
+      Uri: { file: (p) => ({ fsPath: p }) },
+      EventEmitter: class { constructor() { this.event = () => ({ dispose() {} }); } fire() {} },
+    };
+  `);
+  Module._resolveFilename = function (request, ...rest) {
+    return request === 'vscode' ? stub : realResolve.call(this, request, ...rest);
+  };
+  let view;
+  try {
+    ({ WorkPlanProvider: view } = require('../src/workplan-view'));
+  } finally {
+    Module._resolveFilename = realResolve;
+  }
+
+  const p = new view();
+  if (p.focus === undefined) ok('before anything reports, which conversation is open is unknown rather than none');
+  else bad(`a new provider starts with focus ${JSON.stringify(p.focus)}`);
+
+  if (p.setFocus('abc') === true && p.focus === 'abc') ok('a named conversation is recorded');
+  else bad(`setFocus('abc') left ${JSON.stringify(p.focus)}`);
+
+  if (p.setFocus('') === true && p.focus === '') ok('the panel reporting none open is recorded as none, not as unknown');
+  else bad(`setFocus('') left ${JSON.stringify(p.focus)}`);
+
+  if (p.setFocus(undefined) === true && p.focus === undefined) ok('and unknown is carried through rather than flattened');
+  else bad(`setFocus(undefined) left ${JSON.stringify(p.focus)}`);
+
+  if (p.setFocus(undefined) === false) ok('the same answer twice is not announced as a change');
+  else bad('an unchanged focus reported a move');
+
+  /* The line the bug was in: which of the three readings goes to the directory. */
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan-view.js'), 'utf8');
+  if (/this\.focus === undefined \? readPlans\(\)/.test(src)) {
+    ok('only the unknown case reads the directory; reporting none open shows nothing');
+  } else bad('the fallback no longer distinguishes none-open from not-yet-known');
+  fs.rmSync(stub, { force: true });
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
