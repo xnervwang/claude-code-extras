@@ -834,8 +834,39 @@ console.log('\nwhat the Stop hook says, and how often');
   {
     const t = stage(10, { nodes: [{ title: 'x', state: 'todo' }] });
     const r = run(t);
-    if (r.said.includes('did not touch the work plan')) ok('a plan left untouched by the turn is still the other message');
+    if (r.said.includes('neither read nor updated')) ok('a plan left untouched by the turn is still the other message');
     else bad(`an untouched plan said ${JSON.stringify(r.said.slice(0, 80))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  /* Reading the plan has to count, or the reminder cannot be answered at all: reading leaves no mark on the file, so a
+     turn that looked and a turn that forgot look identical from the file's age, and the reminder repeats for the rest of
+     a conversation whose plan is already correct. */
+  {
+    const t = stage(10, { nodes: [{ title: 'x', state: 'todo' }] });
+    const at = path.join(t.data, session + '.json');
+    fs.appendFileSync(t.transcript, JSON.stringify({
+      type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: at } }] },
+    }) + '\n');
+    const r = run(t);
+    if (!r.said) ok('a turn that read the plan and changed nothing is left alone');
+    else bad(`reading the plan still drew ${JSON.stringify(r.said.slice(0, 80))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  /* The trap in counting a read: this plugin injects the plan's own path at the top of every turn, so looking for the
+     path anywhere in the turn would find it every time and the reminder could never fire. Only the calls the assistant
+     made are searched. */
+  {
+    const t = stage(10, { nodes: [{ title: 'x', state: 'todo' }] });
+    const at = path.join(t.data, session + '.json');
+    const lines = fs.readFileSync(t.transcript, 'utf8').trimEnd().split('\n');
+    lines[0] = JSON.stringify({
+      type: 'user', timestamp: '2026-01-01T00:00:00.000Z',
+      message: { content: `the file is ${at}\ngo` },
+    });
+    fs.writeFileSync(t.transcript, lines.join('\n') + '\n');
+    const r = run(t);
+    if (r.said.includes('neither read nor updated')) ok('the path appearing in injected context is not mistaken for a read');
+    else bad(`injected context silenced the reminder: ${JSON.stringify(r.said.slice(0, 80))}`);
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
   {
@@ -1212,7 +1243,7 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
     const injected = run('inject-work-plan.py', t.dir, { session_id: session, hook_event_name: 'UserPromptSubmit' });
     const nudged = run('nudge-work-plan.py', t.dir,
       { session_id: session, transcript_path: t.transcript, hook_event_name: 'Stop' });
-    if (injected.includes('a row') && nudged.includes('did not touch the work plan')) ok(`${what}: the rows arrive and the reminder speaks`);
+    if (injected.includes('a row') && nudged.includes('neither read nor updated')) ok(`${what}: the rows arrive and the reminder speaks`);
     else bad(`${what}: injected ${injected.length} bytes, nudge ${nudged.length} bytes`);
     fs.rmSync(t.dir, { recursive: true, force: true });
   }

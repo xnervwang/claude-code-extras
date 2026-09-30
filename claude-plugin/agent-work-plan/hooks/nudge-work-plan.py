@@ -10,7 +10,14 @@ in the moment it is needed - the same reason the injection hook exists rather th
 
 It is deliberately hard to trigger. A reminder that fires when nothing was owed teaches the reader to skip it, and a
 skipped reminder is worse than none: it costs attention on every turn and buys nothing on the turn that matters. So it
-speaks only when the turn changed something AND the plan is older than the turn.
+speaks only when the turn changed something, the plan is older than the turn, AND the turn never went to the plan at
+all.
+
+That last condition is what lets the reminder be answered. Reading the plan and finding nothing owed is a complete
+reconciliation, but it leaves no mark on the file - so judging by the file's age alone, a turn that had looked and a
+turn that had forgotten were the same turn. The reminder then repeated on every working turn for the rest of a
+conversation whose plan was already correct, and each repeat cost a round of explaining that nothing was owed. Three in
+a row is what prompted this.
 
 Where no plan exists at all it speaks once, and then never again in that conversation. This is the harder case, because
 until something writes a plan the injection hook has nothing to inject and the skill is only found when its description
@@ -46,8 +53,8 @@ def spoke(row):
     return False
 
 
-def turn_shape(transcript):
-    """When this turn began, how many tools it used, and how many times the user has spoken.
+def turn_shape(transcript, plan=""):
+    """When this turn began, how many tools it used, how many times the user has spoken, and whether it went to the plan.
 
     The turn begins at the last message the user sent, so the transcript is walked from the end and stops there. Reading
     it whole would mean parsing megabytes on every turn, so only the tail is read.
@@ -55,6 +62,10 @@ def turn_shape(transcript):
     That tail is also where the count of turns comes from, and it is a lower bound rather than a total: a conversation
     long enough to overflow the window has more turns than are visible here. The bound is in the safe direction - it can
     only make this quieter, and being too quiet costs a reminder while being too loud costs every reminder's credibility.
+
+    Going to the plan is looked for ONLY in the calls the assistant made, never anywhere else in the turn. The path is
+    also in the text this plugin injects at the start of every turn, so a search across whole rows would find it every
+    time and the reminder would never be able to fire at all.
     """
     try:
         with open(transcript, "rb") as fh:
@@ -64,23 +75,25 @@ def turn_shape(transcript):
             fh.seek(size - window)
             lines = fh.read().decode("utf-8", "replace").split("\n")
     except Exception:
-        return None, 0, 0
+        return None, 0, 0, False
     rows = []
     for line in lines:
         if '"type"' not in line:
             continue
         try:
-            rows.append((json.loads(line), '"tool_use"' in line))
+            rows.append((json.loads(line), '"tool_use"' in line, line))
         except Exception:
             continue
-    started, tools = None, 0
-    for row, used_tool in reversed(rows):
+    started, tools, reached = None, 0, False
+    for row, used_tool, line in reversed(rows):
         if spoke(row):
             started = row.get("timestamp")
             break
         if used_tool:
             tools += 1
-    return started, tools, sum(1 for row, _ in rows if spoke(row))
+            if plan and plan in line:
+                reached = True
+    return started, tools, sum(1 for row, _, _ in rows if spoke(row)), reached
 
 
 def iso_to_epoch(stamp):
@@ -136,12 +149,18 @@ def main():
     limits = settings()
     if not limits["enabled"]:
         return 0
-    started, tools, turns = turn_shape(payload.get("transcript_path") or "")
+    started, tools, turns, reached = turn_shape(payload.get("transcript_path") or "", path)
     if not started:
         return 0
     if not os.path.exists(path):
         return offer_once(payload, path, tools, turns, limits)
     if tools < limits["nudgeMinToolCalls"]:
+        return 0
+    # Reading the plan settles it as much as writing does. Reconciling begins by looking, and a turn that looked and
+    # found nothing owed has reconciled - there is nothing else it could do. Without this the reminder had no way to
+    # be answered: reading leaves no mark on the file, so it repeated on every working turn for the rest of a
+    # conversation whose plan was already correct, which is precisely how a reminder stops being read.
+    if reached:
         return 0
     began = iso_to_epoch(started)
     if began is None:
@@ -153,8 +172,9 @@ def main():
     if touched >= began:
         return 0
     return speak(payload, (
-        "This turn used %d tools and did not touch the work plan (%s). Reconcile it before finishing: add what "
-        "this turn opened, close what it finished, and leave the rest alone. Only the user's word moves a row to "
+        "This turn used %d tools and neither read nor updated the work plan (%s). Reconcile it before finishing: add "
+        "what this turn opened, close what it finished, and leave the rest alone. Reading it and finding nothing owed "
+        "is a complete answer, but read it in the turn so this can tell. Only the user's word moves a row to "
         "\"todo\"." % (tools, path)))
 
 
