@@ -23,11 +23,12 @@ const { readPlan, readPlans, countOpen, openFirst } = require('./workplan');
  */
 const LOOK = {
   discussing: { icon: 'comment-discussion', color: 'charts.yellow', word: 'discussing' },
-  /* Orange, not blue and not yellow. Blue belongs to the row being worked on - waiting and running in one colour is the
-     pair this state exists to separate - and yellow is already what a row still being discussed wears. Orange next to
-     that yellow is close in hue but not in shape: a hollow circle against two speech bubbles. Only colour ids already
-     used here are used, since a misspelt one falls back to the default without saying so. */
-  todo: { icon: 'circle-large-outline', color: 'charts.orange', word: 'to do' },
+  /* Purple, which is the slot left once every other meaning is taken. Blue is the row being worked on, green is finished,
+     yellow is the one waiting on a person, and grey is the two that are not going to happen - and an agreed row that has
+     simply not started belongs to none of those. Orange was tried and is a warning in this palette and most others: a
+     queue is not a problem, and `todo` is usually the state with the most rows in it, so the tree would light up in the
+     colour meant for trouble and drown the yellow that actually wants attention. */
+  todo: { icon: 'circle-large-outline', color: 'charts.purple', word: 'to do' },
   /* A filled triangle in blue. Nothing else here is a triangle, so it reads as its own thing at sixteen pixels, and it
      is the shape everything else uses for running. */
   doing: { icon: 'debug-start', color: 'charts.blue', word: 'doing' },
