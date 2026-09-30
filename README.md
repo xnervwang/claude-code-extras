@@ -100,6 +100,15 @@ something leaves a gap instead of moving every number after it, and one quoted a
 Rows are drawn unfinished first and newest first within that, since rows are only appended and a plan worth keeping
 is longer than the view is tall: in file order the part still being argued about sits below a screenful of settled work.
 
+This is the one part of the extension with an interface of its own rather than an addition to the panel, and the
+reason is where the plan is kept. It is a file on disk, and a panel webview belongs to Claude Code: it has no file
+system of its own and a fetch from it is refused, so anything shown in there has to arrive through a file the panel
+already loads. That channel exists and carries the settings - a stylesheet the panel reloads, read back as custom
+properties - but a tree that changes would have to be serialised, encoded and decoded on the way through, and refreshed
+by polling a revision number. Owning a view instead means reading the file, with the folding, the icons and the badge
+coming from the editor. The table of contents could be a panel overlay for the opposite reason: what it lists is
+already in the page, so it needs nothing from outside it.
+
 Beside the title a row carries its time and nothing else: when it was opened, to the minute, and for a closed one the
 range up to when it ended — `09/28 21:48 → 23:40`. A day's worth of rows all showing one date says nothing about their
 order, which is the only reason a time is on the row at all. The format is the one the session list already uses: month
