@@ -153,16 +153,47 @@ function older(a, b) {
   return false;
 }
 
+/*
+ * The additions that can be switched off one at a time, and what each is expected to stop doing.
+ *
+ * A switch has to stop the work and not only the drawing. Hiding a figure the sweep still computes for every row on
+ * every refresh leaves the whole cost in place and gives a person a switch that appears to do something - which is worse
+ * than having no switch, because the next question is why turning things off did not help.
+ */
+const SWITCHES = [
+  'timestamps',       // the time in front of your messages and every block of a reply
+  'replyDuration',    // how long a reply took, at the front of its figures
+  'contextShare',     // ctx N% in those figures
+  'cost',             // cost $N in those figures
+  'modelName',        // which model, effort and fast mode produced the reply
+  'subAgentTags',     // which sub-agent a row came from
+  'toc',              // the handle on the right edge, and the list of your messages behind it
+  'contextMeter',     // the usage meter kept on screen after the panel would have hidden it
+  'chime',            // the three sounds at the end of a turn
+  'sessionDates',     // how long each session ran, on the session list
+  'footerInfo',       // the info button and what it shows
+  'footerPlainView',  // the button that leaves only the conversation
+  'footerViewFilter', // main thread versus one sub-agent
+  'footerMute',       // the button that silences the chimes
+];
+
 /** The live stylesheet for one set of settings. */
 function liveCss(opts = {}) {
   const on = opts.enabled !== false;
   const color = safeColor(opts.userColor);
+  const off = SWITCHES.filter((k) => (opts.off || []).includes(k));
   let css = `/* Claude Code Extras ${OURS} live settings - written by the extension */\n:root{--cce-on:${on ? 1 : 0};}\n`;
+  /* Kept whenever anything is on: this one rule renders the attribute that carries the time, the sub-agent tag, the
+     duration and the figures, so dropping it would switch off four things instead of one. */
   if (on) css += STAMP_CSS + '\n';
   if (color) css += `${USER_SELECTOR},${USER_SELECTOR} *{color:${color} !important;}\n`;
   /* The bar itself is in the injected script; this is only the switch that turns it off, written as nothing at all when
      it is on so that a stylesheet carries no trace of a setting left at its default. */
   if (opts.userEdge === false) css += ':root{--cce-edge:0;}\n';
+  /* One property per addition switched off, on the same principle: absent means on, so the stylesheet says only what
+     differs from the defaults, and a build that predates a switch treats it as on rather than off. Written in the order
+     of SWITCHES rather than the caller's, since several windows write this file and must produce the same bytes. */
+  if (on && off.length) css += ':root{' + off.map((k) => `--cce-off-${k}:1;`).join('') + '}\n';
   if (on) css += scheduleProperty(opts.tasks);
   return css;
 }
@@ -405,6 +436,7 @@ function findInstalls(extensionsDir) {
 }
 
 module.exports = {
+  SWITCHES,
   id: 'anthropic.claude-code', name: 'Claude Code panel',
   VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, SCRIPT,
   safeColor, patchSource, status, apply, restore, findInstalls, webviewFile, targetFile: webviewFile, writeLive, liveCss,

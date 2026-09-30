@@ -44,6 +44,7 @@
     return owner === VIEW;
   };
   var applyOwner = function(el, owner){
+    if (isOff('footerViewFilter')) return;
     if (el.getAttribute(OWNER_ATTR) !== owner) el.setAttribute(OWNER_ATTR, owner);
     var want = ownerVisible(owner) ? '' : 'none';
     if (el.style.display !== want) el.style.display = want;

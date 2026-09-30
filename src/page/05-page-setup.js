@@ -125,11 +125,11 @@
     l.onload = function(){
       l.media = 'all';
       if (sheet && sheet !== l && sheet.parentNode) sheet.parentNode.removeChild(sheet);
-      sheet = l; loadedOnce = true; onCache = null;
+      sheet = l; loadedOnce = true; onCache = null; offCache = {};
       if (fallback && fallback.parentNode) { fallback.parentNode.removeChild(fallback); fallback = null; }
       schedule();
     };
-    l.onerror = function(){ if (l.parentNode) l.parentNode.removeChild(l); useFallback(); onCache = null; schedule(); };
+    l.onerror = function(){ if (l.parentNode) l.parentNode.removeChild(l); useFallback(); onCache = null; offCache = {}; schedule(); };
     head.appendChild(l);
   };
   var probe = function(){
@@ -152,6 +152,25 @@
       onCache = v !== '0';
     } catch (e) { onCache = true; }
     return onCache;
+  };
+  /*
+   * Whether one addition has been switched off, from the same stylesheet and with the same caching.
+   *
+   * A property is written only for the ones turned off, so absent means on: a stylesheet then carries no trace of a
+   * setting left at its default, and a build that has never heard of a switch behaves as though it were on rather than
+   * off. Every caller is expected to skip the work as well as the drawing - hiding the result with CSS while still
+   * computing it every refresh is the one outcome a switch must not have.
+   */
+  var offCache = {};
+  var isOff = function(key){
+    if (Object.prototype.hasOwnProperty.call(offCache, key)) return offCache[key];
+    var v = false;
+    try {
+      v = String(getComputedStyle(document.documentElement)
+        .getPropertyValue('--cce-off-' + key) || '').trim() === '1';
+    } catch (e) { v = false; }
+    offCache[key] = v;
+    return v;
   };
 
   // ── marks ──

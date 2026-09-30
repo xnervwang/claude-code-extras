@@ -72,6 +72,7 @@
                       : 'Chimes are muted - click to hear a chime when a turn finishes');
   };
   var ensureMute = function(){
+    if (isOff('footerMute')) return;
     if (MUTE && MUTE.isConnected) { paintMute(); return; }
     var send = document.querySelector(SEND);
     if (!send) return;
@@ -98,6 +99,7 @@
     paintMute();
   };
   var watchIdle = function(){
+    if (isOff('chime')) return;
     if (!sessionRef) return;
     var on = chimeOn();
     var nPerm = sigLen('permissionRequests'), nDialog = sigLen('userDialogRequests'), waiting = sigOn('pendingInput');

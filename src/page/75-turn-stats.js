@@ -27,12 +27,13 @@
     var win = u.contextWindow || 0;
     // Short labels on purpose: this string is prepended to every reply's first line, so each extra
     // character comes out of the body width. Spell them out here if you prefer the long form.
-    if (win > 0) out += 'ctx ' + Math.round(u.totalTokens / win * 100) + '%';
-    if (typeof u.totalCost === 'number' && u.totalCost > 0) {
+    if (win > 0 && !isOff('contextShare')) out += 'ctx ' + Math.round(u.totalTokens / win * 100) + '%';
+    if (typeof u.totalCost === 'number' && u.totalCost > 0 && !isOff('cost')) {
       var c = u.totalCost < 1 ? u.totalCost.toFixed(3) : u.totalCost.toFixed(2);
       out += (out ? ' ' + String.fromCharCode(183) + ' ' : '') + 'cost $' + c;
     }
     var who = [];
+    if (isOff('modelName')) who.length = 0; else {
     var mdl = sessionRef.lastServedModel && sessionRef.lastServedModel.value;
     if (!mdl) mdl = sessionRef.currentMainLoopModel && sessionRef.currentMainLoopModel.value;
     if (typeof mdl === 'string' && mdl) who.push(mdl.replace(/^claude-/, ''));
@@ -40,6 +41,7 @@
     if (typeof eff === 'string' && eff) who.push(eff);
     var fast = sessionRef.fastModeState && sessionRef.fastModeState.value;
     if (typeof fast === 'string' && fast !== 'off') who.push('fast');
+    }
     if (who.length) out += (out ? ' ' + String.fromCharCode(183) + ' ' : '') + who.join(' ');
     return out;
   };

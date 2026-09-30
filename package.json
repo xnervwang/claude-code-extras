@@ -160,6 +160,76 @@
           "default": 25,
           "minimum": 1,
           "markdownDescription": "How much a turn has to cost before the same offer is made. 25 is where the busiest quarter of turns begins, measured over 691 of them; the median turn uses 6."
+        },
+        "claudeCodeExtras.show.timestamps": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The time in front of your messages and every block of a reply. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.replyDuration": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "How long a reply took, at the front of its figures. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.contextShare": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "`ctx N%` in a reply's figures - the share of the whole context window in use. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.cost": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "`cost $N` in a reply's figures. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.modelName": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Which model, effort level and fast mode produced a reply. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.subAgentTags": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The name of the sub-agent a row came from. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.toc": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The handle on the right edge, and the list of your own messages behind it. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.contextMeter": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Keep the usage meter on screen after the panel would have hidden it. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.chime": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The three sounds at the end of a turn. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.sessionDates": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "How long each session ran and the dates it covers, on the session list. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.footerInfo": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The info button in the footer, and what it shows. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.footerPlainView": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The footer button that leaves only the conversation. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.footerViewFilter": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The footer filter for the main thread or one sub-agent. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
+        "claudeCodeExtras.show.footerMute": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The footer button that silences the chimes. Turning it off stops the work, not only the drawing, and takes effect without a reload."
         }
       }
     }

@@ -130,6 +130,7 @@
   };
 
   var ensureInfo = function(){
+    if (isOff('footerInfo')) return;
     if (INFO && INFO.isConnected) return;
     var send = document.querySelector(SEND);
     if (!send) return;

@@ -1079,5 +1079,58 @@ console.log('\nthe waiting, paired out of the official log');
   }
 }
 
+/* ── 13. one switch per addition, and each one wired at both ends ──
+   A switch is three things that have to agree: a setting a person can see, a property written into the live stylesheet,
+   and a place in the injected script that reads it and skips the work. Any one of them missing leaves a switch that
+   looks real and does nothing - the failure this section exists to catch, since nothing else would. */
+console.log('\none switch per addition, wired at both ends');
+{
+  const webview = require('../src/webview');
+  const root = path.join(__dirname, '..');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const settings = manifest.contributes.configuration.properties;
+  const script = fs.readdirSync(path.join(root, 'src', 'page'))
+    .filter((f) => f.endsWith('.js'))
+    .map((f) => fs.readFileSync(path.join(root, 'src', 'page', f), 'utf8')).join('\n');
+
+  const noSetting = webview.SWITCHES.filter((k) => !settings['claudeCodeExtras.show.' + k]);
+  if (!noSetting.length) ok(`all ${webview.SWITCHES.length} switches have a setting a person can find`);
+  else bad(`no setting for ${noSetting.join(', ')}`);
+
+  const onByDefault = webview.SWITCHES.every((k) => settings['claudeCodeExtras.show.' + k].default === true);
+  if (onByDefault) ok('every switch defaults to on, so an upgrade turns nothing off');
+  else bad('a switch does not default to on');
+
+  const unread = webview.SWITCHES.filter((k) => !script.includes(`isOff('${k}')`));
+  if (!unread.length) ok('every switch is read by the injected script, so none is decoration');
+  else bad(`nothing reads ${unread.join(', ')}`);
+
+  /* Off has to be the thing that is written, so a build that never heard of a switch treats it as on. */
+  const allOn = webview.liveCss({ enabled: true });
+  const someOff = webview.liveCss({ enabled: true, off: ['cost', 'chime'] });
+  if (!allOn.includes('--cce-off') && someOff.includes('--cce-off-cost:1')
+      && someOff.includes('--cce-off-chime:1')) {
+    ok('defaults write nothing, and only what is off appears in the stylesheet');
+  } else bad(`all on wrote ${JSON.stringify(allOn.slice(0, 80))}`);
+
+  /* Several windows write this one file, so the same settings have to produce the same bytes whatever order they arrive in. */
+  const a = webview.liveCss({ enabled: true, off: ['chime', 'cost', 'toc'] });
+  const b = webview.liveCss({ enabled: true, off: ['toc', 'chime', 'cost'] });
+  if (a === b) ok('the order the switches arrive in does not change the bytes written');
+  else bad('two orderings of the same switches write different stylesheets');
+
+  /* A name that is not a switch must not become a property, or a typo in settings would write arbitrary CSS. */
+  const junk = webview.liveCss({ enabled: true, off: ['cost', 'nonsense; }*{display:none'] });
+  if (junk.includes('--cce-off-cost:1') && !junk.includes('nonsense')) {
+    ok('a name that is not a switch is dropped rather than written into the stylesheet');
+  } else bad(`an unknown switch reached the stylesheet: ${JSON.stringify(junk.slice(0, 120))}`);
+
+  /* The rule that draws the annotation carries four switchable things, so it cannot go when one of them does. */
+  const noStamps = webview.liveCss({ enabled: true, off: ['timestamps'] });
+  if (noStamps.includes('::before') && noStamps.includes('--cce-off-timestamps:1')) {
+    ok('switching the time off leaves the rule that also draws the duration and figures');
+  } else bad('turning off timestamps dropped the rule the other three need');
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

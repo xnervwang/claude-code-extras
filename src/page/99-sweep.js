@@ -65,7 +65,13 @@
           row = { node: b, top: b, ts: m.timestamp, text: line, mark: '' };
           if (!live) PROMPT_OF.set(b, row);
         }
-        if (live || !row.mark) { if (!mark) mark = fmt(m.timestamp) + agentTag(agentOf(m)); row.mark = mark; }
+        if (live || !row.mark) {
+          if (!mark) {
+            mark = isOff('timestamps') ? '' : fmt(m.timestamp);
+            if (!isOff('subAgentTags')) mark += agentTag(agentOf(m));
+          }
+          row.mark = mark;
+        }
         set(b, row.mark);
         if (row.text) prompts.push(row);
       }
@@ -119,8 +125,11 @@
           if (ownerVisible(own)) shownRows++;
           ownerDone = true;
         }
-        if (cx.block && cx.message && cx.message.uuid) {
-          v = fmt(cx.message.timestamp);
+        /* Whether this row gets an annotation at all, which used to be read off `v` being non-empty. With the time
+           itself switchable that test would have made one switch turn four things off, so it is now asked directly. */
+        var annot = !!(cx.block && cx.message && cx.message.uuid);
+        if (annot) {
+          v = isOff('timestamps') ? '' : fmt(cx.message.timestamp);
           var t = cx.block.content && cx.block.content.type;
           // Label the block with its kind while its type is in hand. The plain-conversation filter reads the label off a
           // stylesheet rule, so this is the only place that has to touch the block for it.
@@ -130,11 +139,11 @@
           }
           if (v && (t === 'tool_use' || t === 'server_tool_use') && typeof cx.block.cceResultAt === 'number') v += '\u2192' + fmt(cx.block.cceResultAt).replace(/^\d\d\/\d\d /, '');
         }
-        if (v) v += agentTag(agentOf(cx.message));
-        if (v && r === 0) {
+        if (annot && !isOff('subAgentTags')) v += agentTag(agentOf(cx.message));
+        if (annot && r === 0) {
           var bits = [];
           var t0 = turnStartFor(promptTs, cx.message.timestamp);
-          if (t0 !== null) { var d = dur(cx.message.timestamp - t0); if (d) bits.push(d); }
+          if (t0 !== null && !isOff('replyDuration')) { var d = dur(cx.message.timestamp - t0); if (d) bits.push(d); }
           var st = statAt(cx.message, j === msgs.length - 1);
           if (st) bits.push(st);
           if (bits.length) v += '  ' + bits.join(' ' + String.fromCharCode(183) + ' ');

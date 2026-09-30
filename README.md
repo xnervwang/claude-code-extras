@@ -252,10 +252,18 @@ written at all. A partial patch is worse than none, and a patch applied on a gue
 | `claudeCodeExtras.latencyThresholdSeconds` | `10` | at or above this a wait is recorded; below it, only counted |
 | `claudeCodeExtras.workPlanOfferMinTurns` | `3` | how often you have to have spoken before a conversation with no plan is told it could keep one |
 | `claudeCodeExtras.workPlanOfferMinToolCalls` | `25` | and how much that turn has to have cost |
+| `claudeCodeExtras.show.*` | `true` | one per addition, listed below |
 
 The last two reach the plugin's hooks through a small file the extension writes for them - `config.json`,
 beside the plans - because a hook is its own process and cannot read editor settings. The plugin carries the
 same defaults, so it behaves the same way with this extension absent.
+
+Each addition has its own switch, `claudeCodeExtras.show.<name>`, and all of them start on:
+`timestamps`, `replyDuration`, `contextShare`, `cost`, `modelName`, `subAgentTags`, `toc`, `contextMeter`, `chime`, `sessionDates`, `footerInfo`, `footerPlainView`, `footerViewFilter`, `footerMute`.
+They take effect without a reload, and each stops the work rather than hiding the result - a figure the sweep
+still computes for every row on every refresh costs the same whether or not it is drawn. What no switch can stop
+is the sweep itself, which still walks the rows for whatever is left on; `claudeCodeExtras.enabled` is what turns
+that off.
 
 ## Known limits
 

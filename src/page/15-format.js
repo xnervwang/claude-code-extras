@@ -21,6 +21,8 @@
       return { y: d.getFullYear(), md: p2(d.getMonth() + 1) + '/' + p2(d.getDate()) };
     };
     window.__cceSpan = function(rel, last, created){
+      /* Called from the official component, so returning what it passed in leaves its own text untouched. */
+      if (isOff('sessionDates')) return rel;
       var now = new Date().getFullYear();
       var e = ymd(last), s = ymd(created);
       // the year is written only when it is not the current one, and only once per range

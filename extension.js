@@ -103,8 +103,12 @@ function activate(context) {
     return kept;
   }
 
+  /* One setting per switchable addition, named after it. Reading them here rather than in src/webview.js keeps that
+     file free of the editor's API, which is what lets the tests run it. */
+  const switchedOff = () => webview.SWITCHES.filter((k) => cfg().get('claudeCodeExtras.show.' + k, true) === false);
   const options = () => ({
     enabled: enabled(), userColor: cfg().get(COLOR_SETTING, ''), userEdge: cfg().get(EDGE_SETTING, true) !== false,
+    off: switchedOff(),
     tasks: readTasks(knownDirs()),
   });
 
@@ -191,7 +195,10 @@ function activate(context) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration(SETTING) || e.affectsConfiguration(STATUS_BAR_SETTING)) renderBar();
       if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();
-      if (![SETTING, COLOR_SETTING, EDGE_SETTING].some((k) => e.affectsConfiguration(k))) return;
+      /* A switch has to reach the panel the moment it is flipped, which is what writing the stylesheet does. */
+      const touched = [SETTING, COLOR_SETTING, EDGE_SETTING]
+        .concat(webview.SWITCHES.map((k) => 'claudeCodeExtras.show.' + k));
+      if (!touched.some((k) => e.affectsConfiguration(k))) return;
       const c = cfg().get(COLOR_SETTING, '');
       if (c && !safeColor(c)) vscode.window.showWarningMessage(`Claude Code Extras: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
       sync();

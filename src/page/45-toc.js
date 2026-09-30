@@ -194,6 +194,7 @@
     });
   };
   var ensureUI = function(){
+    if (isOff('toc')) return;
     if (RAILBOX && RAILBOX.isConnected && PANEL && PANEL.isConnected) return;
     SIG = '';  // rebuilt containers hold no rows
     HANDLE = document.createElement('div');

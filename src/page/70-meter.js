@@ -37,6 +37,7 @@
   // Outline the context meter once the remaining share gets thin, ahead of an auto-compact.
   var LOW_AT = 15;
   var markCtxLow = function(){
+    if (isOff('contextMeter')) return;
     var btn = document.querySelector('button[class*="usageButtonV2"]');
     if (!btn) return;
     var used = meterUsed(btn);

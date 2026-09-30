@@ -33,6 +33,7 @@
 
   // Labelling is free: the sweep has already read the block's type to decide what to write on it.
   var applyKind = function(el, type){
+    if (isOff('footerPlainView')) return;
     if (typeof type !== 'string' || !type) return;
     if (el.getAttribute(KIND_ATTR) !== type) el.setAttribute(KIND_ATTR, type);
   };
@@ -133,6 +134,7 @@
   // Same anchor as the other footer controls: the send button's previous sibling is the permission-mode selector, and
   // React may replace that row, so this is re-checked on the timer rather than wired once.
   var ensurePlainControl = function(){
+    if (isOff('footerPlainView')) return;
     paintPlainRule();
     if (PLAINBTN && PLAINBTN.isConnected) { paintPlain(); return; }
     var send = document.querySelector(SEND);
