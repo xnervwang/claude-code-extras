@@ -663,13 +663,13 @@ console.log('\nwhat is left to do, drawn first');
   const titles = (rows) => rows.map((r) => r.title).join(',');
 
   const mixed = [N('a', 'done'), N('b', 'todo'), N('c', 'dropped'), N('d', 'discussing'), N('e', 'done'), N('f', 'parked')];
-  if (titles(plan.openFirst(mixed)) === 'b,d,f,a,c,e') ok('unfinished rows come first, each group in the file order');
-  else bad(`the drawn order is ${titles(plan.openFirst(mixed))}, expected b,d,f,a,c,e`);
+  if (titles(plan.openFirst(mixed)) === 'f,d,b,e,c,a') ok('unfinished rows come first, newest first within each group');
+  else bad(`the drawn order is ${titles(plan.openFirst(mixed))}, expected f,d,b,e,c,a`);
 
   /* A row being worked on is unfinished, so it belongs in the front group. Leaving it out of the open list would drop it
      from what is injected, and a row nobody is reminded of is the one that gets abandoned. */
   const withDoing = [N('a', 'done'), N('b', 'doing'), N('c', 'todo')];
-  if (titles(plan.openFirst(withDoing)) === 'b,c,a' && plan.OPEN_STATES.includes('doing')) {
+  if (titles(plan.openFirst(withDoing)) === 'c,b,a' && plan.OPEN_STATES.includes('doing')) {
     ok('a row being worked on counts as open and is drawn with the unfinished ones');
   } else bad(`doing sorted to ${titles(plan.openFirst(withDoing))}, open states ${plan.OPEN_STATES.join()}`);
 
@@ -677,11 +677,12 @@ console.log('\nwhat is left to do, drawn first');
   if (plan.STATES.includes('doing') && plan.STATES.length === 6) ok('six states, doing among them');
   else bad(`the states are ${plan.STATES.join()}`);
 
+  /* Nothing to separate still means newest first: the two groups are an ordering on top of that, not instead of it. */
   const allDone = [N('a', 'done'), N('b', 'dropped')];
   const allOpen = [N('a', 'todo'), N('b', 'parked')];
-  if (plan.openFirst(allDone) === allDone && plan.openFirst(allOpen) === allOpen) {
-    ok('a list with nothing to separate is handed back as it came');
-  } else bad('a list needing no reordering is copied anyway');
+  if (titles(plan.openFirst(allDone)) === 'b,a' && titles(plan.openFirst(allOpen)) === 'b,a') {
+    ok('a list with nothing to separate is still drawn newest first');
+  } else bad(`all-closed gave ${titles(plan.openFirst(allDone))}, all-open ${titles(plan.openFirst(allOpen))}`);
 
   if (titles(plan.openFirst([])) === '' && titles(plan.openFirst(null)) === '') ok('no rows, and no rows at all, are fine');
   else bad('an empty or missing list is not handled');
@@ -690,13 +691,14 @@ console.log('\nwhat is left to do, drawn first');
   const rowsOf = (nodes) => plan.openFirst(
     nodes.map((n, i) => ({ node: n, key: 'p/' + i + ':' + n.title })), (r) => r.node.state);
   const idOf = (rows, t) => (rows.find((r) => r.node.title === t) || {}).key;
-  const before = rowsOf([N('a', 'done'), N('b', 'todo'), N('c', 'todo')]);
-  const after = rowsOf([N('a', 'done'), N('b', 'done'), N('c', 'todo')]);
-  const moved = before.indexOf(before.find((r) => r.node.title === 'b'))
-    !== after.indexOf(after.find((r) => r.node.title === 'b'));
-  if (moved && idOf(before, 'b') === idOf(after, 'b') && idOf(before, 'c') === idOf(after, 'c')) {
+  /* Newest first, so closing the LAST row is what moves it: c leads while open and trails once closed. */
+  const before = rowsOf([N('a', 'todo'), N('b', 'todo'), N('c', 'todo')]);
+  const after = rowsOf([N('a', 'todo'), N('b', 'todo'), N('c', 'done')]);
+  const moved = before.indexOf(before.find((r) => r.node.title === 'c'))
+    !== after.indexOf(after.find((r) => r.node.title === 'c'));
+  if (moved && idOf(before, 'c') === idOf(after, 'c') && idOf(before, 'b') === idOf(after, 'b')) {
     ok('a row that closes moves on screen and keeps its id');
-  } else bad(`closing a row renames it (moved: ${moved}, was ${idOf(before, 'b')}, now ${idOf(after, 'b')})`);
+  } else bad(`closing a row renames it (moved: ${moved}, was ${idOf(before, 'c')}, now ${idOf(after, 'c')})`);
 
   /* The number a person says out loud, which the tree and the injected rows both show. It comes from the file for the
      same reason the id does, so finishing something does not renumber what is left - dense numbering over the visible
@@ -723,14 +725,14 @@ console.log('\nwhat is left to do, drawn first');
       Object.assign(N('two', 'todo'), { children: [N('two-a', 'todo'), N('two-b', 'todo')] }),
       N('three', 'todo'),
     ]);
-    if (got.join(',') === '1,2,2.1,2.2,3') ok('rows are numbered 1, 2, 2.1, 2.2, 3 - children under their parent');
+    if (got.join(',') === '3,2,2.2,2.1,1') ok('numbers come from the file while the rows are drawn newest first');
     else bad(`the numbering came out ${JSON.stringify(got)}`);
   }
   {
     /* Closing the first row must not move the numbers of the rest. */
     const open = numbers([N('one', 'todo'), N('two', 'todo'), N('three', 'todo')]);
     const closed = numbers([N('one', 'done'), N('two', 'todo'), N('three', 'todo')]);
-    if (open.join(',') === '1,2,3' && closed.join(',') === '2,3') {
+    if (open.join(',') === '3,2,1' && closed.join(',') === '3,2') {
       ok('a row that closes leaves a gap rather than renumbering what follows');
     } else bad(`before ${JSON.stringify(open)}, after closing the first ${JSON.stringify(closed)}`);
   }

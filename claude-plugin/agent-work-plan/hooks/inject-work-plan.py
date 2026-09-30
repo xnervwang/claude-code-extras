@@ -38,10 +38,14 @@ def rows(nodes, depth, out, prefix=""):
     number quoted yesterday would mean a different row today. The same numbers appear in the tree view, computed the same
     way, because two places disagreeing about which row is 3 would be worse than neither showing a number.
     """
-    for i, node in enumerate(nodes or []):
+    # Newest first, the same way the tree view draws them, while the number still comes from the real position: rows are
+    # only appended, so the end of the file is the current work. Reversing here also means the cap below drops the oldest
+    # rows rather than the newest, which is the half worth keeping.
+    numbered = [("%s%d" % (prefix + "." if prefix else "", i + 1), node)
+                for i, node in enumerate(nodes or [])]
+    for num, node in reversed(numbered):
         if len(out) >= MAX_ROWS:
             return
-        num = "%s%d" % (prefix + "." if prefix else "", i + 1)
         state = node.get("state", "todo")
         title = str(node.get("title", "")).strip()
         if not title:

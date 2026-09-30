@@ -274,13 +274,18 @@ const OPEN_STATES = ['discussing', 'todo', 'doing', 'parked'];
 function openFirst(items, stateOf = (n) => n && n.state) {
   const rows = items || [];
   const isOpen = (n) => OPEN_STATES.includes(stateOf(n));
-  const open = rows.filter(isOpen);
-  if (!open.length || open.length === rows.length) return rows;
-  return open.concat(rows.filter((n) => !isOpen(n)));
+  /* Newest first within each group. Rows are only ever appended, so the end of the file is the part of the work that is
+     current, and a plan long enough to be worth having is longer than the view is tall - reading it in file order puts
+     the rows still being argued about below a screenful of settled ones. The numbers come from the file either way, so
+     this changes what is on top and nothing else. */
+  const newest = rows.slice().reverse();
+  const open = newest.filter(isOpen);
+  if (!open.length) return newest;
+  return open.concat(newest.filter((n) => !isOpen(n)));
 }
 
 /** Open counts, which is what the view puts in its title so the shape of the work is legible without expanding it. */
-function countOpen(nodes, acc = { discussing: 0, todo: 0, parked: 0, done: 0, dropped: 0 }) {
+function countOpen(nodes, acc = { discussing: 0, todo: 0, doing: 0, parked: 0, done: 0, dropped: 0 }) {
   for (const n of nodes || []) {
     acc[n.state] = (acc[n.state] || 0) + 1;
     countOpen(n.children, acc);
