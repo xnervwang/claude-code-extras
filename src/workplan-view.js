@@ -212,7 +212,8 @@ class WorkPlanProvider {
     const node = element.node;
     const look = LOOK[node.state] || LOOK.todo;
     const kids = node.children || [];
-    const item = new vscode.TreeItem(`${element.num} ${node.title}`, kids.length
+    /* The dot is only in the label; element.num stays bare because children are numbered from it. */
+    const item = new vscode.TreeItem(`${element.num}. ${node.title}`, kids.length
       ? (hasOpen(node) ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed)
       : vscode.TreeItemCollapsibleState.None);
     item.id = element.key;

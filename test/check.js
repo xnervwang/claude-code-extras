@@ -703,7 +703,8 @@ console.log('\nwhat is left to do, drawn first');
     fs.rmSync(dir, { recursive: true, force: true });
     let said = '';
     try { said = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) { return []; }
-    return said.split('\n').map((l) => (/^\s*[?o=+x] ([0-9.]+) /.exec(l) || [])[1]).filter(Boolean);
+    /* The dot after the number is part of what is drawn, so it is matched and kept out of the capture. */
+    return said.split('\n').map((l) => (/^\s*[?o=+x] ([0-9.]+)\. /.exec(l) || [])[1]).filter(Boolean);
   };
   {
     const got = numbers([

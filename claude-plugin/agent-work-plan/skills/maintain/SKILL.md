@@ -36,7 +36,7 @@ that follows.
 
 ## The number in front of a row
 
-Every injected row carries one - `1`, `2`, then `2.1` and `2.1.1` beneath it - and the tree view shows the same numbers.
+Every injected row carries one - `1.`, `2.`, then `2.1.` and `2.1.1.` beneath it - and the tree view shows the same.
 It is how someone names a row out loud instead of quoting its title, so `close 3` and `put 2.1 back to todo` are ordinary
 instructions and mean a specific row.
 

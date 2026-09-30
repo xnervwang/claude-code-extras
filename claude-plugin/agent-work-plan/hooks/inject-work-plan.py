@@ -51,8 +51,9 @@ def rows(nodes, depth, out, prefix=""):
         if state not in STATES_OPEN and not any_open(kids):
             continue
         note = str(node.get("note", "")).strip()
-        out.append("%s%s %s %s%s" % ("  " * depth, GLYPH.get(state, "o"), num, title,
-                                     "   [%s%s]" % (state, " · " + note if note else "")))
+        # The dot is only in what is drawn; `num` stays bare because children are numbered from it.
+        out.append("%s%s %s. %s%s" % ("  " * depth, GLYPH.get(state, "o"), num, title,
+                                      "   [%s%s]" % (state, " · " + note if note else "")))
         rows(kids, depth + 1, out, num)
 
 
