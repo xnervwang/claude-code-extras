@@ -1,0 +1,50 @@
+# The checks in test/check.js had nothing running them. They were run by hand, before a commit, when whoever was working
+# remembered - and a check nobody runs is indistinguishable from one that does not exist. A bug reached main this way: the
+# tree view had never been loaded by a test at all, so a fallback nobody had agreed with sat in the one line deciding what
+# that view is for.
+#
+# Two of the sections need a real Claude Code install and an installed copy of this extension, neither of which a runner
+# has, so around thirty checks do not happen here. They report themselves as skipped rather than passing, the summary line
+# carries the count, and this job puts that line where it can be read - a green run that verified less than the last green
+# run is the one result nobody would otherwise notice.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commit-message scan reads the history, and a shallow clone would leave it with almost nothing to read.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run the checks
+        shell: bash
+        run: |
+          set -o pipefail
+          node test/check.js 2>&1 | tee result.txt
+
+      - name: Put the count in the run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Checks'
+            echo '```'
+            tail -n 1 result.txt || echo 'the run produced no summary line'
+            echo '```'
+            echo 'Sections needing a Claude Code install are skipped here and counted above; they run on a machine.'
+          } >> "$GITHUB_STEP_SUMMARY"

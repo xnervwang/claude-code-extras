@@ -30,8 +30,15 @@ const ADAPTERS = require('../src/adapters');
 const { pickShape } = require('../src/edits');
 
 let failures = 0;
-const ok = (msg) => console.log('  ok    ' + msg);
+/* Checks that could not run, as against ones that ran and passed. Two whole sections need a real Claude Code install and
+   an installed copy of this extension, so on a machine that has neither - a CI runner - thirty-odd checks quietly do not
+   happen. Counted and printed with the total, because a green run that verified less than the last green run is the one
+   result nobody would otherwise notice. */
+let skipped = 0;
+let passed = 0;
+const ok = (msg) => { passed++; console.log('  ok    ' + msg); };
 const bad = (msg) => { failures++; console.log('  FAIL  ' + msg); };
+const note = (msg) => { skipped++; console.log('  note  ' + msg); };
 
 /* ── 1. everything parses ── */
 // Discovered rather than listed, so a new fragment is covered the moment it is added.
@@ -246,7 +253,7 @@ if (explicit.length) {
       }
     }
   }
-  if (!seen) console.log('  note  no Claude Code install found; pass a bundle path to check the edits');
+  if (!seen) note('no Claude Code install found; pass a bundle path to check the edits');
 }
 
 reportUnusedShapes();
@@ -378,13 +385,13 @@ console.log('\ninstalled copy');
 if (explicit.length) {
   /* Named bundles mean someone is asking about a build, not about this machine - the upstream check does exactly that.
      Counting a stale install as a failure there would report "an edit no longer matches" when every edit matched. */
-  console.log('  note  skipped: checking named bundles, not this machine');
+  note('skipped: checking named bundles, not this machine');
 } else {
   const installed = extensionsDirs()
     .map((d) => path.join(d, 'xnerv.claude-code-extras-1.0.0'))
     .find((d) => fs.existsSync(d));
   if (!installed) {
-    console.log('  note  this extension is not installed here; nothing to compare');
+    note('this extension is not installed here; nothing to compare');
   } else {
     /* Reported, never counted. Packaging runs this check, and until the new package is installed the copy is behind by
        definition - failing here would make the build refuse to produce the very thing that fixes it. What matters is
@@ -446,7 +453,7 @@ console.log('\nshipped text');
      of this check is entirely in running before the push. */
   const git = cp.spawnSync('git', ['-C', root, 'log', '--format=%B%x00'], { encoding: 'utf8' });
   if (git.error || git.status !== 0) {
-    console.log('  note  no git history to read here, so commit messages were not scanned');
+    note('no git history to read here, so commit messages were not scanned');
   } else {
     const messages = git.stdout.split('\0').map((m) => m.trim()).filter(Boolean);
     const bads = messages.filter((m) => CJK.test(m))
@@ -1302,5 +1309,6 @@ console.log('\nwhose plan the tree shows');
   fs.rmSync(stub, { force: true });
 }
 
-console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
+const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
+console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

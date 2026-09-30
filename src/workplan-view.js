@@ -23,12 +23,13 @@ const { readPlan, readPlans, countOpen, openFirst } = require('./workplan');
  */
 const LOOK = {
   discussing: { icon: 'comment-discussion', color: 'charts.yellow', word: 'discussing' },
-  todo: { icon: 'circle-large-outline', color: 'charts.blue', word: 'to do' },
-  /* A line rather than a circle or a triangle: the five others are two circles, a tick, two bars and a slash, so a
-     jagged line is the one silhouette still telling them apart at sixteen pixels. A play triangle was the obvious
-     choice and the wrong one - it reads as something to press, and nothing in this tree is pressed to start work.
-     Orange is the one colour the others leave free. */
-  doing: { icon: 'pulse', color: 'charts.orange', word: 'doing' },
+  /* Grey, because blue moved to the row being worked on: a waiting row and a running one both in blue is the one pair
+     this state exists to tell apart, and shape alone does not carry at sixteen pixels. Only colour ids already in use
+     here are used - a misspelt one falls back to the default and says nothing about it. */
+  todo: { icon: 'circle-large-outline', color: 'descriptionForeground', word: 'to do' },
+  /* A filled triangle in blue. Nothing else here is a triangle, so it reads as its own thing at sixteen pixels, and it
+     is the shape everything else uses for running. */
+  doing: { icon: 'debug-start', color: 'charts.blue', word: 'doing' },
   parked: { icon: 'debug-pause', color: 'descriptionForeground', word: 'parked' },
   done: { icon: 'pass-filled', color: 'charts.green', word: 'done' },
   dropped: { icon: 'circle-slash', color: 'descriptionForeground', word: 'dropped' },
