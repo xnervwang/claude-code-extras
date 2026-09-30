@@ -431,6 +431,13 @@ Two rules when changing the patchers:
   rewritten. That is silent in the worst way: packaging, installing and reloading all report success while the old code
   keeps running, so the symptom is an edit with no effect anywhere and no step that complains. The digest exists because
   this used to be true of the panel as well.
+- **A changed hook needs one reload, and nothing else.** The hooks under `claude-plugin/` run from the copy in global
+  storage, which is the path registered with Claude Code, and this extension restages that copy when the plugin tree's
+  digest changes — so reloading the window is the whole of it. There is also a directory under
+  `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, named after the version in `plugin.json`, which looks
+  like it would have to be invalidated by hand every time a hook changes and does not: with the two copies deliberately
+  made to differ, the reminder that fired carried the text of the global-storage copy. So nothing has to be bumped for a
+  hook edit.
 - **Reload twice** to see a change: once for this extension to rewrite the file, once for the panel to load it. The
   activity bar icon is the exception — a reload never refreshes it, the editor has to be restarted, and several reloads
   showing the old drawing once sent an afternoon chasing a design problem that had already been fixed.
