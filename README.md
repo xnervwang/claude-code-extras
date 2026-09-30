@@ -353,6 +353,10 @@ that off.
 | `test/check.js` | parses everything, and verifies every edit against a pristine bundle |
 | `test/against-latest.js` | the same check against whatever the marketplace is shipping |
 | `build/pack.sh` | produces the `.vsix`, without npm |
+| `build/supported.js` | works out which installed Claude Code builds the rules fit; its header says what is recorded |
+| `build/update-versions.js` | the only thing that writes `supported-versions.json` |
+| `build/git-hooks/pre-commit` | refuses a commit whose record of verified builds is stale |
+| `supported-versions.json` | the record itself — which Claude Code builds this commit supports |
 
 The in-page script is kept as ordinary `.js` files rather than one big string for a reason worth knowing before
 touching it: as a template literal every backslash needed doubling, and getting that wrong failed only at runtime —
@@ -386,6 +390,36 @@ the update does.
 Neither catches the other kind of break: the in-page script finds elements by class name and test id, and those can
 change while every edit still matches exactly once. That one surfaces at runtime instead, as the marker the script
 raises in the panel when it can no longer find a single message.
+
+### Which Claude Code builds a commit supports
+
+`supported-versions.json` records the builds the patch set has been verified against, so somebody stuck on an old Claude
+Code can find the commit that still works with it instead of installing old bundles and trying. Two things make the
+record worth trusting:
+
+- **What is recorded is what was verified**, not what was installed. Every rule is run against every bundle on the
+  machine and each has to match exactly once — the same test the extension applies before it writes anything.
+- **Entries are never removed.** Upgrading Claude Code deletes the old bundle, so regenerating from scratch would drop
+  every older build the moment one person upgraded, and the file would always claim support for exactly one version.
+
+Where a rule has several alternative shapes, the one each build needed is recorded beside it. That is the line with
+diagnostic value: it shows at a glance that 2.1.285 needed a new shape while everything before it shares one, and a diff
+against the previous commit says what upstream changed.
+
+```bash
+node build/update-versions.js       # say what would change
+node build/update-versions.js -w    # write it
+git config core.hooksPath build/git-hooks   # once per clone: refuse a commit whose record is stale
+```
+
+`test/check.js` fails when the record does not match what the machine verifies, and the pre-commit hook is that check.
+Enabling the hook is a manual step because Git never installs hooks from a repository by itself. The hook reports and
+stops rather than writing the file for you: `git commit -- <path>` takes content from the working tree, so a file the
+hook staged would be left out of the very commit it was meant to accompany — it would look like it worked and quietly
+not have.
+
+Checking this needs the bundles, so it happens here and not in CI — a runner has no Claude Code installed, and that
+section reports itself as skipped rather than passing.
 
 Two rules when changing the patchers:
 

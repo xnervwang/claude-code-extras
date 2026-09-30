@@ -27,6 +27,7 @@ const vm = require('vm');
 const webview = require('../src/webview');
 const host = require('../src/host');
 const ADAPTERS = require('../src/adapters');
+const supported = require('../build/supported');
 const { pickShape } = require('../src/edits');
 
 let failures = 0;
@@ -158,27 +159,12 @@ console.log('\nshape selection');
   }
 }
 
-/* ── 4. the edits, against a pristine bundle ── */
-/* Any patch of this kind announces itself with a marker comment. Recognising the shape, rather than one particular
-   name, keeps a bundle that some other patcher owns from being mistaken for a pristine one - which would otherwise
-   show up as every edit matching zero times, a confusing way to say "someone else got here first". */
-const FOREIGN_MARKER = /^\/\* [A-Z][A-Z0-9-]{3,} v\d+ \*\//m;
-
-function pristine(file, adapter) {
-  const candidates = [
-    [file + adapter.BACKUP_SUFFIX, 'our backup'],
-    [file, 'the file itself'],
-  ];
-  for (const [p, from] of candidates) {
-    if (!fs.existsSync(p)) continue;
-    const src = fs.readFileSync(p, 'utf8');
-    if (src.includes(adapter.ANY_MARK)) continue;
-    const foreign = src.match(FOREIGN_MARKER);
-    if (foreign) return { foreign: foreign[0].trim(), from };
-    return { src, from };
-  }
-  return null;
-}
+/* ── 4. the edits, against a pristine bundle ──
+   Finding a bundle and getting its unpatched source come from build/supported.js, which needs exactly the same two
+   things to decide which builds go into the record of verified versions. They were written out twice here first, and
+   two copies of "where does an unpatched bundle come from" is the kind of pair that drifts without anything failing:
+   the record would then attest to something the checks never looked at. */
+const { pristine, extensionsDirs } = supported;
 
 /* How often each alternative shape was the one that fitted. A shape no checked build reaches any more cannot be
    verified by anything, and would sit there rotting silently, so it is reported at the end. */
@@ -217,15 +203,6 @@ function reportUnusedShapes() {
   }
 }
 
-function extensionsDirs() {
-  const home = os.homedir();
-  return [
-    process.env.VSCODE_EXTENSIONS,
-    path.join(home, '.vscode-server', 'extensions'),
-    path.join(home, '.vscode', 'extensions'),
-  ].filter(Boolean);
-}
-
 console.log('\nedits');
 const explicit = process.argv.slice(2);
 if (explicit.length) {
@@ -257,6 +234,34 @@ if (explicit.length) {
 }
 
 reportUnusedShapes();
+
+/* ── 4a. the record of verified Claude Code builds ──
+   Committing a rule change without updating the record leaves a file claiming support this repository no longer has, and
+   nothing at patch time would notice: a rule that stopped fitting an older build only fails on the machine of whoever
+   is still on it. So the record has to be checked where the bundles are, which is here rather than in CI - a runner has
+   no Claude Code, and this section says so instead of passing.
+
+   It is a comparison against the file that would be written, not against the installed version: that covers a build
+   this machine can no longer patch as well as one it can and the file has not heard of. Carried-over entries for builds
+   that are not installed are equal on both sides, so they never make this fail. */
+console.log('\nverified builds');
+{
+  const { verified, problems } = supported.verifyHere();
+  const wanted = supported.format(supported.merge(supported.read(), verified));
+  const have = fs.existsSync(supported.SUPPORTED_FILE) ? fs.readFileSync(supported.SUPPORTED_FILE, 'utf8') : '';
+  const names = Object.keys(verified);
+  for (const [version, list] of Object.entries(problems)) {
+    bad(`Claude Code ${version} is installed here and the rules do not fit it: ${list.join('; ')}`);
+  }
+  if (!names.length && !Object.keys(problems).length) {
+    note('no Claude Code install found, so what the record claims cannot be checked here');
+  } else if (have !== wanted) {
+    bad(`${path.basename(supported.SUPPORTED_FILE)} does not match what this machine verifies`
+      + ` (${names.join(', ') || 'nothing'}) - run: node build/update-versions.js -w`);
+  } else {
+    ok(`the record matches what this machine verifies (${names.join(', ')})`);
+  }
+}
 
 /* ── 4b. the scheduled-prompt section, host to page ──
    The host encodes the tasks into the stylesheet and the page decodes them and builds an element tree, which the panel

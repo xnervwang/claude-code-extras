@@ -1,0 +1,20 @@
+{
+  "comment": "Claude Code builds this extension has been verified to patch. Written by build/update-versions.js; see build/supported.js for what \"verified\" means and why entries are never removed.",
+  "claudeCode": {
+    "2.1.283": {
+      "shapes": {
+        "Claude Code panel / tool result": "through 2.1.284: setToolResult takes the result alone"
+      }
+    },
+    "2.1.284": {
+      "shapes": {
+        "Claude Code panel / tool result": "through 2.1.284: setToolResult takes the result alone"
+      }
+    },
+    "2.1.285": {
+      "shapes": {
+        "Claude Code panel / tool result": "2.1.285 and later: setToolResult takes options"
+      }
+    }
+  }
+}

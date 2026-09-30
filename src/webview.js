@@ -250,8 +250,26 @@ const EDITS = [
   },
   {
     name: 'tool result',
-    re: /for\(let ([\w$]+) of ([\w$]+)\.message\.content\)if\(\1\.type==="tool_result"\)\{let ([\w$]+)=([\w$]+)\(([\w$]+),\1\.tool_use_id\);if\(\3\)\3\.setToolResult\(\1\)\}/g,
-    to: (m, item, msg, row, find, sess) => `for(let ${item} of ${msg}.message.content)if(${item}.type==="tool_result"){let ${row}=${find}(${sess},${item}.tool_use_id);if(${row}){${row}.setToolResult(${item});${row}.cceResultAt=(typeof ${msg}.timestamp==="string"&&Date.parse(${msg}.timestamp))||void 0}}`,
+    /* Two shapes, because 2.1.285 gave setToolResult a second argument and put a statement in front of the call. The
+       body between `if(row){` and the call is captured and written back untouched rather than described, so another
+       statement appearing there does not need a third shape - only a change to the call itself would.
+
+       Both shapes run to the end of the loop body and put its two closing braces back, which is what keeps the count
+       right. Where the call stands alone the brace after it closes the outer `if`; where the call sits inside a block
+       that same brace closes the block instead. A shape stopping at the call would have to know which of the two it
+       had just eaten, and getting it wrong leaves a file that is one brace out and no longer parses. */
+    shapes: [
+      {
+        note: '2.1.285 and later: setToolResult takes options',
+        re: /for\(let ([\w$]+) of ([\w$]+)\.message\.content\)if\(\1\.type==="tool_result"\)\{let ([\w$]+)=([\w$]+)\(([\w$]+),\1\.tool_use_id\);if\(\3\)\{((?:(?!setToolResult)[\s\S])*?)\3\.setToolResult\(\1,(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})\)\}\}/g,
+        to: (m, item, msg, row, find, sess, before, opts) => `for(let ${item} of ${msg}.message.content)if(${item}.type==="tool_result"){let ${row}=${find}(${sess},${item}.tool_use_id);if(${row}){${before}${row}.setToolResult(${item},${opts});${row}.cceResultAt=(typeof ${msg}.timestamp==="string"&&Date.parse(${msg}.timestamp))||void 0}}`,
+      },
+      {
+        note: 'through 2.1.284: setToolResult takes the result alone',
+        re: /for\(let ([\w$]+) of ([\w$]+)\.message\.content\)if\(\1\.type==="tool_result"\)\{let ([\w$]+)=([\w$]+)\(([\w$]+),\1\.tool_use_id\);if\(\3\)\3\.setToolResult\(\1\)\}/g,
+        to: (m, item, msg, row, find, sess) => `for(let ${item} of ${msg}.message.content)if(${item}.type==="tool_result"){let ${row}=${find}(${sess},${item}.tool_use_id);if(${row}){${row}.setToolResult(${item});${row}.cceResultAt=(typeof ${msg}.timestamp==="string"&&Date.parse(${msg}.timestamp))||void 0}}`,
+      },
+    ],
   },
   {
     // Three sibling factories assign sessionId and transcriptOnDisk the same way; what tells this one apart is that

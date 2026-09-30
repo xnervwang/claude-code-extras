@@ -1,0 +1,19 @@
+#!/bin/sh
+# BSD 3-Clause License
+# Copyright (c) 2026, Xnerv Wang
+# All rights reserved.
+#
+# Refuse a commit whose record of verified Claude Code builds is out of date, and refuse one that breaks a build this
+# machine has installed. Enable it once per clone - Git never installs hooks from a repository by itself:
+#
+#     git config core.hooksPath build/git-hooks
+#
+# It reports and stops rather than fixing the file itself. Writing the file here and staging it would look like it
+# worked and quietly not: `git commit -- <path>` takes the content of those paths from the working tree, so anything
+# this hook added to the index would be left out of exactly the commit it was meant to accompany. A message naming the
+# one command to run is the version that cannot fail silently.
+#
+# It runs the whole check suite rather than the record alone. The suite is seconds long, it is what has to pass before a
+# commit anyway, and one entry point means there is no second list of what gets checked to keep in step.
+
+exec node "$(git rev-parse --show-toplevel)/test/check.js"
