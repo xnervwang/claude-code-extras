@@ -40,8 +40,13 @@ DEFAULTS = {
     # write to the plan refused rather than quietly kept up. Hiding the view alone would be the worst of both - the
     # whole cost still paid every turn, with nothing to show for it.
     "enabled": True,
-    # A turn below this is conversational and owes the plan nothing.
-    "nudgeMinToolCalls": 4,
+    # How many things a turn has to have CHANGED before it owes the plan anything. Counting tool calls instead was the
+    # first shape of this and it was the wrong measure: reading, grepping and measuring are all tool calls, so a turn
+    # spent explaining or investigating tripped the same threshold as a turn that finished three tasks. Measured over one
+    # conversation, 29 reminders produced 10 entries and 18 produced nothing, and the densest run of them landed on turns
+    # that had changed nothing at all. Meanwhile 14 other conversations kept a plan, wrote to it 269 times between them,
+    # and never saw one reminder - what maintains a plan is having it in front of the model every turn, not this.
+    "nudgeMinChanges": 2,
     # What a turn has to cost before a conversation with no plan at all is told it could keep one. The upper quartile of
     # turns begins at 25 tool calls, measured over 691 of them.
     "offerMinToolCalls": 25,

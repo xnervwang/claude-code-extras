@@ -794,7 +794,8 @@ console.log('\nwhat the Stop hook says, and how often');
       if (t < turns - 1) lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } }));
     }
     for (let i = 0; i < tools; i++) {
-      lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read' }] } }));
+      // Write rather than Read: the reminder counts what a turn CHANGED, so a turn of reads owes the plan nothing.
+      lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write' }] } }));
     }
     fs.writeFileSync(transcript, lines.join('\n') + '\n');
     if (plan) {
@@ -836,6 +837,35 @@ console.log('\nwhat the Stop hook says, and how often');
     const r = run(t);
     if (r.said.includes('neither read nor updated')) ok('a plan left untouched by the turn is still the other message');
     else bad(`an untouched plan said ${JSON.stringify(r.said.slice(0, 80))}`);
+    /* Stop fires more than once in a single exchange - eight times in one, in the conversation this was measured in -
+       so without this the reminder arrives in bursts, and a burst is what taught the reader to skip it. Saying it again
+       about a plan in the same state adds nothing: a reminder that did not work the first time does not work fifth. */
+    const again = [run(t), run(t), run(t)].filter((x) => x.said).length;
+    if (!again) ok('and is not repeated while the plan stays in that state');
+    else bad(`the reminder repeated ${again} more times in the same turn`);
+    /* Once the plan has moved on, forgetting again has to be catchable again. */
+    const at = path.join(t.data, session + '.json');
+    // Later than when the reminder last spoke, still earlier than the turn - a plan newer than the turn is already left
+    // alone by the condition above, so testing against a current timestamp would prove nothing about this one.
+    const moved = Date.parse('2025-06-01T00:00:00Z') / 1000;
+    fs.utimesSync(at, moved, moved);
+    if (run(t).said) ok('and comes back once the plan has been written to since');
+    else bad('the reminder stayed silent after the plan changed');
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  /* What the threshold is really asking is whether the turn changed anything, not how busy it looked. A turn of reading
+     and measuring makes plenty of calls and owes the plan nothing - 18 of 29 reminders went to turns like this one. */
+  {
+    const t = stage(0, { nodes: [{ title: 'x', state: 'todo' }] });
+    for (let i = 0; i < 20; i++) {
+      fs.appendFileSync(t.transcript, JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: "grep -rn foo . | sed 's/^/  /'" } }] },
+      }) + '\n');
+    }
+    const r = run(t);
+    if (!r.said) ok('a turn of twenty read-only commands is not reminded of anything');
+    else bad(`a read-only turn said ${JSON.stringify(r.said.slice(0, 80))}`);
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
   /* Reading the plan has to count, or the reminder cannot be answered at all: reading leaves no mark on the file, so a
@@ -1226,7 +1256,8 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
     const now = new Date();
     const lines = [JSON.stringify({ type: 'user', timestamp: now.toISOString(), message: { content: 'go' } })];
     for (let i = 0; i < 10; i++) {
-      lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read' }] } }));
+      // Write rather than Read: the reminder counts what a turn CHANGED, so a turn of reads owes the plan nothing.
+      lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write' }] } }));
     }
     const transcript = path.join(dir, 't.jsonl');
     fs.writeFileSync(transcript, lines.join('\n') + '\n');

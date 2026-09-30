@@ -55,6 +55,9 @@ const PLAN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.json$/i;
    leaving one of these behind. It outlives the conversation the same way a plan does, so it is swept the same way -
    otherwise the only trace of a conversation that declined would accumulate here for ever. */
 const OFFER_FILE = /^[0-9a-f][0-9a-f-]{7,}\.offered$/i;
+/* The same hook remembers having reminded a conversation to reconcile its plan, so that it does not repeat the same
+   sentence about the same unrecorded state. Swept with the plan for the same reason the offer marker is. */
+const NUDGE_FILE = /^[0-9a-f][0-9a-f-]{7,}\.nudged$/i;
 const STATES = ['discussing', 'todo', 'doing', 'parked', 'done', 'dropped'];
 /* Depth and count are bounded because the file is written by another process: a cycle turned into JSON, or a runaway
    generator, would otherwise be rendered forever. Both are far above any plan a person reads. */
@@ -222,8 +225,8 @@ function sweepOrphans(opts = {}) {
   try { names = fs.readdirSync(dir); } catch (_) { return { deleted: 0, kept: 0, why: '' }; }
   let deleted = 0, kept = 0;
   for (const name of names) {
-    if (!PLAN_FILE.test(name) && !OFFER_FILE.test(name)) continue;
-    if (live.has(name.replace(/\.(json|offered)$/i, ''))) { kept++; continue; }
+    if (!PLAN_FILE.test(name) && !OFFER_FILE.test(name) && !NUDGE_FILE.test(name)) continue;
+    if (live.has(name.replace(/\.(json|offered|nudged)$/i, ''))) { kept++; continue; }
     const file = path.join(dir, name);
     let st;
     try { st = fs.statSync(file); } catch (_) { continue; }
@@ -274,6 +277,6 @@ function countOpen(nodes, acc = { discussing: 0, todo: 0, doing: 0, parked: 0, d
 
 module.exports = {
   readPlan, countOpen, planDir, liveSessions, sweepOrphans, openFirst,
-  DATA_ROOT, PLAN_DIR, PLAN_FILE, OFFER_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
+  DATA_ROOT, PLAN_DIR, PLAN_FILE, OFFER_FILE, NUDGE_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
   STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
 };

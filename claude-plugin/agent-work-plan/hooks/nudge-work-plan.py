@@ -10,8 +10,12 @@ in the moment it is needed - the same reason the injection hook exists rather th
 
 It is deliberately hard to trigger. A reminder that fires when nothing was owed teaches the reader to skip it, and a
 skipped reminder is worse than none: it costs attention on every turn and buys nothing on the turn that matters. So it
-speaks only when the turn changed something, the plan is older than the turn, AND the turn never went to the plan at
-all.
+speaks only when the turn changed something, the plan is older than the turn, the turn never went to the plan at all,
+AND this has not already been said about a plan in exactly this state.
+
+"Changed something" is counted as things altered, not tool calls made. That distinction is the whole difference between
+a reminder worth reading and one worth skipping: a turn spent reading, searching and measuring makes plenty of calls and
+owes the plan nothing, and 18 of 29 reminders in the conversation that prompted this went to turns of exactly that kind.
 
 That last condition is what lets the reminder be answered. Reading the plan and finding nothing owed is a complete
 reconciliation, but it leaves no mark on the file - so judging by the file's age alone, a turn that had looked and a
@@ -27,6 +31,7 @@ happens, so the cost is now one sentence, once, after a turn big enough to have 
 """
 import json
 import os
+import re
 import sys
 
 # Set before the import below: see inject-work-plan.py. A hook that runs on every turn leaves no bytecode behind in the
@@ -36,6 +41,42 @@ sys.dont_write_bytecode = True
 from plan_path import plan_file, settings
 
 # Every threshold this uses is in plan_path.DEFAULTS, where the editor's settings can override it.
+
+
+# Tools that change something by definition. Everything not named here - reading, searching, fetching, measuring - is a
+# turn looking at the world rather than altering it, and owes the plan nothing.
+CHANGING_TOOLS = ("Write", "Edit", "NotebookEdit")
+# A shell command that changes something. Bash cannot be judged by its name, so it is judged by what it runs, and the
+# uncertain cases are resolved towards silence: a command this misses makes the reminder miss a turn, while a command it
+# wrongly catches puts the reminder back on the turns it was just taken off. Redirection excludes `2>&1` and `>/dev/null`
+# because those appear in commands that only read.
+CHANGING_SHELL = re.compile(
+    r"\bgit\s+(commit|add|push|mv|rm|apply|checkout|reset|revert|tag|stash)\b"
+    r"|\b(tee|mkdir|rmdir|touch|mv|cp|rm|chmod|chown|ln|truncate|install)\s"
+    r"|\bsed\s+-i"
+    r"|>>?\s*(?!/dev/)[^&\s|]"
+    r"|\bopen\([^)]*['\"][wa]"
+)
+
+
+def changed(row):
+    """How many things this row altered. Zero for a row that only looked at something."""
+    content = (row.get("message") or {}).get("content")
+    if not isinstance(content, list):
+        return 0
+    n = 0
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        name = block.get("name") or ""
+        if name in CHANGING_TOOLS:
+            n += 1
+            continue
+        if name == "Bash":
+            command = (block.get("input") or {}).get("command")
+            if isinstance(command, str) and CHANGING_SHELL.search(command):
+                n += 1
+    return n
 
 
 def spoke(row):
@@ -54,7 +95,8 @@ def spoke(row):
 
 
 def turn_shape(transcript, plan=""):
-    """When this turn began, how many tools it used, how many times the user has spoken, and whether it went to the plan.
+    """When this turn began, how many tools it used, how many things it changed, how often the user has spoken, and
+    whether it went to the plan.
 
     The turn begins at the last message the user sent, so the transcript is walked from the end and stops there. Reading
     it whole would mean parsing megabytes on every turn, so only the tail is read.
@@ -84,16 +126,17 @@ def turn_shape(transcript, plan=""):
             rows.append((json.loads(line), '"tool_use"' in line, line))
         except Exception:
             continue
-    started, tools, reached = None, 0, False
+    started, tools, changes, reached = None, 0, 0, False
     for row, used_tool, line in reversed(rows):
         if spoke(row):
             started = row.get("timestamp")
             break
         if used_tool:
             tools += 1
+            changes += changed(row)
             if plan and plan in line:
                 reached = True
-    return started, tools, sum(1 for row, _, _ in rows if spoke(row)), reached
+    return started, tools, changes, sum(1 for row, _, _ in rows if spoke(row)), reached
 
 
 def iso_to_epoch(stamp):
@@ -138,6 +181,37 @@ def offer_once(payload, path, tools, turns, limits):
         "mean. This is said once per conversation and will not be raised again." % (turns, tools, path)))
 
 
+def said_already(path, touched):
+    """True when this was already said about a plan in exactly this state, and saying it again would add nothing.
+
+    What is remembered is the plan's modification time at the moment of speaking. If the plan has not been written to
+    since, the reminder would be the same sentence about the same unrecorded state - and a reminder that did not work
+    the first time does not work on the fifth. Measured over one conversation, the reminder fired 29 times and ten of
+    those were runs of it repeating within a few turns; not one of the repeats produced an entry that the first had not.
+
+    A plan that HAS been written to since resets this, so forgetting again is caught again.
+
+    Counting turns instead would be the obvious shape and does not work: the turn count comes from the tail of the
+    transcript rather than the whole of it, so it stops being monotonic once a conversation outgrows that window, and a
+    counter that can go down cannot express a cooldown. A modification time only moves forward.
+
+    Failing to read or write the marker means speaking. Silence is the outcome worth being sure about.
+    """
+    marker = os.path.splitext(path)[0] + ".nudged"
+    try:
+        with open(marker) as fh:
+            if fh.read().strip() == repr(touched):
+                return True
+    except Exception:
+        pass
+    try:
+        with open(marker, "w") as fh:
+            fh.write(repr(touched))
+    except Exception:
+        pass
+    return False
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -149,12 +223,12 @@ def main():
     limits = settings()
     if not limits["enabled"]:
         return 0
-    started, tools, turns, reached = turn_shape(payload.get("transcript_path") or "", path)
+    started, tools, changes, turns, reached = turn_shape(payload.get("transcript_path") or "", path)
     if not started:
         return 0
     if not os.path.exists(path):
         return offer_once(payload, path, tools, turns, limits)
-    if tools < limits["nudgeMinToolCalls"]:
+    if changes < limits["nudgeMinChanges"]:
         return 0
     # Reading the plan settles it as much as writing does. Reconciling begins by looking, and a turn that looked and
     # found nothing owed has reconciled - there is nothing else it could do. Without this the reminder had no way to
@@ -171,11 +245,13 @@ def main():
         return 0
     if touched >= began:
         return 0
+    if said_already(path, touched):
+        return 0
     return speak(payload, (
-        "This turn used %d tools and neither read nor updated the work plan (%s). Reconcile it before finishing: add "
-        "what this turn opened, close what it finished, and leave the rest alone. Reading it and finding nothing owed "
-        "is a complete answer, but read it in the turn so this can tell. Only the user's word moves a row to "
-        "\"todo\"." % (tools, path)))
+        "This turn changed %d things and neither read nor updated the work plan (%s). Reconcile it before finishing: "
+        "add what this turn opened, close what it finished, and leave the rest alone. Reading it and finding nothing "
+        "owed is a complete answer, but read it in the turn so this can tell. Only the user's word moves a row to "
+        "\"todo\". This will not be said again until the plan has been written to." % (changes, path)))
 
 
 if __name__ == "__main__":
