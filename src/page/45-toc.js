@@ -97,20 +97,12 @@
    * The hold yields to the person at once: a wheel, a touch or a key means they are scrolling now, and pulling the view
    * back from under them would be the same defect seen from the other side.
    */
-  var landOn = function(el){
-    if (!el || !el.isConnected) return;
-    var r = el.getBoundingClientRect();
-    // No box at all means hidden, or replaced by a re-render. Every number in its rect is zero, so a position computed
-    // from it is arbitrary - and moving the view somewhere arbitrary is exactly what a missed jump looks like.
-    if (!r.height && !r.width) return;
-    var sc = scrollerOf(el);
-    var go = function(){
-      var delta = offsetIn(el, sc) - TOP_MARGIN;
-      var opt = { top: (sc ? sc.scrollTop : window.scrollY) + delta, behavior: 'auto' };
-      if (sc) sc.scrollTo(opt); else window.scrollTo(opt);
-    };
+  // Put the view somewhere and keep it there until it stays: `go` moves it, `there` says it has arrived, `alive` says the
+  // thing it is aiming at still exists. Shared by the message arrows and the top and bottom buttons, which face the same
+  // panel effects pulling the view away from where it was sent.
+  var holdScroll = function(target, go, there, alive){
     go();
-    var target = sc || window, tries = 0, still = 0, tick = 0;
+    var tries = 0, still = 0, tick = 0;
     var stop = function(){
       if (tick) clearInterval(tick);
       tick = 0;
@@ -119,8 +111,8 @@
       window.removeEventListener('keydown', stop);
     };
     tick = setInterval(function(){
-      if (!el.isConnected || ++tries > SETTLE_TRIES) { stop(); return; }
-      if (Math.abs(offsetIn(el, sc) - TOP_MARGIN) <= LAND_TOL) {
+      if ((alive && !alive()) || ++tries > SETTLE_TRIES) { stop(); return; }
+      if (there()) {
         if (++still >= 2) stop();
         return;
       }
@@ -130,6 +122,49 @@
     target.addEventListener('wheel', stop, { passive: true });
     target.addEventListener('touchstart', stop, { passive: true });
     window.addEventListener('keydown', stop);
+  };
+  var landOn = function(el){
+    if (!el || !el.isConnected) return;
+    var r = el.getBoundingClientRect();
+    // No box at all means hidden, or replaced by a re-render. Every number in its rect is zero, so a position computed
+    // from it is arbitrary - and moving the view somewhere arbitrary is exactly what a missed jump looks like.
+    if (!r.height && !r.width) return;
+    var sc = scrollerOf(el);
+    holdScroll(sc || window, function(){
+      var delta = offsetIn(el, sc) - TOP_MARGIN;
+      var opt = { top: (sc ? sc.scrollTop : window.scrollY) + delta, behavior: 'auto' };
+      if (sc) sc.scrollTo(opt); else window.scrollTo(opt);
+    }, function(){
+      return Math.abs(offsetIn(el, sc) - TOP_MARGIN) <= LAND_TOL;
+    }, function(){ return el.isConnected; });
+  };
+  /*
+   * To the very top or the very bottom of the conversation.
+   *
+   * The scroller is found from a message rather than looked up by name, the way the arrows find it, so both act on the
+   * same element whatever the panel calls it. The bottom is re-measured on every attempt: a reply still streaming makes
+   * the conversation longer while the view is on its way there, and the end measured at the click would land short.
+   *
+   * The arrows' stepping cursor is dropped, so the next arrow press counts from where this left the view rather than
+   * from a message picked before it.
+   */
+  var jumpEdge = function(toEnd){
+    var any = null;
+    for (var i = 0; i < PROMPT_EL.length && !any; i++) if (PROMPT_EL[i].isConnected) any = PROMPT_EL[i];
+    if (!any) any = document.querySelector(ASSIST) || document.querySelector(USER);
+    if (!any) return;
+    var sc = scrollerOf(any);
+    jumpIdx = -1; jumpAt = 0;
+    var at = function(){ return sc ? sc.scrollTop : window.scrollY; };
+    var end = function(){
+      return sc ? sc.scrollHeight - sc.clientHeight : document.documentElement.scrollHeight - window.innerHeight;
+    };
+    holdScroll(sc || window, function(){
+      var opt = { top: toEnd ? end() : 0, behavior: 'auto' };
+      if (sc) sc.scrollTo(opt); else window.scrollTo(opt);
+    }, function(){
+      return toEnd ? end() - at() <= LAND_TOL : at() <= LAND_TOL;
+    });
   };
   var jumpPrompt = function(dir){
     var alive = [];
@@ -152,9 +187,8 @@
     jumpIdx = t; jumpAt = Date.now();
     landOn(alive[t]);
   };
-  var navButton = function(glyph, dir, label){
+  var railButton = function(label, onClick){
     var b = document.createElement('div');
-    b.textContent = glyph;
     b.title = label;
     var s = b.style;
     s.width = '20px'; s.height = '18px';
@@ -167,7 +201,41 @@
     s.color = 'var(--vscode-foreground, #ccc)';
     b.addEventListener('mouseenter', function(){ s.opacity = '1'; });
     b.addEventListener('mouseleave', function(){ s.opacity = '0.55'; });
-    b.addEventListener('click', function(ev){ ev.stopPropagation(); jumpPrompt(dir); });
+    b.addEventListener('click', function(ev){ ev.stopPropagation(); onClick(); });
+    return b;
+  };
+  var navButton = function(glyph, dir, label){
+    var b = railButton(label, function(){ jumpPrompt(dir); });
+    b.textContent = glyph;
+    return b;
+  };
+  /*
+   * A triangle against a bar - pointing at the edge it goes to, the sign media controls use for first and last. Drawn
+   * rather than taken from a font: the panel's policy blocks the fonts that carry such arrows, and a glyph that is missing
+   * draws an empty box with nothing to say why. Sized to sit beside the arrows above and below it without changing the
+   * rail's width.
+   */
+  var edgeIcon = function(toEnd){
+    var NS = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 10 10');
+    svg.style.width = '10px'; svg.style.height = '10px';
+    var bar = document.createElementNS(NS, 'path');
+    bar.setAttribute('d', toEnd ? 'M1.5 8.5h7' : 'M1.5 1.5h7');
+    bar.setAttribute('stroke', 'currentColor');
+    bar.setAttribute('stroke-width', '1.4');
+    bar.setAttribute('stroke-linecap', 'round');
+    bar.setAttribute('fill', 'none');
+    var tri = document.createElementNS(NS, 'path');
+    tri.setAttribute('d', toEnd ? 'M2 2.5h6L5 6.5z' : 'M2 7.5h6L5 3.5z');
+    tri.setAttribute('fill', 'currentColor');
+    svg.appendChild(bar);
+    svg.appendChild(tri);
+    return svg;
+  };
+  var edgeButton = function(toEnd, label){
+    var b = railButton(label, function(){ jumpEdge(toEnd); });
+    b.appendChild(edgeIcon(toEnd));
     return b;
   };
   // ',' and '.' step between your messages, but only when the caret is not in an editable field.
@@ -215,17 +283,19 @@
       ev.stopPropagation();
       if (panelOpen()) closePanel(); else openPanel();
     });
-    // One vertical strip: up arrow, handle, down arrow. Its layer sits under the panel so an open
-    // panel covers it rather than the other way round.
+    // One vertical strip: to the top, up arrow, handle, down arrow, to the bottom - the outer pair going furthest. Its
+    // layer sits under the panel so an open panel covers it rather than the other way round.
     RAILBOX = document.createElement('div');
     RAILBOX.id = 'cce-toc-rail';
     var rb = RAILBOX.style;
     rb.position = 'fixed'; rb.right = '0'; rb.top = '50%';
     rb.transform = 'translateY(-50%)'; rb.zIndex = '29';
     rb.display = 'flex'; rb.flexDirection = 'column'; rb.alignItems = 'flex-end';
+    RAILBOX.appendChild(edgeButton(false, 'Top of the conversation'));
     RAILBOX.appendChild(navButton(String.fromCharCode(9652), -1, 'Previous message'));
     RAILBOX.appendChild(HANDLE);
     RAILBOX.appendChild(navButton(String.fromCharCode(9662), 1, 'Next message'));
+    RAILBOX.appendChild(edgeButton(true, 'Bottom of the conversation'));
     document.body.appendChild(RAILBOX);
     wireKeys();
 

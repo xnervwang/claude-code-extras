@@ -255,6 +255,45 @@ reportUnusedShapes();
    every reply look like a fallback; a reply from a genuinely different model, which must still count as one, since that
    is the pill's whole reason for comparing; and a 200K pick, which must not be swept into looking like 1M. `strip` is
    the panel's own helper - it removes the 1M marker and nothing else. */
+/* ── 3c. the table of contents' top and bottom buttons ──
+   Run against a stand-in scroller, since what can go wrong is arithmetic rather than layout: landing short of the end,
+   or chasing an end that has moved. A reply still streaming makes the conversation longer while the view is on its way
+   down, so the bottom is asserted to be re-measured on the next attempt rather than fixed at the click. */
+console.log('\nthe top and bottom buttons');
+{
+  const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '45-toc.js'), 'utf8');
+  const scroller = {
+    scrollTop: 1200, scrollHeight: 5000, clientHeight: 500, parentElement: null,
+    scrollTo(o) { this.scrollTop = Math.max(0, Math.min(o.top, this.scrollHeight - this.clientHeight)); },
+    getBoundingClientRect() { return { top: 0 }; }, addEventListener() {}, removeEventListener() {},
+  };
+  const message = {
+    isConnected: true, parentElement: scroller,
+    getBoundingClientRect() { return { top: 100, height: 40, width: 200 }; },
+  };
+  const ticks = [];
+  const box = {
+    out: {}, message, ASSIST: 'x', USER: 'y', SEND: 'z',
+    document: { querySelector: () => null, documentElement: { scrollHeight: 0 } },
+    window: { scrollY: 0, innerHeight: 0, addEventListener() {}, removeEventListener() {} },
+    getComputedStyle: (el) => ({ overflowY: el === scroller ? 'auto' : 'visible' }),
+    setInterval: (f) => { ticks.push(f); return ticks.length; },
+    clearInterval: () => {},
+  };
+  new vm.Script(`(function(){${fragment}\n;PROMPT_EL.push(message); out.jumpEdge = jumpEdge;})()`, { filename: '45-toc.js' })
+    .runInNewContext(box);
+  box.out.jumpEdge(true);
+  if (scroller.scrollTop === 4500) ok('to the bottom lands at the very end');
+  else bad(`to the bottom left the view at ${scroller.scrollTop}, expected 4500`);
+  scroller.scrollHeight = 6000;           // a reply grows while the view is held at the end
+  ticks[ticks.length - 1]();
+  if (scroller.scrollTop === 5500) ok('and follows the end when the conversation grows meanwhile');
+  else bad(`the hold did not follow a longer conversation: ${scroller.scrollTop}, expected 5500`);
+  box.out.jumpEdge(false);
+  if (scroller.scrollTop === 0) ok('to the top lands at the very start');
+  else bad(`to the top left the view at ${scroller.scrollTop}`);
+}
+
 console.log('\nthe model pill comparison');
 {
   const rule = webview.EDITS.find((e) => e.name === 'model pill ignores provider prefix');
