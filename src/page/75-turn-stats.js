@@ -5,6 +5,25 @@
 // Per-reply duration, context share and estimated spend.
 // Fragment of the in-page script - see README.md in this folder.
 
+  /*
+   * The model a reply names, with the 1M marker put back when it is the 1M model that answered.
+   *
+   * On Bedrock a reply never carries the marker, even when the 1M model is the one answering: 1M context is a request
+   * header there, not part of the model's name, so every reply says `claude-opus-5-5` whichever of the two was picked.
+   * Whether it is the 1M model is therefore a fact about the pick, and it is taken from there - but only when the reply's
+   * model IS the one picked, compared without the 1M marker or the provider prefix. A reply from some other model is shown
+   * exactly as it came, since a model other than the one chosen is what this part of the line exists to show.
+   *
+   * The panel's own model pill had the same fault for the same reason and is fixed by an edit in src/webview.js.
+   */
+  var withOneMillion = function(served, session){
+    var info = session && session.currentModelInfo && session.currentModelInfo.value;
+    var pick = info && typeof info.resolvedModel === 'string' ? info.resolvedModel : '';
+    if (!/\[1m\]$/i.test(pick) || /\[1m\]$/i.test(served)) return served;
+    var base = function(x){ return x.replace(/\[1m\]$/i, '').replace(/^(?:[a-z]+\.)?anthropic\./i, ''); };
+    return base(pick) === base(served) ? served + '[1m]' : served;
+  };
+
   // Context share and estimated spend as they stood when a reply settled. Keyed by the message object
   // in a WeakMap, so entries disappear when the message itself is collected - no growing table.
   var atMsg = new WeakMap();
@@ -36,7 +55,7 @@
     if (isOff('modelName')) who.length = 0; else {
     var mdl = sessionRef.lastServedModel && sessionRef.lastServedModel.value;
     if (!mdl) mdl = sessionRef.currentMainLoopModel && sessionRef.currentMainLoopModel.value;
-    if (typeof mdl === 'string' && mdl) who.push(mdl.replace(/^claude-/, ''));
+    if (typeof mdl === 'string' && mdl) who.push(withOneMillion(mdl, sessionRef).replace(/^claude-/, ''));
     var eff = sessionRef.effortLevel && sessionRef.effortLevel.value;
     if (typeof eff === 'string' && eff) who.push(eff);
     var fast = sessionRef.fastModeState && sessionRef.fastModeState.value;

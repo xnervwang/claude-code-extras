@@ -249,6 +249,57 @@ if (explicit.length) {
 
 reportUnusedShapes();
 
+/* ── 3b. what the model-pill rule actually decides ──
+   Matching once says the rule found its place, not that the comparison it leaves behind is right. This runs the
+   rewritten comparison itself on the cases that matter: the Bedrock pair that differed only by provider prefix and made
+   every reply look like a fallback; a reply from a genuinely different model, which must still count as one, since that
+   is the pill's whole reason for comparing; and a 200K pick, which must not be swept into looking like 1M. `strip` is
+   the panel's own helper - it removes the 1M marker and nothing else. */
+console.log('\nthe model pill comparison');
+{
+  const rule = webview.EDITS.find((e) => e.name === 'model pill ignores provider prefix');
+  const original = 'h(J)!==h($.resolvedModel??"")';
+  const rewritten = original.replace(rule.re, rule.to);
+  rule.re.lastIndex = 0;
+  const differs = (expr) => new Function('h', 'J', '$', 'return ' + expr);
+  const strip = (s) => s.replace(/\[1m\]$/i, '');
+  const before = differs(original), after = differs(rewritten);
+  const cases = [
+    ['a 1M pick on Bedrock, answered by that same model', 'claude-opus-5-5', 'global.anthropic.claude-opus-5-5[1m]', false],
+    ['a 200K pick on Bedrock, answered by that same model', 'claude-opus-5-5', 'global.anthropic.claude-opus-5-5', false],
+    ['a regional prefix on the reply instead of the pick', 'us.anthropic.claude-opus-5-5', 'claude-opus-5-5[1m]', false],
+    ['a reply from a different model than the one picked', 'claude-opus-5', 'global.anthropic.claude-opus-5-5[1m]', true],
+  ];
+  if (before(strip, cases[0][1], { resolvedModel: cases[0][2] }) === true) {
+    ok('the unpatched comparison does call the Bedrock pair different, which is the bug being fixed');
+  } else bad('the unpatched comparison no longer shows the bug, so this rule may be fixing nothing');
+  for (const [what, served, pick, want] of cases) {
+    const got = after(strip, served, { resolvedModel: pick });
+    if (got === want) ok(`${what}: ${want ? 'still counts as a different model' : 'counts as the same model'}`);
+    else bad(`${what}: the rewritten comparison said ${got ? 'different' : 'same'}`);
+  }
+
+  /* Our own per-reply line has the same fault - it shows the name the reply carries, which on Bedrock never says 1M -
+     and puts the marker back from the pick. Same cases, plus the one that only it has: no pick known at all. */
+  const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '75-turn-stats.js'), 'utf8');
+  const box = { out: {} };
+  new vm.Script(`(function(){${fragment}\n;out.withOneMillion = withOneMillion;})()`, { filename: '75-turn-stats.js' })
+    .runInNewContext(box);
+  const label = (served, pick) => box.out.withOneMillion(served,
+    pick === undefined ? {} : { currentModelInfo: { value: { resolvedModel: pick } } });
+  const shown = [
+    ['a 1M pick answered by that model', 'claude-opus-5-5', 'global.anthropic.claude-opus-5-5[1m]', 'claude-opus-5-5[1m]'],
+    ['a 200K pick answered by that model', 'claude-opus-5-5', 'global.anthropic.claude-opus-5-5', 'claude-opus-5-5'],
+    ['a 1M pick answered by another model', 'claude-opus-5', 'global.anthropic.claude-opus-5-5[1m]', 'claude-opus-5'],
+    ['no pick known yet', 'claude-opus-5-5', undefined, 'claude-opus-5-5'],
+  ];
+  for (const [what, served, pick, want] of shown) {
+    const got = label(served, pick);
+    if (got === want) ok(`our per-reply line, ${what}: shows ${want}`);
+    else bad(`our per-reply line, ${what}: showed ${got}, expected ${want}`);
+  }
+}
+
 /* ── 4a. the record of verified Claude Code builds ──
    One equality: the builds the record claims are exactly the builds this machine just verified. Both directions matter
    and for different reasons. A build claimed but not verifiable here means the commit asserts something nothing

@@ -333,6 +333,22 @@ const EDITS = [
     to: (m, fn, count, dot, onOpen, label, make) =>
       `function ${fn}({count:${count},dot:${dot},onOpen:${onOpen}}){let ${label}=(typeof window.__cceAgentsLabel==="function"?window.__cceAgentsLabel(${make}(${count}),${count}):${make}(${count})),`,
   },
+  {
+    /* The model pill relabels itself after the first reply whenever the model that answered differs from the one picked,
+       so that a real fallback is visible. The comparison strips the 1M marker from both sides but not the provider's
+       prefix, and on Bedrock the two never agree on that: the pick is `global.anthropic.claude-opus-5-5[1m]` and the reply
+       says `claude-opus-5-5`. Every reply therefore looks like a fallback, and the pill is rebuilt from the reply's name -
+       which carries no 1M marker - so "Opus (1M context)" turns into "Opus 5.5" a few seconds after being chosen, while
+       every request is still being sent as the 1M model.
+
+       Stripping the prefix as well makes only that difference disappear. A reply from a genuinely different model still
+       differs after it, so a real fallback is still shown; and whether the pill says 1M is decided elsewhere, from the
+       pick itself, so a 200K pick stays 200K. */
+    name: 'model pill ignores provider prefix',
+    re: /([\w$]+)\(([\w$]+)\)!==\1\(([\w$]+)\.resolvedModel\?\?""\)/g,
+    to: (m, strip, served, pick) =>
+      `${strip}(${served}).replace(/^(?:[a-z]+\\.)?anthropic\\./i,"")!==${strip}(${pick}.resolvedModel??"").replace(/^(?:[a-z]+\\.)?anthropic\\./i,"")`,
+  },
 ];
 
 /** Pure transform. Returns { out, chosen } or { error }. Never partially applies. */
