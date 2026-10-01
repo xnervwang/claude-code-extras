@@ -300,13 +300,62 @@
     for (var k = 0; k < want.length; k++) mode.parentElement.insertBefore(want[k], mode);
   };
 
+  /*
+   * Label a block the moment it appears, before the browser has painted it.
+   *
+   * The sweep is throttled to 250ms and labels a block when it gets there, which is correct for everything that reads a
+   * label but too late for the one thing that HIDES by it. A tool call is drawn at full height, stands there for up to a
+   * quarter second, and then collapses - so a run of them walks the whole conversation up and down, which is unreadable
+   * at the rate tool calls arrive.
+   *
+   * A mutation callback runs at the microtask checkpoint of the task that inserted the node, and painting happens after
+   * that task. Labelling here therefore lands before the first paint of that block: it is hidden in the frame it would
+   * otherwise have appeared in, and no height ever changes.
+   *
+   * This does NOT make the throttle looser. It costs one walk up the React tree per element inserted, which is bounded
+   * by what arrived rather than by how long the conversation is - the growth the throttle exists to prevent. It is also
+   * skipped entirely unless the plain view is switched on, since nothing else needs a label this early.
+   *
+   * The alternative was hiding blocks that have no label yet, and it was worse in a way worth recording: rows that never
+   * get one - the panel's own structure, which carries no block - would have stayed hidden for good, and a sweep that
+   * stopped running would empty the conversation instead of merely leaving it unfiltered.
+   */
+  var labelBlock = function(el){
+    var cx = ctxOf(el);
+    if (cx.block && cx.block.content) applyKind(el, cx.block.content.type);
+  };
+  var labelAdded = function(node){
+    if (!node || node.nodeType !== 1 || typeof node.matches !== 'function') return;
+    // Your own side carries the block on the message element itself; the other side carries one per child.
+    if (node.matches(USER)) { labelBlock(node); return; }
+    var parent = node.parentElement;
+    if (parent && typeof parent.matches === 'function' && parent.matches(ASSIST)) { labelBlock(node); return; }
+    // A whole message arriving at once brings its blocks with it.
+    if (node.matches(ASSIST)) {
+      var kids = node.children;
+      for (var i = 0; i < kids.length; i++) labelBlock(kids[i]);
+    }
+  };
+  var onMutations = function(records){
+    // Guarded on its own, so a fault here cannot cost the sweep that would have labelled the block anyway.
+    try {
+      if (plainOn() && !isOff('footerPlainView')) {
+        for (var i = 0; i < records.length; i++) {
+          var added = records[i].addedNodes;
+          for (var j = 0; j < added.length; j++) labelAdded(added[j]);
+        }
+      }
+    } catch (e) {}
+    schedule();
+  };
+
   var aimed = null, aimer = null;
   var aimText = function(anyMessage){
     if (!anyMessage) return;
     var root = scrollerOf(anyMessage) || anyMessage.parentElement;
     if (!root || root === aimed) return;
     if (aimer) aimer.disconnect();
-    aimer = new MutationObserver(schedule);
+    aimer = new MutationObserver(onMutations);
     aimer.observe(root, { childList: true, subtree: true, characterData: true });
     aimed = root;
   };
@@ -349,7 +398,7 @@
     bootAt = clock();
     /* Structure anywhere on the page, which is what tells us a message arrived, a block opened, or the list itself was
        replaced. Deliberately without characterData: see aimText below. */
-    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    new MutationObserver(onMutations).observe(document.documentElement, { childList: true, subtree: true });
     probe();
     setInterval(probe, POLL_MS);
     // The chime and the low-context outline must not depend on DOM churn: a turn can end without

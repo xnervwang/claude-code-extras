@@ -136,6 +136,18 @@ else bad(`the injected script calls ${undeclared.length} name(s) it never declar
 if (webview.SCRIPT.includes('!out.message; f = f.return')) ok('hot loop keeps its early exit');
 else bad('hot loop lost its early exit — the fiber walk will run to full depth on every element');
 
+/* Every mutation observer has to go through the callback that labels a new block before the browser paints it. There are
+   two of them watching different roots, and wiring only one leaves half the blocks appearing at full height and then
+   collapsing - the symptom this was written to remove, at half the rate, which reads as the fix not having worked rather
+   than as a missed line. Nearly happened while writing it. */
+{
+  const observers = [...webview.SCRIPT.matchAll(/new MutationObserver\(\s*([A-Za-z_$][\w$]*)/g)].map((m) => m[1]);
+  const direct = observers.filter((n) => n !== 'onMutations');
+  if (observers.length >= 2 && !direct.length) ok(`all ${observers.length} mutation observers label a new block before it paints`);
+  else if (!observers.length) bad('no mutation observer found in the injected script');
+  else bad(`mutation observer(s) bypass the labelling callback: ${direct.join(', ')}`);
+}
+
 /* ── 3. shape selection itself ──
    An edit may carry several alternative shapes for builds that differ. The rule is that exactly one shape must match
    exactly once: a shape matching twice is as unusable as one matching never, since neither identifies a single site.
