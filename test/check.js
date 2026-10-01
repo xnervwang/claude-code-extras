@@ -868,6 +868,42 @@ console.log('\nwhat the Stop hook says, and how often');
     else bad(`a read-only turn said ${JSON.stringify(r.said.slice(0, 80))}`);
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
+  /* Which shell commands count as changing something, by example. `>` means a redirect to a shell and a comparison to
+     everything else, and a heredoc script arrives as one argument so both meanings sit in the same string - a `count >= 4`
+     inside an embedded script read as a write and put the reminder back on turns that had changed nothing. Only examples
+     hold a judgement like this; a description of the pattern would have looked correct in that state too. */
+  {
+    const reads = [
+      'python3 -c "if n >= 4: print(1)"',
+      'python3 -c "if a <= b and c => d: pass"',
+      "grep -c foo bar | sed 's/^/  /'",
+      'node test/check.js 2>&1 | tail -1',
+      'ls -d ~/x > /dev/null 2>&1; echo ok',
+      'git log --format="%h" -S "foo" | tail -3',
+      'git status --short',
+    ];
+    const writes = [
+      'echo hi > /tmp/a', 'echo hi >> notes.txt', 'git commit -m x', 'git add .',
+      'cp a b', 'rm -rf build', 'sed -i "s/a/b/" f', 'mkdir -p out && touch out/x',
+    ];
+    const judge = (command) => {
+      const t = stage(0, { nodes: [{ title: 'x', state: 'todo' }] });
+      for (let i = 0; i < 3; i++) {
+        fs.appendFileSync(t.transcript, JSON.stringify({
+          type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] },
+        }) + '\n');
+      }
+      const said = !!run(t).said;
+      fs.rmSync(t.dir, { recursive: true, force: true });
+      return said;
+    };
+    const wrongly = reads.filter(judge);
+    const missed = writes.filter((c) => !judge(c));
+    if (!wrongly.length) ok(`${reads.length} read-only commands are all seen as changing nothing`);
+    else bad(`read-only commands counted as changes: ${JSON.stringify(wrongly)}`);
+    if (!missed.length) ok(`${writes.length} writing commands are all seen as changes`);
+    else bad(`writing commands counted as read-only: ${JSON.stringify(missed)}`);
+  }
   /* Reading the plan has to count, or the reminder cannot be answered at all: reading leaves no mark on the file, so a
      turn that looked and a turn that forgot look identical from the file's age, and the reminder repeats for the rest of
      a conversation whose plan is already correct. */

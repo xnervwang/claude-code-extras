@@ -48,13 +48,17 @@ from plan_path import plan_file, settings
 CHANGING_TOOLS = ("Write", "Edit", "NotebookEdit")
 # A shell command that changes something. Bash cannot be judged by its name, so it is judged by what it runs, and the
 # uncertain cases are resolved towards silence: a command this misses makes the reminder miss a turn, while a command it
-# wrongly catches puts the reminder back on the turns it was just taken off. Redirection excludes `2>&1` and `>/dev/null`
-# because those appear in commands that only read.
+# wrongly catches puts the reminder back on the turns it was just taken off.
+#
+# The redirection branch is the delicate one, because `>` is a redirect in a shell and a comparison everywhere else, and
+# a heredoc script is passed as one argument so both meanings turn up in the same string. It therefore excludes `2>&1`
+# and `>/dev/null`, which appear in commands that only read, and `>=` and `=>`, which are not redirects at all - a
+# `count >= 4` inside an embedded script read as a write and put the reminder back on turns that had changed nothing.
 CHANGING_SHELL = re.compile(
     r"\bgit\s+(commit|add|push|mv|rm|apply|checkout|reset|revert|tag|stash)\b"
     r"|\b(tee|mkdir|rmdir|touch|mv|cp|rm|chmod|chown|ln|truncate|install)\s"
     r"|\bsed\s+-i"
-    r"|>>?\s*(?!/dev/)[^&\s|]"
+    r"|(?<![>=])>>?\s*(?!/dev/)[^&=\s|]"
     r"|\bopen\([^)]*['\"][wa]"
 )
 
