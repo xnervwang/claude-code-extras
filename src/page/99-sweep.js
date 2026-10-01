@@ -391,6 +391,9 @@
    * still pending - work the panel had to get through before it could show anything at all.
    */
   /*
+   * TEMPORARY, part of one investigation - delete with the host-busy watcher in src/openlatency.js once the panel's slow
+   * first message is understood.
+   *
    * One line as this script is reached, before anything else, so that a panel that never finishes starting still says
    * where it got to.
    *

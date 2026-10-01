@@ -341,6 +341,15 @@ function flush(opts) {
 }
 
 /*
+ * TEMPORARY, FOR ONE INVESTIGATION. Delete this and its three call sites once the panel's slow first message is
+ * understood: the watcher below, the timer in extension.js that drives it, and the stretch of report() that prints what
+ * it collected. The `hostbusy` records it leaves behind are then meaningless and the reader is swept with the rest.
+ *
+ * It is not a feature and nobody asked for the number. It exists because one question could not be answered any other
+ * way, and it earns its place only until that question is answered - a diagnostic kept past its investigation becomes
+ * something later readers have to take seriously, and a per-second timer is the last thing to leave lying around in an
+ * extension whose whole discipline is not costing the editor anything.
+ *
  * Whether the extension host was running during a wait, which is the one thing the wait itself does not say.
  *
  * A panel that takes 94 seconds to send its first message has been seen, with the host side silent throughout, and that
@@ -483,7 +492,9 @@ function report(records, thresholdMs = THRESHOLD_MS) {
       secs(r.median).padStart(8), secs(r.p90).padStart(8), secs(r.worst).padStart(8), r.version,
     ].join(' '));
   }
-  /* Stretches where this extension host was itself busy, listed beside the waits because the point is to read one against
+  /* TEMPORARY, part of one investigation - goes with the watcher above.
+
+     Stretches where this extension host was itself busy, listed beside the waits because the point is to read one against
      the other. A wait with no stretch overlapping it was a wait on the panel, with this side free the whole time - which
      is the half of the question a wait alone cannot answer. */
   const busy = records.filter((r) => r && r.what === 'hostbusy' && typeof r.blocked === 'number');

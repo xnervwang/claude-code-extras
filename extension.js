@@ -298,6 +298,10 @@ function activate(context) {
   sampleLatency();
 
   /*
+   * TEMPORARY, FOR ONE INVESTIGATION - delete with the watcher in src/openlatency.js once the panel's slow first message
+   * is understood. A per-second timer is not something this extension should carry for its own sake; it is here because
+   * one question could not be answered any other way.
+   *
    * Whether this extension host was running during a wait, which a wait on its own cannot say.
    *
    * The silence either side of a 94-second wait has two opposite readings - this host blocked and unable to act, or this

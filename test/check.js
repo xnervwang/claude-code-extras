@@ -1069,6 +1069,22 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`summarise gave ${JSON.stringify(rows)}`);
     fs.rmSync(root, { recursive: true, force: true });
   }
+  /* The host-busy watcher is temporary and spread over three files, so each place that carries it has to say so. A
+     diagnostic whose own code no longer admits to being one is a diagnostic nobody will ever remove: the comment is the
+     only thing that licenses deleting it, and by the time anyone wonders, the investigation it belongs to will be months
+     past. Checked rather than trusted because the three are easy to edit apart. */
+  {
+    const marked = [
+      ['src/openlatency.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
+      ['extension.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
+      ['src/page/99-sweep.js', 'TEMPORARY, part of one investigation'],
+    ];
+    const bare = marked.filter(([f, mark]) =>
+      !fs.readFileSync(path.join(__dirname, '..', f), 'utf8').includes(mark));
+    if (!bare.length) ok(`all ${marked.length} parts of the host-busy diagnostic say they are temporary`);
+    else bad(`no longer marked temporary, so nothing licenses removing it: ${bare.map(([f]) => f).join(', ')}`);
+  }
+
   /* Whether this extension host was running during a wait, which the wait alone cannot say: silence either side of a long
      one means either the host was blocked and could not act, or it was idle with nothing to act on, and those are opposite
      halves of the machine. A clock read on a timer tells them apart. Folding consecutive overruns matters as much as
