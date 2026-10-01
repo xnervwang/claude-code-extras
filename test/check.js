@@ -216,7 +216,9 @@ function reportUnusedShapes() {
 }
 
 console.log('\nedits');
-const explicit = process.argv.slice(2);
+// Bundle paths to check instead of the installed ones. Options are not paths: passing one used to be reported as
+// "no patch target is named --without-version-record", which reads as a broken suite rather than a misread flag.
+const explicit = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 if (explicit.length) {
   for (const arg of explicit) {
     const base = path.basename(arg).replace(/\.[^.]*\.bak$/, '');
@@ -248,30 +250,43 @@ if (explicit.length) {
 reportUnusedShapes();
 
 /* ── 4a. the record of verified Claude Code builds ──
-   Committing a rule change without updating the record leaves a file claiming support this repository no longer has, and
-   nothing at patch time would notice: a rule that stopped fitting an older build only fails on the machine of whoever
-   is still on it. So the record has to be checked where the bundles are, which is here rather than in CI - a runner has
-   no Claude Code, and this section says so instead of passing.
+   One equality: the builds the record claims are exactly the builds this machine just verified. Both directions matter
+   and for different reasons. A build claimed but not verifiable here means the commit asserts something nothing
+   established - which happened, silently, while the record carried builds forward. A build verified here but missing
+   from the record means an upgrade goes unrecorded for ever, because a record that is merely conservative never fails
+   anything and so nothing ever asks for it to be written again.
 
-   It is a comparison against the file that would be written, not against the installed version: that covers a build
-   this machine can no longer patch as well as one it can and the file has not heard of. Carried-over entries for builds
-   that are not installed are equal on both sides, so they never make this fail. */
+   It can only be checked where the bundles are, so a runner with no Claude Code gets a skip rather than a pass, and
+   enforcement is local. The place it reaches whoever is working here is this suite, which is the first step of finishing
+   any change rather than a separate thing to remember.
+
+   Skipped only by `--without-version-record`, which the one command that writes the record passes when it runs this
+   suite first. That is not a way around the gate: this section fails in exactly the state that command exists to
+   correct, so leaving it in would block the fix with the defect it fixes. */
 console.log('\nverified builds');
-{
+if (process.argv.includes('--without-version-record')) {
+  note('asked to skip the record check, which is what writing the record does while it runs this suite');
+} else {
   const { verified, problems } = supported.verifyHere();
-  const wanted = supported.format(supported.merge(supported.read(), verified));
-  const have = fs.existsSync(supported.SUPPORTED_FILE) ? fs.readFileSync(supported.SUPPORTED_FILE, 'utf8') : '';
-  const names = Object.keys(verified);
+  const claimed = Object.keys(supported.read().claudeCode).sort(supported.cmpVersion);
+  const names = Object.keys(verified).sort(supported.cmpVersion);
   for (const [version, list] of Object.entries(problems)) {
     bad(`Claude Code ${version} is installed here and the rules do not fit it: ${list.join('; ')}`);
   }
+  const over = claimed.filter((v) => !verified[v]);
+  const under = names.filter((v) => !claimed.includes(v));
+  const fix = ' - run: node build/update-versions.js -w';
   if (!names.length && !Object.keys(problems).length) {
     note('no Claude Code install found, so what the record claims cannot be checked here');
-  } else if (have !== wanted) {
-    bad(`${path.basename(supported.SUPPORTED_FILE)} does not match what this machine verifies`
-      + ` (${names.join(', ') || 'nothing'}) - run: node build/update-versions.js -w`);
+  } else if (over.length) {
+    bad(`the record claims ${over.join(', ')}, which this machine cannot verify${fix}`);
+  } else if (under.length) {
+    bad(`${under.join(', ')} verified here but not claimed by the record${fix}`);
+  } else if (supported.format(supported.record(verified)) !== fs.readFileSync(supported.SUPPORTED_FILE, 'utf8')) {
+    // Same builds, different contents: a rule's shape changed under one of them, which is the detail worth keeping.
+    bad(`the record names the right builds but not what they needed${fix}`);
   } else {
-    ok(`the record matches what this machine verifies (${names.join(', ')})`);
+    ok(`the record claims exactly what this machine verifies (${names.join(', ')})`);
   }
 }
 

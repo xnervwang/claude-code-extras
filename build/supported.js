@@ -4,7 +4,7 @@
 
 'use strict';
 /*
- * Which Claude Code builds this extension has been verified to patch, kept in the repository so that the answer can be
+ * Which Claude Code builds this commit has been verified to patch, kept in the repository so that the answer can be
  * looked up per commit rather than remembered.
  *
  * The question this exists to answer is "which of our versions still works with the Claude Code I am stuck on", asked
@@ -12,15 +12,38 @@
  * a build fails at patch time on the user's machine, so without a record the only way to find out is to install an old
  * Claude Code and try.
  *
- * WHAT IS RECORDED IS WHAT WAS VERIFIED, not what happened to be installed. Every rule is run against every bundle
- * found on this machine and each has to match exactly once, which is the same test the extension itself applies before
- * it writes anything - so a version reaching this file means the whole patch set really fitted that bundle. Recording
- * the installed version instead would record an accident of whoever committed.
+ * A COMMIT CLAIMS ONLY WHAT WAS VERIFIED AGAINST ITS OWN CODE. The file holds the builds present on the machine at the
+ * moment it was written, each of which had every rule run against it and had to match exactly once - the same test the
+ * extension applies before it writes anything. A build that is not installed is left out, even if an earlier commit
+ * verified it.
  *
- * THE RECORD ONLY GROWS. A build that is in the file but not on this machine is carried over untouched. Anything else
- * would make the record a property of the committing machine: upgrading Claude Code deletes the old bundle, so a
- * regenerate-from-scratch would silently drop every older build the moment one person upgraded, and the file would
- * always claim support for exactly one version.
+ * That is the correction of an earlier design here, and the failure is worth keeping because it was silent. The file used
+ * to carry builds forward: anything already recorded but missing from the machine was copied across untouched, on the
+ * reasoning that upgrading Claude Code deletes the old bundle and dropping it would lose the only record of it. The
+ * consequence was that regenerating produced identical bytes, so the check over this file always passed, and the claim
+ * drifted with nothing reporting it - commit 551f105 changed the injected script while 2.1.283 and 2.1.284 were already
+ * gone from the machine, and went on claiming to support both without either having been run against that code.
+ *
+ * The premise was also wrong. Losing the older build was never a risk: every commit that recorded one is still in git, so
+ * `git log -S<version> -- supported-versions.json` finds the commits that claimed it and `git log -p` shows what each
+ * claimed, which is exactly the lookup this file exists for. History already held what the current file was being
+ * stretched to hold.
+ *
+ * Nothing is written until the whole check suite passes - see build/update-versions.js. A claim of support is a claim
+ * that this code works against that build, which is what the suite establishes and what matching rules alone do not.
+ *
+ * WHAT KEEPS THIS HONEST is one equality the suite checks: the set recorded here equals the set this machine just
+ * verified. Too many, and the commit claims a build nothing established. Too few, and an upgrade goes unrecorded for
+ * ever - a record that is merely conservative never fails anything, so nothing would ever ask for it to be written
+ * again. Both directions therefore fail.
+ *
+ * That equality can only be checked where the bundles are, which is not CI: a runner has no Claude Code installed, and
+ * the section reports itself as skipped rather than passing. Enforcement is therefore local, and the place it reaches
+ * whoever is working here is the suite itself - the first step of finishing any change in this repository, rather than
+ * one more thing to remember.
+ *
+ * None of it belongs in the plugin shipped inside the .vsix. Those hooks run in every conversation on a user's machine,
+ * and whether this repository's record is current is of no concern to anyone who is not working in this repository.
  *
  * Which alternative shape each build needed is recorded alongside it, for the rules that have more than one. That is
  * the part with real diagnostic value: it is how one sees at a glance that 2.1.285 needed a new shape while everything
@@ -147,16 +170,17 @@ function read(file = SUPPORTED_FILE) {
 }
 
 /**
- * The record this machine's findings imply: everything already recorded, plus what was verified here.
+ * The record this machine's findings imply: what was verified here, and nothing else.
  *
- * A version verified here replaces its old entry, because this run looked at the bundle and the old entry was written
- * by a run that may have looked at a different one. A version not present here is carried over as it stands - see the
- * note at the top of this file for why that is the whole point rather than laziness.
+ * There is deliberately no note of WHICH patch each build was verified against, though a draft of this had one. It would
+ * carry no information: the recorded set is the installed set, and the check suite runs every rule against every
+ * installed bundle on every run - so each build named here was verified against the code as it stands, by the same run
+ * that is about to be committed. The one thing that has to hold is that this set and the verified set are equal, and
+ * comparing the two says that directly.
  */
-function merge(existing, verified) {
+function record(verified) {
   const out = {};
-  const all = new Set([...Object.keys(existing.claudeCode || {}), ...Object.keys(verified)]);
-  for (const v of [...all].sort(cmpVersion)) out[v] = verified[v] || existing.claudeCode[v];
+  for (const v of Object.keys(verified).sort(cmpVersion)) out[v] = verified[v];
   return { claudeCode: out };
 }
 
@@ -164,13 +188,15 @@ function merge(existing, verified) {
    saving it does not produce a diff of its own. */
 function format(record) {
   return JSON.stringify({
-    comment: 'Claude Code builds this extension has been verified to patch. Written by build/update-versions.js;'
-      + ' see build/supported.js for what "verified" means and why entries are never removed.',
+    comment: 'Claude Code builds THIS COMMIT was verified to patch, on the machine that wrote it. Written by'
+      + ' build/update-versions.js once the whole check suite passes. A build absent from that machine is left out'
+      + ' rather than carried forward, so for an older one use: git log -S<version> -- supported-versions.json.'
+      + ' See build/supported.js.',
     claudeCode: record.claudeCode,
   }, null, 2) + '\n';
 }
 
 module.exports = {
   SUPPORTED_FILE, extensionsDirs, pristine, installs, cmpVersion,
-  verifyInstall, verifyHere, read, merge, format, FOREIGN_MARKER,
+  verifyInstall, verifyHere, read, record, format, FOREIGN_MARKER,
 };

@@ -399,14 +399,22 @@ raises in the panel when it can no longer find a single message.
 
 ### Which Claude Code builds a commit supports
 
-`supported-versions.json` records the builds the patch set has been verified against, so somebody stuck on an old Claude
-Code can find the commit that still works with it instead of installing old bundles and trying. Two things make the
-record worth trusting:
+`supported-versions.json` records the builds **this commit** was verified to patch, so somebody stuck on an old Claude
+Code can find the commit that still works with it instead of installing old bundles and trying.
 
-- **What is recorded is what was verified**, not what was installed. Every rule is run against every bundle on the
-  machine and each has to match exactly once — the same test the extension applies before it writes anything.
-- **Entries are never removed.** Upgrading Claude Code deletes the old bundle, so regenerating from scratch would drop
-  every older build the moment one person upgraded, and the file would always claim support for exactly one version.
+**A commit claims only what was verified against its own code.** The file holds the builds installed on the machine that
+wrote it, each with every rule run against it and required to match exactly once. A build that is not installed is left
+out, even if an earlier commit verified it — for an older one, ask git:
+
+```bash
+git log -S2.1.283 -- supported-versions.json   # the commits that claimed that build
+```
+
+That is the correction of an earlier design, and the failure is worth knowing because it was silent. The file used to
+carry builds forward, so regenerating produced identical bytes and the check always passed while the claim drifted: a
+commit changed the injected script while two of the three recorded builds were already gone from the machine, and went on
+claiming both. The premise was wrong too — nothing was ever at risk of being lost, since every commit that recorded a
+build is still in history, which is where that lookup belongs.
 
 Where a rule has several alternative shapes, the one each build needed is recorded beside it. That is the line with
 diagnostic value: it shows at a glance that 2.1.285 needed a new shape while everything before it shares one, and a diff
@@ -414,18 +422,28 @@ against the previous commit says what upstream changed.
 
 ```bash
 node build/update-versions.js       # say what would change
-node build/update-versions.js -w    # write it
+node build/update-versions.js -w    # run the whole suite, then write the record if it passes
 git config core.hooksPath build/git-hooks   # once per clone: refuse a commit whose record is stale
 ```
 
-`test/check.js` fails when the record does not match what the machine verifies, and the pre-commit hook is that check.
-Enabling the hook is a manual step because Git never installs hooks from a repository by itself. The hook reports and
-stops rather than writing the file for you: `git commit -- <path>` takes content from the working tree, so a file the
-hook staged would be left out of the very commit it was meant to accompany — it would look like it worked and quietly
-not have.
+**Nothing is written unless the whole suite passes.** Rules matching is not the claim being made: they can each match
+once while the injected script no longer parses. The suite is therefore the gate, and the one command that writes the
+claim is the one that runs it.
 
-Checking this needs the bundles, so it happens here and not in CI — a runner has no Claude Code installed, and that
-section reports itself as skipped rather than passing.
+What keeps the file honest is a single equality that `test/check.js` checks — the recorded set equals the set this machine
+just verified — and **both directions fail**. Claiming more than was verified is the drift above. Claiming less is just
+as bad in a way that is easy to miss: a conservative record never fails anything, so after an upgrade nothing would ever
+ask for it to be written again.
+
+Checking that needs the bundles, so it cannot happen in CI — a runner has no Claude Code installed and the section
+reports itself as skipped. Enforcement is local, and the place it reaches you is the suite itself, which is the first
+step of finishing any change here. The pre-commit hook runs the same suite; enabling it is manual because Git never
+installs hooks from a repository by itself, and it reports rather than writing the file for you, since `git commit --
+<path>` takes content from the working tree and a file the hook staged would be left out of the very commit it was meant
+to accompany.
+
+None of this belongs in the plugin inside the `.vsix`. Those hooks run in every conversation on a user's machine, and
+whether this repository's record is current is of no concern to anyone not working in this repository.
 
 Two rules when changing the patchers:
 
