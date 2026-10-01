@@ -1,477 +1,83 @@
 # Claude Code Extras for VS Code
 
-Adds to the Claude Code chat panel the things it already knows but does not show: when each message happened, how long
-a reply took, how much of the context window is gone, what it cost, which sub-agent said what — plus a way to look at
-one agent at a time, a table of contents of your own messages, and a chime when a turn ends.
+Claude Code Extras adds navigation, timestamps, reply figures, sounds, and a work-plan view to the chat panel in Anthropic's official Claude Code extension. The official extension must be installed; Claude Code Extras does nothing without it.
 
-Nearly all of it appears inside the Claude Code panel rather than in an interface of its own. The one exception is the
-work plan, which is a view this extension owns, for the reason given where it is described below.
+This project is not affiliated with Anthropic. It requires VS Code 1.94 or later. Version 1.0.0 has 23 settings and 11 commands.
 
-Not affiliated with Anthropic. It works by editing files inside the installed Claude Code extension, which is why
-[How it works, and why it is safe to remove](#how-it-works-and-why-it-is-safe-to-remove) is worth reading before you
-install it.
+## Install
 
-## Installing
-
-You need VS Code and the Claude Code extension already installed; this one adds to that panel and does nothing without
-it. There is no published package — build it from this repository, which needs `node` and nothing else. No npm install,
-no bundler:
+Claude Code Extras is not published to the VS Code Marketplace. Build and install it from this repository:
 
 ```bash
 git clone git@github.com:xnervwang/claude-code-extras-for-vscode.git
 cd claude-code-extras-for-vscode
-node test/check.js                 # confirms every edit still matches the Claude Code build you have
-bash build/pack.sh                 # writes build/xnerv.claude-code-extras-<version>.vsix
+node test/check.js
+bash build/pack.sh
 code --install-extension build/xnerv.claude-code-extras-*.vsix --force
 ```
 
-Then reload the window twice: the first reload lets this extension write its changes into the Claude Code files, the
-second lets the panel load them. `Claude Code Extras: Show Status` reports what it managed to patch.
+No `npm install` is needed. The project has no runtime or build dependencies; `node` builds it.
 
-Working over SSH in a remote window installs it on the remote, which is where it has to be — the files it edits are the
-ones the remote is running.
+Reload the VS Code window twice. The first reload lets Claude Code Extras patch the installed Claude Code files. The second lets the panel load those changes. Run **Claude Code Extras: Show Status** to see what was patched.
 
-To undo everything, run `Claude Code Extras: Remove from Claude Code (restore original files)`, or just uninstall the
-extension; both put the originals back from the backups it keeps beside them.
+In a Remote SSH window, install Claude Code Extras on the remote host, where the Claude Code files it edits are located.
+
+To undo the changes, run **Claude Code Extras: Remove from Claude Code (restore original files)** or uninstall Claude Code Extras.
 
 ## What it adds
 
-**Times.** A timestamp in front of your messages, in front of every block of a reply, and on tool calls as
-`start→result`. Today's entries show the clock only; anything older carries the day and month. The times are the real
-ones from the transcript, so reopened history reads correctly instead of "now". A row whose real time cannot be read
-shows nothing rather than a guess.
+- **Timestamps:** Your messages, each reply block, and tool calls show times from the transcript. Tool calls show `start→result`. Today's entries show the clock; older entries also show the day and month. Reopened history retains its original times.
+- **Reply figures:** Each reply shows a line such as `2m10s · ctx 33% · cost $0.42 · opus-5 high`: turn duration, context-window use, running spend, and model. Closed turns retain their figures.
+- **Sub-agent tags and filters:** Rows show tags from sub-agent spawn descriptions, such as `#look up tomorrow's weather`. A footer filter switches between `All`, `Main`, and individual sub-agents. The table of contents follows the filter.
+- **Conversation navigation:** A table of contents on the right edge lists your messages by time and opening words. It has a filter box, marks compaction points, and scrolls to a message when clicked. Arrow buttons and the `,` and `.` keys step between messages. Buttons jump to the top or bottom.
+- **Context meter:** The meter stays visible, including when more than half the window is free. An outline warns at 15% remaining. Hover over it for a breakdown by category, memory file, and custom agent in the panel's tooltip.
+- **Session dates:** `11d` is Claude Code's own relative time for how long ago the session was last active; Claude Code Extras appends the date span, for example `11d · 09/05→09/16`.
+- **Chimes:** Different synthesized sounds mark a finished turn, a permission request, and a question: two rising notes, three knocks, and two falling notes. They play in the panel on your machine, including when VS Code is attached to a remote host over SSH. A footer button mutes them. No audio files ship.
+- **Work plan:** An activity-bar tree shows what the current conversation still has to do. Rows are numbered, open rows come first, and the badge counts open rows. The six states are discussing, to do, doing, parked, done, and dropped. A companion Claude Code plugin, installed on first activation, writes one plan file per conversation under `~/.claude/plugins/data/agent-work-plan-claude-code-extras/`. The extension reads those files; it does not write the plans.
+- **Session information:** A footer button shows the session ID, the conversation's starting directory, and the location and size of its transcripts. Click a value to copy it.
 
-**One line of figures per reply.** Something like `2m10s · ctx 33% · cost $0.42 · opus-5 high`: how long that turn
-took from your message to the reply, the share of the context window in use at the time, the running spend, and the
-model that actually served it. Older replies keep the figures they showed when the turn closed; only the newest reply
-keeps updating.
+## How the patch works
 
-**Sub-agent tags.** Each row carries the name of the sub-agent that produced it, taken from the spawn description
-(`#look up tomorrow's weather`), falling back to the last six characters of its identifier when no description is
-available.
+Claude Code's panel runs from `webview/index.js`; its host-side Node bundle is `extension.js`. Both files are inside the installed Claude Code extension. Claude Code Extras edits them on disk.
 
-**A view filter** in the footer toolbar, to the right of the mode selector: `All`, `Main`, or one sub-agent. Switching
-hides everything that does not belong to the chosen side, and the table of contents follows — your own messages in the
-main view, that agent's tool calls in an agent view.
+Each edit matches a code shape rather than an identifier, because identifiers in the minified bundle change between builds. An edit must match exactly once. The patched file must parse before it is written. The original is backed up beside the file, and the replacement is atomic. If a build's shape no longer matches, Claude Code Extras warns and leaves the file unchanged rather than patching on a guess. Removing or uninstalling Claude Code Extras restores the originals from those backups.
 
-**A table of contents** of your own messages, opened by the handle on the right edge and closed by clicking outside
-it. Each row shows the time and the opening words; hovering shows more, clicking scrolls there. A filter box sits at
-the top, and compaction points appear as labelled rules across the list. The arrows above and below the handle step
-between messages, as do the `,` and `.` keys when the caret is not in a text field.
+The extension's additions read information the panel already has; they do not change how the conversation works. They follow three rules, each adopted after a failure: never place their own nodes inside nodes the panel owns; never run before the panel has painted; and never let per-refresh work grow with conversation length.
 
-**A context meter that stays put.** Claude Code hides its usage meter while more than half the window is still free;
-here it is always visible, and it gains a warning outline once the remaining share drops to 15%. Its artwork has only
-three states — half, three quarters, nearly full — because it was never shown below half, so anything under 62.5% used
-would otherwise draw the half-full arc on an empty conversation; that arc is trimmed in proportion to the real figure,
-giving a continuous reading from empty up to half. The meter still stays hidden until a real context window size has
-arrived, since the percentage means nothing without one. Hovering it leaves the
-panel's own tooltip to give the summary — repeating that in a bubble of our own only stacked two nearly identical
-popups — and appends a line to it saying the breakdown is on its way. Once the command-line side has computed it, our
-panel replaces that tooltip with the full breakdown by category, memory file and custom agent. The request is never
-polled: it fires 200 ms after the pointer settles, and the answer is reused only while the used-token count is
-unchanged and less than 20 seconds old. If it cannot be had, nothing of ours appears and the tooltip says so.
-
-**Dates on the session list.** Each session shows how long it ran and the range of dates it covers, as
-`11d · 09/05→09/16`. The year appears only when it is not the current one, and only once per range.
-
-**Three chimes, told apart by shape** rather than by volume, so the ear can name them without looking: a turn
-finished (two notes rising), Claude is waiting for permission (three short knocks), Claude has asked something (two
-notes falling). Waiting for permission is the one that matters most — nothing moves again until you act, and the panel
-gives no sound of its own for it. The states come from the session's own signals: its filtered list of pending
-permission requests, its list of dialog requests, and the reported "waiting for input" flag as a fallback.
-
-The tones are synthesised, so no audio files are shipped, and they play **in the page** — which renders on your own
-machine — so they are heard there even when the editor is attached to a remote host over SSH. The note button in the
-footer toolbar mutes all three, and that choice survives reloads.
-
-**A work plan**, in a view of its own behind the list-and-burst icon in the activity bar: what the conversation you are
-in still has to do, as a real tree with a state on every row — under discussion, to do, being done now, parked,
-done, dropped — carried by the row's icon rather than written out beside it. Several rows can be under way at once,
-since one turn can have work going in more than one place, and which of them it is goes in the row's note. A child is something that has to be finished
-before its parent can be, so a digression discovered while doing
-something sits under the thing it interrupted and the way back is visible. The activity bar icon carries a count of
-what is still open, which is the part that works without anything being opened; it is absent rather than zero when
-nothing is waiting.
-
-Each row carries a number - 1, 2, then 2.1 beneath them - so a row can be named in conversation instead of having
-its title quoted back. The number is the row's place in the file rather than its place on screen, so finishing
-something leaves a gap instead of moving every number after it, and one quoted an hour ago still points where it did.
-
-Rows are drawn unfinished first and newest first within that, since rows are only appended and a plan worth keeping
-is longer than the view is tall: in file order the part still being argued about sits below a screenful of settled work.
-
-A plan belongs to the conversation you are in, and only that one. A sub-agent started in-process is not reached by any
-of this, so what it did is recorded by the session that dispatched it; a detached agent has a session of its own, is
-handed one task and never clears the threshold for being offered a plan, so it is left alone. Neither costs a
-conversation anything, and the measurements behind both are in the header of
-`claude-plugin/agent-work-plan/hooks/nudge-work-plan.py`.
-
-This is the one part of the extension with an interface of its own rather than an addition to the panel, and the
-reason is where the plan is kept. It is a file on disk, and a panel webview belongs to Claude Code: it has no file
-system of its own and a fetch from it is refused, so anything shown in there has to arrive through a file the panel
-already loads. That channel exists and carries the settings - a stylesheet the panel reloads, read back as custom
-properties - but a tree that changes would have to be serialised, encoded and decoded on the way through, and refreshed
-by polling a revision number. Owning a view instead means reading the file, with the folding, the icons and the badge
-coming from the editor. The table of contents could be a panel overlay for the opposite reason: what it lists is
-already in the page, so it needs nothing from outside it.
-
-Beside the title a row carries its time and nothing else: when it was opened, to the minute, and for a closed one the
-range up to when it ended — `09/28 21:48 → 23:40`. A day's worth of rows all showing one date says nothing about their
-order, which is the only reason a time is on the row at all. The format is the one the session list already uses: month
-before day, the year only when it is not the current one, and the date not repeated on the far end of a range that begins
-and ends on one day. Everything else a row knows — its note, its place in the tree, how many children it must finish
-first, its description — is in the hover and in the dialog it opens, so a long note cannot push the title out of a narrow
-view.
-
-The view follows the conversation you are looking at, and there is no guesswork in that: the Claude Code host already
-tracks which session is active, and one of the two edits this extension makes to that bundle takes the id where it is
-already being written. It is an id rather than a title, so nothing has to be matched. Where the host has said nothing —
-before the patch is in, or on a build whose shape did not match — every plan is listed instead, which is honest where
-picking one of them would not be. Two conversations side by side follow the focused one, so the tree changes when you
-click from one into the other.
-
-The plans are written by a companion Claude Code plugin, `agent-work-plan`, which is carried inside this extension and
-installed on first activation — so there is one thing to install rather than two, and nothing is fetched over the
-network. It keeps one file per conversation, named by its session id, in the data directory the platform gives it:
-`~/.claude/plugins/data/agent-work-plan-claude-code-extras/`. **Nothing on the extension side writes those files** — it
-reads them, and reaches the file from the title bar button or a row's context menu, which is how a plan gets corrected
-by hand. A file that exists and cannot be parsed says so on its own row rather than showing an empty plan, since an
-empty plan and no work left look the same.
-
-This is the only part with an interface of its own, and that is not a preference. A view inside the Claude Code panel
-would have to be smuggled in: the panel is a webview owned by Claude Code, with no file system and a policy that
-refuses a fetch, so the only way text reaches it is hidden inside a file it already loads — a stylesheet or an image.
-Owning the view removes the trick entirely, and the cost is only that it sits beside the conversation rather than
-within it.
-
-## How it works, and why it is safe to remove
-
-Claude Code's panel is an ordinary web page (`webview/index.js`) and its host side is an ordinary Node bundle
-(`extension.js`), both inside the installed Claude Code extension. This extension edits those two files at rest.
-Each of the two targets is handled by its own adapter under `src/`, with its own marker and its own backup, so a
-failure on one cannot disturb the other.
-
-Every write follows the same rules:
-
-- Each edit matches a code **shape**, not an identifier, because identifiers in a minified bundle change with every
-  build. It must match **exactly once**, or nothing at all is written.
-- The result must parse before it is written.
-- The untouched original is saved beside the file first, and the replacement is atomic.
-- A Claude Code build whose shape no longer matches is reported in a warning and left alone — never patched on a guess.
-- Removing or uninstalling this extension puts the originals back. The uninstall hook and the extension entry point
-  read the same adapter list from `src/adapters.js`, so a target cannot be wired into one and forgotten in the other.
-
-Turning the marks off and changing the message color do not need a reload: they live in a stylesheet written next to
-the panel, which the page reloads when a revision number changes. Only installing or upgrading the patch itself asks
-for one reload.
-
-The companion plugin is registered the same way — once, quietly, and only on this machine. On first activation the
-plugin is copied into this extension's global storage and registered with two commands against the `claude` binary that
-ships inside the Claude Code extension: `plugin marketplace add` and `plugin install`. Global storage rather than the
-extension's own folder, because a directory marketplace loads a plugin in place and the extension's folder carries a
-version number that changes on every upgrade. The registration is recorded and **never asserted again**, so uninstalling
-the plugin by hand stays uninstalled; only the copied files are refreshed, when this extension's version changes. If any
-of it fails, the work plan view says which step failed and what it reported, and offers to try again — an install that
-runs by itself can fail by itself, and a quietly missing feature reads as a broken one.
-
-A row's description is limited to twelve lines, and the view says so where it cuts. The limit is not about fitting the
-dialog: a description is what the next person needs in order to pick the task up, and given room what gets written
-instead is the story of how the task got here — every turn adding its own reasoning until the plan is a set of chronicles
-nobody reads. So there is deliberately no roomier view to escape into. Whatever was cut stays in the file.
-
-Uninstalling this extension unregisters the plugin too. **Unregistering a plugin makes Claude Code delete its data
-directory**, which is where the plans are, so they are copied to `~/.claude/agent-work-plan-plans-<timestamp>/` first,
-with a note in that folder saying what they are and how to put them back. Nothing else reads it; it is yours to keep or
-delete.
-
-There is one failure this cannot prevent: a Claude Code update can keep every patched shape intact yet still rename
-the classes the in-page script looks for. That would leave a patch that applied cleanly and does nothing. So the
-script checks itself — when the panel clearly holds transcript messages but neither message selector finds any, an
-orange exclamation mark appears in the top right corner with an explanation.
-
-**The session id, the directory the conversation started in, where its transcripts are kept, and their size**, behind an
-information button at the left of the footer toolbar. Clicking any of them copies it — the id is what resumes this
-conversation elsewhere, and not something to retype.
-
-Three of those are values the panel is handed. The transcript directory is derived, because the panel is never told it:
-the host groups every conversation started in one directory together, under a name made by replacing each character of
-that directory that is not a letter or a digit with a hyphen. It is worth showing precisely because that substitution
-cannot be run in the head and cannot be read back — a dot collapses the same way a slash does, and anything outside
-ASCII collapses too, so a path with non-Latin names arrives as a row of hyphens with nothing left to recover it from.
-
-The directory shown is the one the conversation *started* in, which is fixed for its whole life. It is not the working
-directory of the moment: commands move that around, and the transcript records wherever each one ran, so a single
-conversation's records can name a dozen different directories while every one of them lands in the same place.
-
-## What this extension will not do
-
-Constraints, not preferences. Each one has been paid for once.
-
-**It will not change how the conversation works.** Every addition reads what the panel already has. None of them asks
-the user — or the model — to work differently so that a display feature has something to show. A feature whose input
-has to be manufactured is not worth having: the cost lands on every turn, the benefit on one panel. Concretely: images
-already carried by a message are worth drawing, but nothing here is a reason to read an image that would not have been
-read anyway.
-
-**It will not put a node of ours inside one the panel owns.** Read their position, add siblings of our own, set
-attributes and inline styles on rows — but nothing goes inside. When the panel's own rendering collides with such a
-node it throws, and from then on the page stops processing clicks and keys altogether: a dead stop button and a dead
-Escape, with no error visible anywhere the user looks.
-
-**It will not let the sweep cost grow with the conversation.** The sweep runs every 250 ms across every message on the
-page, and the panel keeps every loaded message in the DOM. Per-row work is cached per element and keyed weakly, and
-rows that can no longer change are handed their marks once and then left alone.
-
-**It will not do anything before the panel has painted.** This script is appended to the panel's own bundle, so it runs
-while the panel is still laying itself out — whatever it does there is work the panel must get through before it can
-show anything at all. Everything that reads or watches the page therefore waits for the browser to report itself idle,
-and no resource this script loads may block painting.
-
-Four things once did not, and together they left every panel blank for a remote round trip on every single open — an
-empty conversation as much as a long one, because none of it depended on the conversation:
-
-- the settings stylesheet went in as a plain `<link rel="stylesheet">`, which stops the browser painting until the file
-  arrives, and on a remote host that file is a round trip away;
-- its address carried the clock, so every load was a new address and no panel could reuse a file it already had;
-- the on/off switch was read with `getComputedStyle` four times a second — a synchronous style resolution, which the
-  browser blocks on while any stylesheet is in flight;
-- the mutation observer and the first sweep both started the moment the script ran.
-
-It was found by removing the extension: opening became instant, including long conversations whose *content* still took
-a while to load. **That split — window instant, content slow — is the signature.** It says the cost was in startup, and
-that nothing about it scaled with the conversation. Startup now prints one line to the panel's devtools console (script
-start, work start, first sweep duration and element count, and the browser's own timing for both files), because a page
-script has no file system and the channel from the extension runs one way, so that console is the only place such a
-question can be answered from.
-
-**It will not patch a build it does not recognise.** Every edit matches its expected shape exactly once or nothing is
-written at all. A partial patch is worse than none, and a patch applied on a guess is worse still.
+Claude Code Extras has been verified against Claude Code **2.1.285** and **2.1.286**. Compatibility with other builds is unknown. `supported-versions.json` records which builds were verified against each commit's own code. A scheduled job checks the newest published Claude Code build four times a day and opens an issue if an edit stops matching. The 181 automated checks parse the injected script and run every edit against an unpatched Claude Code bundle.
 
 ## Commands and settings
 
-| Command | |
-|---|---|
-| `Claude Code Extras: Settings` | every setting below, in the editor's own settings editor |
-| `Claude Code Extras: Toggle On/Off` | also on the status bar item |
-| `Claude Code Extras: Turn On` / `Turn Off` | |
-| `Claude Code Extras: Remove from Claude Code` | restores the original files and stops patching |
-| `Claude Code Extras: Show Status` | per-install patch state |
-| `Claude Code Extras: Refresh Work Plan` | also a button in the work plan view |
-| `Claude Code Extras: Open the Work Plan File` | the file behind the view, to correct it by hand |
-| `Claude Code Extras: Install the Work Plan Plugin for Claude Code` | retries a registration that failed |
-| `Claude Code Extras: Show How Long Opening a Panel Took` | the recorded waits, summarised by version |
+Open the Command Palette to run these commands:
 
-| Setting | Default | |
-|---|---|---|
-| `claudeCodeExtras.enabled` | `true` | live |
-| `claudeCodeExtras.showStatusBar` | `true` | |
-| `claudeCodeExtras.userMessageColor` | `""` | a CSS color for your own messages, live |
-| `claudeCodeExtras.userMessageEdge` | `true` | a bar down the left of your own messages, live |
-| `claudeCodeExtras.recordOpenLatency` | `true` | off reads nothing and writes nothing |
-| `claudeCodeExtras.latencyThresholdSeconds` | `10` | at or above this a wait is recorded; below it, only counted |
-| `claudeCodeExtras.workPlanOfferMinTurns` | `3` | how often you have to have spoken before a conversation with no plan is told it could keep one |
-| `claudeCodeExtras.workPlanOfferMinToolCalls` | `25` | and how much that turn has to have cost |
-| `claudeCodeExtras.show.*` | `true` | one per addition, listed below |
-| `claudeCodeExtras.workPlan` | `true` | off hides the view and its icon, stops the rows reaching the model, and refuses a write to a plan |
+- `Claude Code Extras: Settings` — open VS Code settings filtered to this extension.
+- `Claude Code Extras: Toggle On/Off` — switch the additions on or off.
+- `Claude Code Extras: Turn On` — show the additions.
+- `Claude Code Extras: Turn Off` — hide the additions.
+- `Claude Code Extras: Remove from Claude Code (restore original files)` — restore the original Claude Code files.
+- `Claude Code Extras: Show Status` — check the patch status.
+- `Claude Code Extras: Refresh Work Plan` — refresh the work plan.
+- `Claude Code Extras: Open the Work Plan File` — open the current plan file.
+- `Claude Code Extras: Install the Work Plan Plugin for Claude Code` — register the companion plugin.
+- `Claude Code Extras: Show How Long Opening a Panel Took` — read recorded panel-opening times.
+- `Claude Code Extras: Stop Loading the Work Plan Plugin` — remove the plugin from Claude Code's settings.
 
-The last two reach the plugin's hooks through a small file the extension writes for them - `config.json`,
-beside the plans - because a hook is its own process and cannot read editor settings. The plugin carries the
-same defaults, so it behaves the same way with this extension absent.
+Settings let you choose which additions appear: message times and reply figures, sub-agent tags, navigation and footer controls, sounds, and session details. You can also change how your own messages look with `claudeCodeExtras.userMessageColor` and `claudeCodeExtras.userMessageEdge`. The work plan, its offer thresholds, and panel-opening latency recording have their own settings. Use **Claude Code Extras: Settings** to see all options.
 
-Turning the work plan off is not cosmetic: the view and its activity bar icon go, nothing is put in front of the
-model each turn, the end of a turn says nothing, and a write to a plan file is refused - otherwise a plan would go on
-being kept where nobody can see it, at the full cost. What remains is the skill's own description, around a hundred
-tokens a session, because Claude Code still has the plugin registered. **Claude Code Extras: Stop Loading the Work
-Plan Plugin** removes that as well. It is a command rather than part of the setting because it edits Claude Code's
-own configuration, and it disables rather than uninstalls: uninstalling takes the plugin's data directory with it,
-and that is where every conversation's plan lives.
+Most settings apply live, without a reload. Installing or upgrading the patch itself needs a reload. `claudeCodeExtras.enabled` is also the **Extras: On/Off** status bar setting. Turning it off hides the additions but leaves the patch in place. To restore the original files, use **Claude Code Extras: Remove from Claude Code (restore original files)**.
 
-Each addition has its own switch, `claudeCodeExtras.show.<name>`, and all of them start on:
-`timestamps`, `replyDuration`, `contextShare`, `cost`, `modelName`, `subAgentTags`, `toc`, `contextMeter`, `chime`, `sessionDates`, `footerInfo`, `footerPlainView`, `footerViewFilter`, `footerMute`.
-They take effect without a reload, and each stops the work rather than hiding the result - a figure the sweep
-still computes for every row on every refresh costs the same whether or not it is drawn. What no switch can stop
-is the sweep itself, which still walks the rows for whatever is left on; `claudeCodeExtras.enabled` is what turns
-that off.
+Turning off `claudeCodeExtras.workPlan` hides the plan view and stops plan updates, but the registered plugin's skill description still loads in Claude Code. Use **Claude Code Extras: Stop Loading the Work Plan Plugin** to stop that too.
 
 ## Known limits
 
-- **A sub-agent view of an older session is often empty.** Restoring a session evicts early messages from the panel,
-  and sub-agent transcripts are cleaned off disk after about three days.
-- **Rows the panel builds as bare metadata carry no ownership**, so a few of them still show through in an agent view.
-- **The dollar figure is an estimate, not a bill.** Claude Code says as much in the description of its own
-  `modelPricing` setting; it prices at list rates by default, which need not match what an account is actually charged.
-- **The meter's percentage and the panel's percentage are measured differently.** The meter counts down to
-  auto-compaction (window minus reserved output minus 13000), while the detail panel divides by the whole window.
-  The two numbers disagree by design.
-- **The meter reads nearly empty on a conversation just opened, while the breakdown reads it correctly.** They do not
-  share a source. The breakdown is computed on demand by the command-line side, so it is right the moment it is asked
-  for. The meter — and the panel's own `N% of context remaining` tooltip, which is `100 −` that same figure — reads a
-  counter the panel keeps, fed from exactly one place: a main-thread reply arriving with usage on it. So a sub-agent's
-  tokens never move it, the update being skipped for anything that carries a parent tool-use id; and opening or
-  resuming a conversation zeroes that counter while the replayed history does not fill it back in, leaving the meter
-  claiming an almost empty window until the next live reply lands.
+A Claude Code update may preserve every patched code shape but rename CSS classes used by the in-page script. In that case, the patch can apply without its panel features working. The script detects this and displays an orange exclamation mark in the panel's top-right corner.
 
-  The way anyone actually meets this is a laptop going to sleep: the editor loses its connection to the remote server,
-  the page is reloaded on reconnect, and the counter starts from zero on a conversation that is in fact nearly full. So
-  the figure is least trustworthy exactly when it would be most useful — coming back to a long conversation after being
-  away, which is also when a careless next message is most likely to be the one that overflows. Measured on one such
-  conversation: 820,852 tokens in
-  use according to both the transcript and the breakdown, with the tooltip claiming 100% remaining — and the compaction
-  boundary, which does legitimately zero the counter, arriving two minutes later, so that reset was not the cause.
-  Falling back on the breakdown would not repair it, since the breakdown is only fetched while the pointer rests on the
-  meter and someone who never hovers never produces one. A real fix has to read usage off the messages the panel
-  already holds, which is the next limit.
-- **The context share and the spend drop out of the per-reply line together, and for the same reason.** They are gated
-  on two different fields, but only one thing writes either: the message that closes a turn. Everything else on that
-  line — the duration, the model, the effort — comes from elsewhere, which is what makes their absence readable: a line
-  still showing a model but no `ctx` and no `cost` says those two fields are zero rather than that the session is
-  unreadable. Of the three places the panel sets a context window, one is the initial zero and one merely carries
-  forward whatever was already there, so once it is zero only a turn-closing message lifts it again. That branch is
-  guarded on a reported spend being present, so a build that does not report spend leaves the window size unset too —
-  one failure, two missing figures. Measured on a conversation showing neither: 2158 replies on record, none of them
-  carrying a reported spend and none of the turn-closing shape the panel looks for, while 21 records of a newer
-  cost-reporting shape were present that the panel has no code for at all. The transcript is not the channel the panel
-  reads, so that count suggests rather than proves what reached it; the spend being unset is the firmer half, since it
-  is taken unconditionally when such a message arrives.
-  **It clears itself.** Both figures returned together, unprompted, once a turn-closing message finally arrived — which
-  is what a single writer behind a single guard predicts, and it rules out the tempting reading of that transcript
-  count, that the command-line side had moved to a shape the panel cannot read. So this is a gap after a panel is
-  reopened, not a defect to chase: while it lasts the hover breakdown still reports context truthfully, being a
-  different path entirely.
-- **Per-turn token deltas are not shown.** The message object carries no usage figures, so that would need another
-  edit and a table that has to be pruned; not worth it for the value.
+Uninstalling Claude Code Extras unregisters its companion plugin. Claude Code deletes a plugin's data directory when it is unregistered. Before that happens, the plans are copied to `~/.claude/agent-work-plan-plans-<timestamp>/`.
 
-## Working on it
+## Contributing
 
-### How the code is laid out
-
-| | |
-|---|---|
-| `extension.js` | activation, settings, commands, the status bar toggle |
-| `src/adapters.js` | the list of patch targets, read by both the entry point and the uninstall hook |
-| `src/webview.js` | the panel patch — its edits, the live stylesheet, and assembling the in-page script |
-| `src/host.js` | the extension-host patch — one edit |
-| `src/page/*.js` | the in-page script, one subject per file, concatenated in file-name order |
-| `src/workplan.js` | reads the plan files; the whole contract between the two halves is in its header |
-| `src/workplan-view.js` | the work plan tree view |
-| `src/plugin-install.js` | registers the companion Claude Code plugin, and unregisters it on uninstall |
-| `claude-plugin/` | that plugin: the skill that maintains a plan and the three hooks that keep it honest |
-| `test/check.js` | parses everything, and verifies every edit against a pristine bundle |
-| `test/against-latest.js` | the same check against whatever the marketplace is shipping |
-| `build/pack.sh` | produces the `.vsix`, without npm |
-| `build/supported.js` | works out which installed Claude Code builds the rules fit; its header says what is recorded |
-| `build/update-versions.js` | the only thing that writes `supported-versions.json` |
-| `build/git-hooks/pre-commit` | refuses a commit whose record of verified builds is stale |
-| `supported-versions.json` | the record itself — which Claude Code builds this commit supports |
-
-The in-page script is kept as ordinary `.js` files rather than one big string for a reason worth knowing before
-touching it: as a template literal every backslash needed doubling, and getting that wrong failed only at runtime —
-`/\s+/` evaluated to `/s+/` and replaced the letter *s* in every label it passed through. `src/page/README.md` has the
-rules for that folder.
-
-
-```bash
-node test/check.js          # parse everything, including the injected script, and verify every edit still matches once
-bash build/pack.sh          # produce build/<publisher>.<name>-<version>.vsix (no npm needed)
-```
-
-`test/check.js` covers the two things that break silently. It parses the injected script, which is a string inside
-`src/webview.js` and therefore invisible to `node --check` on the file itself; and it runs every edit against a
-pristine Claude Code bundle, because a match count can only be trusted on an unpatched file.
-
-### Watching for upstream changes
-
-Claude Code ships often — twice in one day has happened — and a release that reshapes any patched code costs the panel
-every addition at once. On a machine that is only noticed *after* the update is installed, because the extension then
-refuses to patch a build it does not recognise.
-
-```bash
-node test/against-latest.js    # fetch whatever the marketplace is shipping and run every edit against it
-```
-
-That takes a couple of seconds, and `.github/workflows/upstream-check.yml` runs it four times a day, files one issue
-per build when an edit stops matching, and puts the report in the run summary either way. So the news arrives before
-the update does.
-
-Neither catches the other kind of break: the in-page script finds elements by class name and test id, and those can
-change while every edit still matches exactly once. That one surfaces at runtime instead, as the marker the script
-raises in the panel when it can no longer find a single message.
-
-### Which Claude Code builds a commit supports
-
-`supported-versions.json` records the builds **this commit** was verified to patch, so somebody stuck on an old Claude
-Code can find the commit that still works with it instead of installing old bundles and trying.
-
-**A commit claims only what was verified against its own code.** The file holds the builds installed on the machine that
-wrote it, each with every rule run against it and required to match exactly once. A build that is not installed is left
-out, even if an earlier commit verified it — for an older one, ask git:
-
-```bash
-git log -S2.1.283 -- supported-versions.json   # the commits that claimed that build
-```
-
-That is the correction of an earlier design, and the failure is worth knowing because it was silent. The file used to
-carry builds forward, so regenerating produced identical bytes and the check always passed while the claim drifted: a
-commit changed the injected script while two of the three recorded builds were already gone from the machine, and went on
-claiming both. The premise was wrong too — nothing was ever at risk of being lost, since every commit that recorded a
-build is still in history, which is where that lookup belongs.
-
-Where a rule has several alternative shapes, the one each build needed is recorded beside it. That is the line with
-diagnostic value: it shows at a glance that 2.1.285 needed a new shape while everything before it shares one, and a diff
-against the previous commit says what upstream changed.
-
-```bash
-node build/update-versions.js       # say what would change
-node build/update-versions.js -w    # run the whole suite, then write the record if it passes
-git config core.hooksPath build/git-hooks   # once per clone: refuse a commit whose record is stale
-```
-
-**Nothing is written unless the whole suite passes.** Rules matching is not the claim being made: they can each match
-once while the injected script no longer parses. The suite is therefore the gate, and the one command that writes the
-claim is the one that runs it.
-
-What keeps the file honest is a single equality that `test/check.js` checks — the recorded set equals the set this machine
-just verified — and **both directions fail**. Claiming more than was verified is the drift above. Claiming less is just
-as bad in a way that is easy to miss: a conservative record never fails anything, so after an upgrade nothing would ever
-ask for it to be written again.
-
-Checking that needs the bundles, so it cannot happen in CI — a runner has no Claude Code installed and the section
-reports itself as skipped. Enforcement is local, and the place it reaches you is the suite itself, which is the first
-step of finishing any change here. The pre-commit hook runs the same suite; enabling it is manual because Git never
-installs hooks from a repository by itself, and it reports rather than writing the file for you, since `git commit --
-<path>` takes content from the working tree and a file the hook staged would be left out of the very commit it was meant
-to accompany.
-
-None of this belongs in the plugin inside the `.vsix`. Those hooks run in every conversation on a user's machine, and
-whether this repository's record is current is of no concern to anyone not working in this repository.
-
-Two rules when changing the patchers:
-
-- **Nothing to bump for the panel; raise `VERSION` by hand for the other two.** The panel's marker carries a digest of
-  the injected script and the bundle edits, so a patched file whose contents no longer match this tree is recognised as
-  outdated on its own, and its `VERSION` is read by nobody but a human. The host and icon patches mark themselves with a
-  plain number instead — `/* CLAUDE-CODE-EXTRAS-HOST v4 */`, `<!-- CLAUDE-CODE-EXTRAS-LOGO v1 -->` — so changing an edit
-  in `src/host.js` or `src/logo.js` without raising it leaves an already-patched file recognised as current and never
-  rewritten. That is silent in the worst way: packaging, installing and reloading all report success while the old code
-  keeps running, so the symptom is an edit with no effect anywhere and no step that complains. The digest exists because
-  this used to be true of the panel as well.
-- **A changed hook needs one reload, and nothing else.** The hooks under `claude-plugin/` run from the copy in global
-  storage, which is the path registered with Claude Code, and this extension restages that copy when the plugin tree's
-  digest changes — so reloading the window is the whole of it. There is also a directory under
-  `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, named after the version in `plugin.json`, which looks
-  like it would have to be invalidated by hand every time a hook changes and does not: with the two copies deliberately
-  made to differ, the reminder that fired carried the text of the global-storage copy. So nothing has to be bumped for a
-  hook edit.
-- **Reload twice** to see a change: once for this extension to rewrite the file, once for the panel to load it. The
-  activity bar icon is the exception — a reload never refreshes it, the editor has to be restarted, and several reloads
-  showing the old drawing once sent an afternoon chasing a design problem that had already been fixed.
-
-And one performance rule that has been broken before: the loop in the injected script that walks up the React fiber
-tree runs for every visible row on every refresh, so it must keep its early exit (`!out.message`). Making it search
-for more than one thing at a time measured eight to ten times slower. `test/check.js` asserts the early exit is
-still there.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout, how to run the checks, and how the record of verified Claude Code builds works.
 
 ## License
 
-BSD 3-Clause. The full text is in [LICENSE](LICENSE), and every source file carries the notice at its top so a file
-that travels on its own still says what it is under.
+BSD 3-Clause.

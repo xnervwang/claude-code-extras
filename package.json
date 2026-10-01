@@ -1,7 +1,7 @@
 {
   "name": "claude-code-extras",
   "displayName": "Claude Code Extras for VS Code",
-  "description": "Interface additions for the Claude Code chat panel in VS Code: real timestamps, per-reply duration, context share and estimated spend, sub-agent tags, a view filter for main thread vs each sub-agent, a table of contents of your own messages, and a chime when a turn finishes.",
+  "description": "Adds timestamps, reply figures, navigation, context details, chimes, and work plans to the official Claude Code chat panel. Requires the Claude Code extension and patches its installed files. Not affiliated with Anthropic.",
   "version": "1.0.0",
   "publisher": "xnerv",
   "license": "BSD-3-Clause",
