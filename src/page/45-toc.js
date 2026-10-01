@@ -11,7 +11,12 @@
   var HANDLE = null, PANEL = null, PLIST = null, PFILTER = null, TIP = null, SIG = '';
   var outsideWired = false, MUTE = null, RAILBOX = null, PROMPT_EL = [];
   var ROWS = [];  // {row, hay} for the filter box
-  var PANEL_W = 280, PANEL_GAP = 22;
+  /* The rail's sizes, and the gap the open list keeps from the right edge so that it never covers the rail. The glyph
+     colour is the one the bar beside your own messages uses, so the two read as one feature and follow the theme
+     together; only the glyphs take it, the buttons' background and border stay neutral. */
+  var RAIL_W = 26, RAIL_BTN_H = 24, RAIL_HANDLE_H = 60;
+  var RAIL_INK = 'var(--vscode-focusBorder, var(--vscode-textLink-foreground))';
+  var PANEL_W = 280, PANEL_GAP = RAIL_W + 2;
 
   var ensureTip = function(){
     if (TIP && TIP.isConnected) return;
@@ -191,14 +196,14 @@
     var b = document.createElement('div');
     b.title = label;
     var s = b.style;
-    s.width = '20px'; s.height = '18px';
+    s.width = RAIL_W + 'px'; s.height = RAIL_BTN_H + 'px';
     s.display = 'flex'; s.alignItems = 'center'; s.justifyContent = 'center';
-    s.cursor = 'pointer'; s.opacity = '0.55'; s.fontSize = '10px';
+    s.cursor = 'pointer'; s.opacity = '0.55'; s.fontSize = '13px';
     s.userSelect = 'none'; s.borderRadius = '3px 0 0 3px';
     s.background = 'var(--vscode-editorWidget-background, rgba(40,40,40,0.92))';
     s.border = '1px solid var(--vscode-widget-border, rgba(255,255,255,0.14))';
     s.borderRight = 'none';
-    s.color = 'var(--vscode-foreground, #ccc)';
+    s.color = RAIL_INK;
     b.addEventListener('mouseenter', function(){ s.opacity = '1'; });
     b.addEventListener('mouseleave', function(){ s.opacity = '0.55'; });
     b.addEventListener('click', function(ev){ ev.stopPropagation(); onClick(); });
@@ -219,7 +224,7 @@
     var NS = 'http://www.w3.org/2000/svg';
     var svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 10 10');
-    svg.style.width = '10px'; svg.style.height = '10px';
+    svg.style.width = '13px'; svg.style.height = '13px';
     var bar = document.createElementNS(NS, 'path');
     bar.setAttribute('d', toEnd ? 'M1.5 8.5h7' : 'M1.5 1.5h7');
     bar.setAttribute('stroke', 'currentColor');
@@ -268,15 +273,15 @@
     HANDLE = document.createElement('div');
     HANDLE.id = 'cce-toc-handle';
     var h = HANDLE.style;
-    h.width = '20px'; h.height = '48px';
+    h.width = RAIL_W + 'px'; h.height = RAIL_HANDLE_H + 'px';
     h.display = 'flex'; h.alignItems = 'center'; h.justifyContent = 'center';
     h.cursor = 'pointer'; h.opacity = '0.6'; h.transition = 'opacity 120ms';
     h.borderRadius = '4px 0 0 4px';
     h.background = 'var(--vscode-editorWidget-background, rgba(40,40,40,0.92))';
     h.border = '1px solid var(--vscode-widget-border, rgba(255,255,255,0.14))';
     h.borderRight = 'none';
-    h.color = 'var(--vscode-foreground, #ccc)';
-    h.fontSize = '14px'; h.userSelect = 'none';
+    h.color = RAIL_INK;
+    h.fontSize = '18px'; h.userSelect = 'none';
     HANDLE.textContent = ARROW_SHUT;
     setLabel(HANDLE, 'Your messages in this conversation - click one to jump to it');
     HANDLE.addEventListener('click', function(ev){
