@@ -15,7 +15,10 @@
      colour is the one the bar beside your own messages uses, so the two read as one feature and follow the theme
      together; only the glyphs take it, the buttons' background and border stay neutral. */
   var RAIL_W = 26, RAIL_BTN_H = 24, RAIL_HANDLE_H = 60;
-  var RAIL_INK = 'var(--vscode-focusBorder, var(--vscode-textLink-foreground))';
+  /* The glyph colour. `textLink-activeForeground` is the brighter of the theme's two link colours - the one meant to
+     stand out against the editor's background - with the focus border, which the bar beside your own messages uses,
+     as the fallback. The two are the same hue; this is the lighter of them, which is what a dark background needs. */
+  var RAIL_INK = 'var(--vscode-textLink-activeForeground, var(--vscode-focusBorder))';
   var PANEL_W = 280, PANEL_GAP = RAIL_W + 2;
 
   var ensureTip = function(){
@@ -58,7 +61,7 @@
   };
   var openPanel = function(){
     if (PANEL) PANEL.style.display = 'block';
-    if (HANDLE) { HANDLE.style.opacity = '1'; HANDLE.textContent = ARROW_OPEN; }
+    if (HANDLE) { HANDLE.textContent = ARROW_OPEN; }
     fitPanel();
     // The caret is deliberately left where it was: taking it for the filter box would mean Escape goes to that box
     // instead of to the panel, and Escape is how a running turn is stopped. Click the box to type in it.
@@ -67,7 +70,8 @@
   };
   var closePanel = function(){
     if (PANEL) PANEL.style.display = 'none';
-    if (HANDLE) { HANDLE.style.opacity = '0.6'; HANDLE.textContent = ARROW_SHUT; }
+    // Open or shut is said by which way the chevron points; dimming it as well only made it hard to see.
+    if (HANDLE) { HANDLE.textContent = ARROW_SHUT; }
     hideTip();
   };
 
@@ -198,14 +202,17 @@
     var s = b.style;
     s.width = RAIL_W + 'px'; s.height = RAIL_BTN_H + 'px';
     s.display = 'flex'; s.alignItems = 'center'; s.justifyContent = 'center';
-    s.cursor = 'pointer'; s.opacity = '0.55'; s.fontSize = '13px';
+    /* Full opacity. Held at 0.55 the glyph was dimmed before it ever reached the screen, so no choice of colour could
+       make it carry; the hover now shows in the background instead, which is what hover is for. */
+    s.cursor = 'pointer'; s.opacity = '1'; s.fontSize = '13px';
     s.userSelect = 'none'; s.borderRadius = '3px 0 0 3px';
     s.background = 'var(--vscode-editorWidget-background, rgba(40,40,40,0.92))';
     s.border = '1px solid var(--vscode-widget-border, rgba(255,255,255,0.14))';
     s.borderRight = 'none';
     s.color = RAIL_INK;
-    b.addEventListener('mouseenter', function(){ s.opacity = '1'; });
-    b.addEventListener('mouseleave', function(){ s.opacity = '0.55'; });
+    var plain = s.background, lit = 'var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.12))';
+    b.addEventListener('mouseenter', function(){ s.background = lit; });
+    b.addEventListener('mouseleave', function(){ s.background = plain; });
     b.addEventListener('click', function(ev){ ev.stopPropagation(); onClick(); });
     return b;
   };
@@ -275,7 +282,7 @@
     var h = HANDLE.style;
     h.width = RAIL_W + 'px'; h.height = RAIL_HANDLE_H + 'px';
     h.display = 'flex'; h.alignItems = 'center'; h.justifyContent = 'center';
-    h.cursor = 'pointer'; h.opacity = '0.6'; h.transition = 'opacity 120ms';
+    h.cursor = 'pointer'; h.opacity = '1'; h.transition = 'opacity 120ms';
     h.borderRadius = '4px 0 0 4px';
     h.background = 'var(--vscode-editorWidget-background, rgba(40,40,40,0.92))';
     h.border = '1px solid var(--vscode-widget-border, rgba(255,255,255,0.14))';
