@@ -128,6 +128,10 @@ function activate(context) {
             log.appendLine(`${label}: ${r.message}`);
             if (r.changed && !restored.includes(adapter.name)) restored.push(adapter.name);
           } else {
+            /* Where the panel's bundle is rewritten. Doing it HERE - during startup, while the panel is loading that same
+               file - is the leading suspect for the panel that takes minutes to open, and all three ways out change this call
+               or its timing. Read writeAtomic in src/webview.js first: the evidence, the test that settles it, and what each
+               option costs are written there. */
             const r = adapter.apply(dir, options());
             log.appendLine(`${label}: ${r.message}${r.liveChanged ? ' (live settings updated)' : ''}`);
             if (r.changed && !patched.includes(adapter.name)) patched.push(adapter.name);
