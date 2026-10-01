@@ -1069,6 +1069,41 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`summarise gave ${JSON.stringify(rows)}`);
     fs.rmSync(root, { recursive: true, force: true });
   }
+  /* Whether this extension host was running during a wait, which the wait alone cannot say: silence either side of a long
+     one means either the host was blocked and could not act, or it was idle with nothing to act on, and those are opposite
+     halves of the machine. A clock read on a timer tells them apart. Folding consecutive overruns matters as much as
+     noticing them - a host stalled for a minute would otherwise write sixty records of one stall. */
+  {
+    let t = 1000000;
+    const w = L.lagWatcher({ now: () => t, write: false, version: 'v1' });
+    const step = (ms) => { t += ms; return w.tick(); };
+    step(1000); step(1000);                        // on time: nothing to say
+    if (!w.records.length && !w.open) ok('a timer arriving on time records nothing');
+    else bad(`an on-time timer produced ${JSON.stringify(w.records)}`);
+
+    step(1000 + 5000);                             // five seconds late
+    step(1000 + 30000);                            // thirty more, same stretch
+    if (w.open && !w.records.length) ok('a stretch of delay is held open rather than written once per tick');
+    else bad(`mid-stall state was ${JSON.stringify({ open: w.open, records: w.records })}`);
+
+    step(1000);                                    // on time again, so the stretch closes
+    const r = w.records[0];
+    if (w.records.length === 1 && r.what === 'hostbusy' && r.blocked === 35000 && r.ticks === 2) {
+      ok('it comes out as one record naming the whole span');
+    } else bad(`the closed stretch was ${JSON.stringify(w.records)}`);
+
+    // The report has to put the two kinds together, since reading one against the other is the entire point.
+    const together = L.report([
+      { what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: '2026-10-01T01:05:22.831Z' }, r,
+    ]).join('\n');
+    if (together.includes('busy') && together.includes('waiting on the panel')) {
+      ok('the report lists host-busy stretches beside the waits, and says what no overlap means');
+    } else bad('the report did not mention both kinds');
+
+    const alone = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
+    if (alone.includes('waiting on the panel rather than on this side')) ok('with no busy stretch it says so outright');
+    else bad('a report with no busy stretch left the reader to infer it');
+  }
   {
     /* Closing the window is the other moment the count is complete; losing it would lose the denominator. */
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat6-'));

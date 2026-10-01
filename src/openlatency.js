@@ -340,6 +340,60 @@ function flush(opts) {
   return Object.values(state.counts).reduce((a, b) => a + b, 0);
 }
 
+/*
+ * Whether the extension host was running during a wait, which is the one thing the wait itself does not say.
+ *
+ * A panel that takes 94 seconds to send its first message has been seen, with the host side silent throughout, and that
+ * is as far as a wait can take it: silence means either the host was blocked and could not act, or the host was idle and
+ * had nothing to act on. Those point at opposite halves of the machine - ours and the panel's - and nothing recorded so
+ * far told them apart.
+ *
+ * A timer asked for every INTERVAL_MS, timed against the clock, answers it. Delay means the host's one thread was busy
+ * elsewhere; arriving on time through a long wait means the host was free and waiting on the panel, which rules this
+ * side out. An interval it cannot be blamed for is not interesting, so only overruns past LAG_FLOOR_MS are written, and
+ * consecutive ones are folded into a single record - a host stalled for a minute would otherwise write sixty.
+ *
+ * The timer does nothing but read the clock, and it is not a sweep: the cost of looking must not be the thing that makes
+ * the reading worse.
+ */
+const INTERVAL_MS = 1000;
+const LAG_FLOOR_MS = 2000;
+
+function lagWatcher(opts = {}) {
+  const { dir, version = '', pid = process.pid, now = () => Date.now(),
+    interval = INTERVAL_MS, floor = LAG_FLOOR_MS, write = true } = opts;
+  let last = now();
+  let run = null;
+  const out = [];
+  const tick = () => {
+    const at = now();
+    const late = at - last - interval;
+    last = at;
+    if (late < floor) {
+      // A stretch of delay has ended, so it can be written as one record naming its span.
+      if (run) {
+        const record = { seen: new Date(run.until).toISOString(), version, what: 'hostbusy',
+          at: new Date(run.from).toISOString(), blocked: run.late, ticks: run.ticks };
+        out.push(record);
+        if (write && dir) {
+          try {
+            fs.mkdirSync(dir, { recursive: true });
+            fs.appendFileSync(recordFile(dir, pid), JSON.stringify(record) + '\n');
+          } catch (_) { /* a reading that cannot be filed is not worth failing a window over */ }
+        }
+        run = null;
+      }
+      return null;
+    }
+    if (!run) run = { from: at - late - interval, until: at, late: 0, ticks: 0 };
+    run.until = at;
+    run.late += late;
+    run.ticks++;
+    return run;
+  };
+  return { tick, records: out, get open() { return run; } };
+}
+
 /**
  * Keep this window's file to the newest KEEP records, in batches.
  *
@@ -429,11 +483,26 @@ function report(records, thresholdMs = THRESHOLD_MS) {
       secs(r.median).padStart(8), secs(r.p90).padStart(8), secs(r.worst).padStart(8), r.version,
     ].join(' '));
   }
+  /* Stretches where this extension host was itself busy, listed beside the waits because the point is to read one against
+     the other. A wait with no stretch overlapping it was a wait on the panel, with this side free the whole time - which
+     is the half of the question a wait alone cannot answer. */
+  const busy = records.filter((r) => r && r.what === 'hostbusy' && typeof r.blocked === 'number');
+  if (busy.length) {
+    out.push('', `  this extension host was itself busy ${busy.length} time(s), newest last:`);
+    for (const r of busy.slice(-12)) {
+      out.push(`    ${r.at}  busy ${secs(r.blocked)} over ${r.ticks} second(s) of sampling`);
+    }
+    out.push('    a wait that overlaps none of these was spent waiting on the panel, not on this side');
+  } else {
+    out.push('', '  this extension host has not been busy for a measurable stretch, so any wait above was spent'
+      + ' waiting on the panel rather than on this side');
+  }
   return out;
 }
 
 module.exports = {
   lines, kindOf, readOut, split, tallyRecord, addCounts, dayOf, logFile, recordFile, readRecords, readAll,
+  lagWatcher, INTERVAL_MS, LAG_FLOOR_MS,
   prune, trim, sample, flush, summarise, report,
   HOST_FLOOR_MS, CEILING_MS, THRESHOLD_MS, KEEP, TRIM_AT, STALE_MS, NAME,
 };

@@ -390,6 +390,22 @@
    * blocks painting. Before this, the mutation observer and an immediate first sweep both ran while the first paint was
    * still pending - work the panel had to get through before it could show anything at all.
    */
+  /*
+   * One line as this script is reached, before anything else, so that a panel that never finishes starting still says
+   * where it got to.
+   *
+   * The report below is the fuller one and is printed after the first sweep - which is no use for a panel that stalls
+   * before then: the console is simply empty, and an empty console cannot be told apart from a script that never ran at
+   * all. This line distinguishes those two, and its number answers the question directly, because this script is appended
+   * AFTER the panel's own code: the time on it is the time the panel's bundle finished evaluating. A panel seen taking 94
+   * seconds to send its first message is then settled one way or the other - a large number here means the delay was over
+   * before anything of ours existed, and a small one means the bundle was ready early and the wait is further in.
+   */
+  try {
+    console.log('[claude-code-extras] script reached at ' + Math.round(T0)
+      + 'ms (panel bundle had finished evaluating by then; this script is appended after it)');
+  } catch (e) {}
+
   reloadCss();
   var booted = false;
   var boot = function(){

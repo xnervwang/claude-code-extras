@@ -298,6 +298,33 @@ function activate(context) {
   sampleLatency();
 
   /*
+   * Whether this extension host was running during a wait, which a wait on its own cannot say.
+   *
+   * The silence either side of a 94-second wait has two opposite readings - this host blocked and unable to act, or this
+   * host idle with nothing to act on - and they point at different halves of the machine. A timer that only reads the
+   * clock tells them apart: late means this side was busy, on time through a long wait means it was free and the delay
+   * belongs to the panel.
+   *
+   * On its own interval rather than the thirty-second one above: a timer cannot measure a delay that also delayed it, and
+   * the sampling has to be finer than what it is trying to see. Under the same setting as the rest of the recording,
+   * since it is the same kind of data about the same question.
+   */
+  const lag = latency.lagWatcher({ dir: latencyDir(), version: stamp() });
+  let lastLag = null;
+  const lagTimer = setInterval(() => {
+    if (!cfg().get(LATENCY_ON_SETTING, true)) return;
+    try {
+      const over = lag.tick();
+      // Reported as a stretch ends, with its whole span, rather than once per late tick.
+      if (!over && lag.records.length && lag.records[lag.records.length - 1] !== lastLag) {
+        lastLag = lag.records[lag.records.length - 1];
+        log.appendLine(`this extension host was busy ${(lastLag.blocked / 1000).toFixed(1)}s from ${lastLag.at}`);
+      }
+    } catch (_) { /* a missed reading is not worth a message every second */ }
+  }, latency.INTERVAL_MS);
+  context.subscriptions.push({ dispose: () => clearInterval(lagTimer) });
+
+  /*
    * Hand the hooks their thresholds.
    *
    * They run as their own processes, so the editor's settings cannot reach them directly; this is the one file they read
