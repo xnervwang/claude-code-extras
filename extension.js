@@ -69,6 +69,16 @@ async function offerReload(text) {
 function activate(context) {
   const log = vscode.window.createOutputChannel('Claude Code Extras');
   context.subscriptions.push(log);
+  /*
+   * When this host started, so that the patch write can be placed against the panel's own startup.
+   *
+   * The panel logs how far into its startup its bundle finished evaluating; this gives the other half of the comparison -
+   * how far into the same startup we replaced that bundle. Without it the only way to line the two up was the file's
+   * modification time, which says nothing about when startup began and is gone as soon as the next write lands.
+   *
+   * TEMPORARY, part of the investigation at writeAtomic in src/webview.js. Goes when that is settled.
+   */
+  const startedAt = Date.now();
   const removed = () => context.globalState.get(REMOVED_KEY, false) === true;
 
   /*
@@ -132,8 +142,24 @@ function activate(context) {
                file - is the leading suspect for the panel that takes minutes to open, and all three ways out change this call
                or its timing. Read writeAtomic in src/webview.js first: the evidence, the test that settles it, and what each
                option costs are written there. */
+            const intoStartup = Date.now() - startedAt;
+            const t0 = Date.now();
             const r = adapter.apply(dir, options());
-            log.appendLine(`${label}: ${r.message}${r.liveChanged ? ' (live settings updated)' : ''}`);
+            const took = Date.now() - t0;
+            /* TEMPORARY, part of that same investigation: how far into startup the file was replaced and how long the
+               replacement took. The panel logs the other half - how far into its own startup its bundle finished
+               evaluating - and the two together say whether they overlapped, which no amount of reasoning about the file's
+               modification time could settle. Only for a write: "already patched" touches nothing, and logging it here
+               would bury the case that matters among the ones that cannot have caused anything. */
+            if (r.changed) {
+              log.appendLine(`${label}: ${r.message} - wrote at ${intoStartup}ms into this host's startup, took ${took}ms`);
+              try {
+                latency.patchRecord({ dir: latencyDir(), version: stamp(), target: adapter.name,
+                  intoStartup, took, at: new Date(t0).toISOString() });
+              } catch (_) { /* a reading that cannot be filed is not worth failing activation over */ }
+            } else {
+              log.appendLine(`${label}: ${r.message}${r.liveChanged ? ' (live settings updated)' : ''}`);
+            }
             if (r.changed && !patched.includes(adapter.name)) patched.push(adapter.name);
             else if (!r.changed && r.message !== 'already patched') problems.push(`${label}: ${r.message}`);
           }

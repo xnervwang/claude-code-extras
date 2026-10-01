@@ -403,6 +403,28 @@ function lagWatcher(opts = {}) {
   return { tick, records: out, get open() { return run; } };
 }
 
+/*
+ * TEMPORARY, part of the investigation at writeAtomic in src/webview.js. Delete with the rest of it.
+ *
+ * A record of replacing a patched file: how far into this host's startup it happened and how long it took. It goes in the
+ * same file as the waits on purpose - a slow open and a write then sit side by side with their times, and whether they
+ * overlapped is read off rather than argued about. Lining them up any other way meant the file's modification time, which
+ * does not say when startup began and is overwritten by the next write.
+ *
+ * Written every time, not only past some threshold: a write that did NOT coincide with a slow open is exactly as
+ * informative as one that did, and the whole question is which of the two happens.
+ */
+function patchRecord(opts = {}) {
+  const { dir, version = '', target = '', intoStartup = 0, took = 0, at = new Date().toISOString(),
+    pid = process.pid } = opts;
+  const record = { seen: new Date().toISOString(), version, what: 'patched', target, at, intoStartup, took };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(recordFile(dir, pid), JSON.stringify(record) + '\n');
+  } catch (_) { return null; }
+  return record;
+}
+
 /**
  * Keep this window's file to the newest KEEP records, in batches.
  *
@@ -508,12 +530,29 @@ function report(records, thresholdMs = THRESHOLD_MS) {
     out.push('', '  this extension host has not been busy for a measurable stretch, so any wait above was spent'
       + ' waiting on the panel rather than on this side');
   }
+  /* TEMPORARY, part of that same investigation: every time a patched file was replaced, against the waits above. A wait
+     in the same window as a write is the case the investigation is about; a window that wrote nothing and still waited
+     rules the write out. Printed with the startup offset because that, not the wall clock, is what says whether the write
+     landed while the panel was still loading its bundle. */
+  const writes = records.filter((r) => r && r.what === 'patched');
+  if (writes.length) {
+    out.push('', `  a patched file was replaced ${writes.length} time(s), newest last:`);
+    for (const r of writes.slice(-12)) {
+      out.push(`    ${r.at}  ${r.target || 'a target'}: ${r.intoStartup}ms into startup, took ${r.took}ms`);
+    }
+    out.push('    compare with the panel\'s own "script reached at Nms": overlapping numbers mean the panel was reading'
+      + ' the file as it was replaced');
+  } else {
+    out.push('', '  no patched file has been replaced in the records kept here, so nothing above can be blamed on a'
+      + ' replacement during startup');
+  }
   return out;
 }
 
 module.exports = {
   lines, kindOf, readOut, split, tallyRecord, addCounts, dayOf, logFile, recordFile, readRecords, readAll,
   lagWatcher, INTERVAL_MS, LAG_FLOOR_MS,
+  patchRecord,
   prune, trim, sample, flush, summarise, report,
   HOST_FLOOR_MS, CEILING_MS, THRESHOLD_MS, KEEP, TRIM_AT, STALE_MS, NAME,
 };

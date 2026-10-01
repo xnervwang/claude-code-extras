@@ -1078,6 +1078,8 @@ console.log('\nthe waiting, paired out of the official log');
       ['src/openlatency.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
       ['extension.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
       ['src/page/99-sweep.js', 'TEMPORARY, part of one investigation'],
+      ['src/openlatency.js', 'TEMPORARY, part of the investigation at writeAtomic'],
+      ['extension.js', 'TEMPORARY, part of that same investigation'],
     ];
     const bare = marked.filter(([f, mark]) =>
       !fs.readFileSync(path.join(__dirname, '..', f), 'utf8').includes(mark));
@@ -1119,6 +1121,31 @@ console.log('\nthe waiting, paired out of the official log');
     const alone = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
     if (alone.includes('waiting on the panel rather than on this side')) ok('with no busy stretch it says so outright');
     else bad('a report with no busy stretch left the reader to infer it');
+  }
+  /* Replacing a patched file during startup is the leading suspect for a panel that takes minutes to open, so the write
+     has to be recorded with its offset into startup - the wall clock cannot say whether it landed while the panel was
+     still reading. Written every time rather than past a threshold: a write that did NOT coincide with a slow open is
+     exactly as informative, and which of the two happens is the whole question. */
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-patchrec-'));
+    const r = L.patchRecord({ dir, version: 'v1', target: 'Claude Code panel', intoStartup: 1840, took: 95,
+      at: '2026-10-01T05:00:00.000Z', pid: 999 });
+    const back = L.readAll(dir);
+    if (r && back.length === 1 && back[0].what === 'patched' && back[0].intoStartup === 1840 && back[0].took === 95) {
+      ok('replacing a patched file is recorded with its offset into startup and how long it took');
+    } else bad(`the write record came back as ${JSON.stringify(back)}`);
+
+    const withWait = L.report(back.concat([
+      { what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: '2026-10-01T05:00:01.000Z' },
+    ])).join('\n');
+    if (withWait.includes('into startup') && withWait.includes('script reached at')) {
+      ok('and is printed against the waits, pointing at the panel number to compare it with');
+    } else bad('the report did not put the write beside the waits');
+
+    const none = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
+    if (none.includes('no patched file has been replaced')) ok('a window that wrote nothing and still waited says so, which rules the write out');
+    else bad('a report with no write left the reader to infer it');
+    fs.rmSync(dir, { recursive: true, force: true });
   }
   {
     /* Closing the window is the other moment the count is complete; losing it would lose the denominator. */
