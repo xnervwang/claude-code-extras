@@ -386,50 +386,25 @@ function status(claudeExtensionPath) {
 }
 
 /*
- * UNRESOLVED, AND THE LEADING SUSPECT FOR THE PANEL THAT TAKES MINUTES TO OPEN. Read this before changing when the patch
- * is written.
+ * TESTED AND RULED OUT as the cause of the panel that takes minutes to open. Kept because it looked convincing, and the
+ * next person to see the evidence below will be tempted the same way.
  *
- * The rename makes a reader see either the whole old file or the whole new one, never a half-written one, which is what
- * this is for and what it does. What it cannot do is help a reader that has ALREADY begun reading the old file: the
- * replacement leaves that reader on an inode no longer reachable by name, and whether it recovers is its own business.
+ * The suspicion: the rename gives a reader the whole old file or the whole new one, but cannot help a reader that has
+ * already begun reading the old one, and the panel's bundle has such a reader - the editor's service worker reads it for
+ * the webview iframe. Both start with the window, so a window opened with the patch out of date replaces the file as the
+ * panel reads it. A console log of 2026-10-01 03:05 seemed to fit: this file's mtime was 03:05:54 beside a run of slow
+ * opens, the stalled panel logged ten service-worker `Could not find parent client for request` and took 136 seconds to
+ * reach the end of its bundle, and a panel in the same window took 334ms and logged none.
  *
- * The panel's own bundle is read by the editor's service worker and handed to the webview iframe, so it is exactly such
- * a reader - and nothing orders these two. Both the extension host and the panel start when the window does, so a window
- * opened while the patch is out of date has one of them replacing the file as the other reads it.
+ * The test, two restarts on 2026-10-01: the first had the panel file restored to Claude Code's original so that this
+ * function had to run - it wrote 16ms into startup and took 744ms - and the panel opened quickly. The second wrote
+ * nothing and was quick as well. Replacing the bundle during startup does not, on its own, produce the stall.
  *
- * Evidence, from a console log of 2026-10-01 03:05 (full copy in the work plan's row for this):
- *   - this file's mtime was 03:05:54, and a run of slow panel opens began at 03:05:51;
- *   - that write was ours - a new extras build had been installed at 01:28, changing the injected script and therefore
- *     the digest, so the next window found the patch out of date and rewrote it during startup;
- *   - the panel that stalled logged ten `Could not find parent client for request` from the service worker and then took
- *     136 SECONDS to reach the end of its bundle; a panel opened in the same window with no such write took 334ms and
- *     logged none of them;
- *   - the slow opens cluster after each install of a new extras build, which is the one thing that makes the digest
- *     change, and that is what a wait of this shape needs to explain: why it is intermittent.
+ * And the 03:05 reading was backwards: the write came three seconds AFTER the slow opens had begun, so it could not
+ * have started them. A timestamp beside a symptom is not a cause, and the order of the two was there to be read.
  *
- * NOT PROVEN. It is a correlation with a mechanism behind it, not a demonstration. The test costs nothing: with the patch
- * already current, a restart does not rewrite this file, so the next restart opening quickly supports it and one that
- * stalls anyway rules it out.
- *
- * If it holds, the fix is to stop the two from overlapping, and nothing is needed from VS Code or Claude Code to do it -
- * which is the part worth knowing, since every other lead in this investigation ended outside our reach. Three ways, with
- * what each costs:
- *
- *   1. WRITE BEFORE THE PANEL IS CREATED. The cleanest if it is possible at all, and that is the unknown: the panel is
- *      created by the other extension, so this needs a point in startup that is reliably before it. Worth establishing
- *      first, because the other two are both compromises.
- *
- *   2. DO NOT WRITE DURING STARTUP. Check only, and if the patch is out of date say so and ask for a reload - which this
- *      already does after patching, so the machinery exists. The write then happens with the panel already loaded, and
- *      cannot overlap by construction. Costs one manual reload on the first window after an upgrade, which is the state
- *      that has this problem anyway, and it is the option that does not depend on an unknown.
- *
- *   3. WRITE, THEN RELOAD THE PANEL OURSELVES. Accepts the overlap and repairs it: a reader left on the replaced inode is
- *      immediately asked to read again instead of waiting. Keeps startup unattended, but it is a repair rather than
- *      avoidance - the bad read still happens, and the panel still has to survive it.
- *
- * Preference, if the test above holds: 2, unless 1 turns out to be available. Not 3 - repairing an overlap we could have
- * avoided leaves the failure in place and bets on recovery, in the one path where a failure costs minutes.
+ * What remains: that same 03:05 log has VS Code auto-updating extensions, Claude Code among them, at the time - which
+ * replaces a whole extension directory the panel serves from - and neither test restart did. That is the open lead.
  */
 function writeAtomic(file, text) {
   const tmp = file + '.claude-code-extras-webview.tmp';
