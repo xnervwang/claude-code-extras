@@ -100,6 +100,12 @@ something leaves a gap instead of moving every number after it, and one quoted a
 Rows are drawn unfinished first and newest first within that, since rows are only appended and a plan worth keeping
 is longer than the view is tall: in file order the part still being argued about sits below a screenful of settled work.
 
+A plan belongs to the conversation you are in, and only that one. A sub-agent started in-process is not reached by any
+of this, so what it did is recorded by the session that dispatched it; a detached agent has a session of its own, is
+handed one task and never clears the threshold for being offered a plan, so it is left alone. Neither costs a
+conversation anything, and the measurements behind both are in the header of
+`claude-plugin/agent-work-plan/hooks/nudge-work-plan.py`.
+
 This is the one part of the extension with an interface of its own rather than an addition to the panel, and the
 reason is where the plan is kept. It is a file on disk, and a panel webview belongs to Claude Code: it has no file
 system of its own and a fetch from it is refused, so anything shown in there has to arrive through a file the panel

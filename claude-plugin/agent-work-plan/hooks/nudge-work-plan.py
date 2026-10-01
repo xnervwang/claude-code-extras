@@ -28,6 +28,24 @@ until something writes a plan the injection hook has nothing to inject and the s
 happens to match - so a conversation can run to its end without the facility ever being mentioned. Measured across 1835
 transcripts on the machine this was written on, 4 of them had a plan. A hook staying quiet to cost nothing is how that
 happens, so the cost is now one sentence, once, after a turn big enough to have needed it.
+
+WHICH SESSIONS THIS REACHES, and why detached agents are not a cost worth engineering against.
+
+A sub-agent started in-process shares the main session's id, and these hooks do not run for it at all: measured over
+three of them in one conversation, zero injections against the main session's 330. So a sub-agent neither sees the plan
+nor is reminded of it, and whatever it did has to be recorded by the session that dispatched it.
+
+A detached agent - one started as its own process - does get the hooks, because it has a session id of its own. It
+therefore has no plan file, which puts it on the branch above, and that was briefly expensive: 53 of them were offered a
+plan inside half an hour. What stopped it was not a check for detached agents but the requirement that the user have
+spoken several times, added three hours later. A detached agent is handed one task and nothing else, so it counts one
+user turn against a threshold of three and is silent for the rest of its life. No measured offer to one has happened
+since, and nothing here identifies such a session or needs to.
+
+Which is the part worth keeping: the question "can this conversation branch" subsumes "is this a detached worker", so
+there is no second mechanism to maintain. Tightening the first threshold is what to reach for if these ever turn up
+again, rather than adding a way to recognise them - there is no payload field verified to distinguish one, and looking
+for a signal that happens to correlate is how a check starts passing for the wrong reason.
 """
 import json
 import os
