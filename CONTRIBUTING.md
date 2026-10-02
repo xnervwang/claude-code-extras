@@ -12,6 +12,7 @@
 - `src/workplan-view.js` holds the work plan tree view.
 - `src/plugin-install.js` registers the companion Claude Code plugin and unregisters it on uninstall.
 - `src/openlatency.js` pairs panel-opening times from the official extension's log.
+- `src/background.js` finds the `claude --bg` sessions a conversation started, in its transcript, and reads their state for the agent map.
 - `claude-plugin/` holds the companion plugin: the skill that maintains a plan and the hooks that keep it honest.
 - `test/check.js` is the whole suite. It parses everything and checks every edit against an unpatched bundle. How
   many checks it runs depends on how many Claude Code builds are installed, so the count is not quoted here.

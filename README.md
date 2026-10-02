@@ -1,7 +1,7 @@
 # Extras for Claude Code
 
 This VS Code extension edits the installed Claude Code extension to add a Claude-maintained work plan to its chat panel. The plan keeps unfinished work on screen and puts it back in front of Claude after older turns are compacted. It also adds timestamps; reply duration, context use, running spend, and model; a filterable table of contents with message stepping; a context meter with a hover breakdown; sub-agent tags and filters; a fold for thinking and tool calls; chimes; and session details.
-Not affiliated with Anthropic. Requires Anthropic's Claude Code extension, which it adds nothing without, and VS Code 1.94 or later. 23 settings, 11 commands.
+Not affiliated with Anthropic. Requires Anthropic's Claude Code extension, which it adds nothing without, and VS Code 1.94 or later. 24 settings, 11 commands.
 
 ## Install
 
@@ -52,12 +52,13 @@ The same conversation with one footer button pressed, leaving your messages and 
 | **Session dates:** `11d · 09/05→09/16`; Claude Code relative last-active time, followed by date span | Sessions |
 | **Chimes:** two rising notes, three knocks, two falling notes; synthesized sound; no shipped audio files; footer mute button | Finished turn, permission request, question; local panel, including Remote SSH; footer |
 | **Work plan:** see [Work plan](#work-plan) | Activity-bar view |
+| **Background sessions:** `claude --bg` sessions this conversation started; running, waiting for you, done, stopped or failed; progress line, what it is waiting for, final result, the task it was given; copy the attach or logs command | Agents button in the footer, and its map |
 | **Session information:** session ID, starting directory, transcript location and size; click-to-copy values | Footer button and session information |
 
 ## Settings
 
 Open `Extras for Claude Code: Settings` for the settings UI. Options cover message times, reply
-figures, sub-agent tags, navigation, footer controls, sounds, session details, the work plan
+figures, sub-agent tags, navigation, footer controls, sounds, session details, background sessions, the work plan
 and its offer thresholds, and panel-opening latency recording. Message appearance:
 `claudeCodeExtras.userMessageColor` and `claudeCodeExtras.userMessageEdge`.
 

@@ -21,6 +21,7 @@ const path = require('path');
 const webview = require('./src/webview');
 const { safeColor } = webview;
 const { readTasks } = require('./src/tasks');
+const background = require('./src/background');
 const { countOpen, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
 const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
@@ -117,11 +118,34 @@ function activate(context) {
   /* One setting per switchable addition, named after it. Reading them here rather than in src/webview.js keeps that
      file free of the editor's API, which is what lets the tests run it. */
   const switchedOff = () => webview.SWITCHES.filter((k) => cfg().get('claudeCodeExtras.show.' + k, true) === false);
-  const options = () => ({
-    enabled: enabled(), userColor: cfg().get(COLOR_SETTING, ''), userEdge: cfg().get(EDGE_SETTING, true) !== false,
-    off: switchedOff(),
-    tasks: readTasks(knownDirs()),
-  });
+  const options = () => {
+    const off = switchedOff();
+    return {
+      enabled: enabled(), userColor: cfg().get(COLOR_SETTING, ''), userEdge: cfg().get(EDGE_SETTING, true) !== false,
+      off,
+      tasks: readTasks(knownDirs()),
+      background: off.includes('backgroundSessions') ? [] : background.collect(),
+    };
+  };
+  const writeLiveNow = () => {
+    try {
+      const opts = options();
+      for (const dir of installs(webview)) webview.writeLive(dir, opts);
+    } catch (e) {
+      log.appendLine('live refresh failed: ' + e.message);
+    }
+  };
+  /* Reads what the conversation in front of the reader has added to its transcript since last time - the only one, since
+     that is the one being looked at; the others were read when they were. A new session is written out at once rather
+     than at the next refresh, so it appears in the agent map while the launch is still on screen. */
+  const scanBackground = () => {
+    if (removed() || !enabled() || switchedOff().includes('backgroundSessions')) return;
+    const id = activeChat();
+    if (!id) return;
+    background.scan(id)
+      .then((r) => { if (r && r.added) writeLiveNow(); })
+      .catch((e) => log.appendLine('background sessions: ' + e.message));
+  };
 
   /* Bring every install in line with the current settings. Only installing, upgrading or removing the patch itself
      asks for a reload; on and off and the color are picked up by an open panel within a couple of seconds. */
@@ -266,12 +290,8 @@ function activate(context) {
   const REFRESH_MS = 30000;
   const refresh = setInterval(() => {
     if (removed() || !enabled()) return;
-    try {
-      const opts = options();
-      for (const dir of installs(webview)) webview.writeLive(dir, opts);
-    } catch (e) {
-      log.appendLine('live refresh failed: ' + e.message);
-    }
+    scanBackground();
+    writeLiveNow();
     sampleLatency();
   }, REFRESH_MS);
   context.subscriptions.push({ dispose: () => clearInterval(refresh) });
@@ -467,6 +487,7 @@ function activate(context) {
     log.appendLine('active conversation: ' + (id || '(none reported)'));
     workplan.refresh();
     paintBadge();
+    scanBackground();
   };
   let chatPoll = 0;
   const stopPolling = () => { if (chatPoll) { clearInterval(chatPoll); chatPoll = 0; } };

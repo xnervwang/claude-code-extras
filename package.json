@@ -243,6 +243,11 @@
           "default": true,
           "markdownDescription": "The footer button that silences the chimes. Turning it off stops the work, not only the drawing, and takes effect without a reload."
         },
+        "claudeCodeExtras.show.backgroundSessions": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The `claude --bg` sessions a conversation started, listed in its agents button with how each is doing and how it ended. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
         "claudeCodeExtras.workPlan": {
           "type": "boolean",
           "default": true,

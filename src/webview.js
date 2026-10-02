@@ -134,6 +134,12 @@ function scheduleProperty(tasks) {
   return `:root{--cce-schedule:"${Buffer.from(JSON.stringify(tasks), 'utf8').toString('base64')}";}\n`;
 }
 
+/* The detached sessions each conversation started, for the same section of the agent map - same encoding, same reason. */
+function backgroundProperty(list) {
+  if (!Array.isArray(list) || !list.length) return '';
+  return `:root{--cce-background:"${Buffer.from(JSON.stringify(list), 'utf8').toString('base64')}";}\n`;
+}
+
 /*
  * This extension's own version, taken from its manifest rather than passed in by a caller, so that forgetting to thread
  * it through could not quietly disable the rule in writeLive that depends on it.
@@ -175,6 +181,7 @@ const SWITCHES = [
   'footerPlainView',  // the button that leaves only the conversation
   'footerViewFilter', // main thread versus one sub-agent
   'footerMute',       // the button that silences the chimes
+  'backgroundSessions', // the `claude --bg` sessions a conversation started, in its agent map
 ];
 
 /** The live stylesheet for one set of settings. */
@@ -195,6 +202,7 @@ function liveCss(opts = {}) {
      of SWITCHES rather than the caller's, since several windows write this file and must produce the same bytes. */
   if (on && off.length) css += ':root{' + off.map((k) => `--cce-off-${k}:1;`).join('') + '}\n';
   if (on) css += scheduleProperty(opts.tasks);
+  if (on && !off.includes('backgroundSessions')) css += backgroundProperty(opts.background);
   return css;
 }
 
