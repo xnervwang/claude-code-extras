@@ -637,6 +637,7 @@ console.log('\nbackground sessions');
   job('0badc0de');
   job('cafef00d');   // a real session, only printed back by another command
   job('deadbea7');
+  job('0ddba115');
   job('77777777', { state: 'done', lastTerminalAt: '2026-10-02T11:00:00.000Z', output: { result: 'all 11 ids kept' } });
   fs.writeFileSync(transcript,
     prose('the output looks like backgrounded · 0badc0de, for example') +           // a mention, not a launch
@@ -645,7 +646,8 @@ console.log('\nbackground sessions');
     ran('claude --bg "task two"', 'backgrounded · \x1b[36m5e6f7a8b\x1b[39m\n') +        // the id coloured
     ran('grep -h backgrounded old.jsonl', launched('cafef00d')) +                     // an earlier launch printed back
     ran('claude --bg "task three"', 'Starting background service…\nbackgrounded · deadbea7') + // hints cut off
-    ran('claude --bg "task four"', launched('99999999')));                            // no record of that one
+    ran('claude --bg "task four"', launched('99999999')) +                           // no record of that one
+    ran('claude --bg "task six" | sed \'s/^/  /\'', '  ' + launched('0ddba115').split('\n').join('\n  ')));  // output indented
 
   const scanAll = (steps) => {
     const script = `
@@ -677,7 +679,7 @@ console.log('\nbackground sessions');
   else {
     const [first, partial, whole] = steps;
     const ids = (first.link && first.link.ids) || [];
-    if (ids.join() === '1a2b3c4d,5e6f7a8b,deadbea7') ok('three launches are found: coloured, and with the hints cut off');
+    if (ids.join() === '1a2b3c4d,5e6f7a8b,deadbea7,0ddba115') ok('four launches are found: coloured, with the hints cut off, and indented');
     else bad(`the first scan recorded ${JSON.stringify(ids)}`);
     if (!ids.includes('0badc0de') && !ids.includes('99999999') && !ids.includes('cafef00d')) {
       ok('a mention in prose or in passing, the format written out, a launch printed back by grep, and a session with no record are all left out');
@@ -711,7 +713,7 @@ console.log('\nbackground sessions');
   const list = bg.collect({ dir: plans, jobs });
   const byId = Object.fromEntries(list.map((e) => [e.id, e]));
   const e1 = byId['1a2b3c4d'], e2 = byId['5e6f7a8b'], e3 = byId['77777777'];
-  if (list.length === 4 && e1 && e1.session === SID && e1.detail === 'reading files' && e1.tokens === 12000) {
+  if (list.length === 5 && e1 && e1.session === SID && e1.detail === 'reading files' && e1.tokens === 12000) {
     ok('each recorded session is read from its own state, under the conversation that started it');
   } else bad(`collect gave ${JSON.stringify(list)}`);
   if (e1 && e1.task.startsWith('# Do the thing')) ok('the task is shown without the comment block it opens with');
@@ -755,7 +757,7 @@ console.log('\nbackground sessions');
   const api = sandbox.window;
   const tree = api.__cceSchedule(h);
   const flat = JSON.stringify(calls);
-  if (tree && flat.includes('4 background sessions') && flat.includes('Waiting for you: decide which of the two copies')) {
+  if (tree && flat.includes('5 background sessions') && flat.includes('Waiting for you: decide which of the two copies')) {
     ok('the agent map lists this conversation\'s sessions, a waiting one saying what it waits for');
   } else bad('the section did not render the sessions as expected');
   if (flat.includes('claude attach 1a2b3c4d') && flat.includes('claude logs 5e6f7a8b')) {
@@ -765,7 +767,7 @@ console.log('\nbackground sessions');
   if (!bare.length) ok('every element passes its children as an array');
   else bad(`${bare.length} element(s) pass children as a bare value`);
   const label = api.__cceAgentsLabel('3 agents', 3);
-  if (label === '3 agents · 3 bg (1 waiting)') ok(`the button counts the sessions still running or waiting (${label})`);
+  if (label === '3 agents · 4 bg (1 waiting)') ok(`the button counts the sessions still running or waiting (${label})`);
   else bad(`the button read "${label}"`);
   if (api.__cceScheduleCount() >= 2) ok('the sessions open the button even with no agent running');
   else bad('the button would stay hidden with only background sessions');

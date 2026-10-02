@@ -36,7 +36,7 @@ const SHORT_ID = /^[0-9a-f]{8}$/;
 /* The CLI's own words, middle dot and all, at the start of a line. When the output went to a terminal the id is wrapped
    in colour codes. */
 const MARK = Buffer.from('backgrounded · ', 'utf8');
-const ID_AFTER = /^backgrounded · (?:\x1b\[[0-9;]*m)*([0-9a-f]{8})(?![0-9a-f])/gm;
+const ID_AFTER = /^[ \t]*backgrounded · (?:\x1b\[[0-9;]*m)*([0-9a-f]{8})(?![0-9a-f])/gm;
 /* The flag that starts one, found in the command a tool result answers. */
 const BG_FLAG = Buffer.from('--bg', 'utf8');
 const CHUNK = 8 << 20;
@@ -59,8 +59,9 @@ const textOf = (b) => (typeof b.content === 'string' ? b.content
  *
  * The output has to answer a command that ran `--bg`: a command that printed an earlier launch back - a grep over
  * another transcript, say - produced the very same line, at the start of it, for an id that was real and still had a
- * record, so nothing in the text could tell the two apart. The words have to open a line, which keeps out a launch
- * quoted in passing; be followed by exactly eight hex digits, which keeps out a document describing the format; and
+ * record, so nothing in the text could tell the two apart. The words have to open a line - indentation allowed, since a
+ * command that indents its own output is common and was how the first live launch here went unseen - which keeps out
+ * a launch quoted in passing; be followed by exactly eight hex digits, which keeps out a document describing the format; and
  * name a session that has a record. The CLI's hints after the id are not required: a launch whose output was cut short
  * has none, and that is an ordinary launch.
  *
