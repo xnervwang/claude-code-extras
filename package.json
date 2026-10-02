@@ -12,6 +12,9 @@
   "categories": [
     "Other"
   ],
+  "extensionDependencies": [
+    "anthropic.claude-code"
+  ],
   "keywords": [
     "claude",
     "claude-code",

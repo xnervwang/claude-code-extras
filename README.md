@@ -6,21 +6,7 @@ This project is not affiliated with Anthropic. It requires VS Code 1.94 or later
 
 ## Install
 
-Install Anthropic's Claude Code extension first. Claude Code Extras adds to its panel and does nothing without it.
-
-Claude Code Extras is not on the VS Code Marketplace, and there is no plan to put it there. It is distributed as source because a Marketplace listing is not a good fit for an extension that edits another extension's installed files. It edits `webview/index.js`, `extension.js`, and `resources/claude-logo-done.svg` inside Claude Code.
-
-Build and install it from this repository:
-
-```bash
-git clone git@github.com:xnervwang/claude-code-extras-for-vscode.git
-cd claude-code-extras-for-vscode
-node test/check.js
-bash build/pack.sh
-code --install-extension build/xnerv.claude-code-extras-*.vsix --force
-```
-
-You only need `node`. There are no dependencies to install. The check verifies that every edit matches the Claude Code build on your machine, so you know whether it is supported before installing.
+Search for **Claude Code Extras** in the Extensions view, or run `code --install-extension xnerv.claude-code-extras`. Anthropic's Claude Code extension comes with it as a dependency; Claude Code Extras adds to that panel and does nothing without it.
 
 Reload the VS Code window twice. The first reload lets Claude Code Extras write its changes into the Claude Code files. The second lets the panel load them. Run **Claude Code Extras: Show Status** to see what it patched.
 
@@ -42,11 +28,9 @@ To undo the changes, run **Claude Code Extras: Remove from Claude Code (restore 
 
 ## How the patch works
 
-Claude Code's panel runs from `webview/index.js`; its host-side Node bundle is `extension.js`. Both files are inside the installed Claude Code extension. Claude Code Extras edits them on disk.
+Claude Code Extras edits three files inside the installed Claude Code extension: `webview/index.js`, which is the panel; `extension.js`, its host-side Node bundle; and `resources/claude-logo-done.svg`, its done icon.
 
 Each edit matches a code shape rather than an identifier, because identifiers in the minified bundle change between builds. An edit must match exactly once. The patched file must parse before it is written. The original is backed up beside the file, and the replacement is atomic. If a build's shape no longer matches, Claude Code Extras warns and leaves the file unchanged rather than patching on a guess. Removing or uninstalling Claude Code Extras restores the originals from those backups.
-
-The extension's additions read information the panel already has; they do not change how the conversation works. They follow three rules, each adopted after a failure: never place their own nodes inside nodes the panel owns; never run before the panel has painted; and never let per-refresh work grow with conversation length.
 
 Claude Code Extras has been verified against Claude Code **2.1.285** and **2.1.286**. Compatibility with other builds is unknown. `supported-versions.json` records which builds were verified against each commit's own code. A scheduled job checks the newest published Claude Code build four times a day and opens an issue if an edit stops matching. The 181 automated checks parse the injected script and run every edit against an unpatched Claude Code bundle.
 
