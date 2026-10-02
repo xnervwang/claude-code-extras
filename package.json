@@ -1,6 +1,6 @@
 {
   "name": "claude-code-extras",
-  "displayName": "Claude Code Extras for VS Code",
+  "displayName": "Extras for Claude Code",
   "description": "Work plan: a tree of what the conversation still has to do, kept current by Claude itself; also adds timestamps, reply figures, navigation, context details, and chimes to the Claude Code chat panel. Patches the installed Claude Code extension's files. Not affiliated with Anthropic.",
   "version": "1.0.0",
   "publisher": "xnervwang",
@@ -8,7 +8,7 @@
   "icon": "images/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/xnervwang/claude-code-extras-for-vscode"
+    "url": "https://github.com/xnervwang/extras-for-claude-code"
   },
   "engines": {
     "vscode": "^1.94.0"
@@ -37,56 +37,56 @@
     "commands": [
       {
         "command": "claudeCodeExtras.openSettings",
-        "title": "Claude Code Extras: Settings"
+        "title": "Extras for Claude Code: Settings"
       },
       {
         "command": "claudeCodeExtras.toggle",
-        "title": "Claude Code Extras: Toggle On/Off"
+        "title": "Extras for Claude Code: Toggle On/Off"
       },
       {
         "command": "claudeCodeExtras.enable",
-        "title": "Claude Code Extras: Turn On"
+        "title": "Extras for Claude Code: Turn On"
       },
       {
         "command": "claudeCodeExtras.disable",
-        "title": "Claude Code Extras: Turn Off"
+        "title": "Extras for Claude Code: Turn Off"
       },
       {
         "command": "claudeCodeExtras.remove",
-        "title": "Claude Code Extras: Remove from Claude Code (restore original files)"
+        "title": "Extras for Claude Code: Remove from Claude Code (restore original files)"
       },
       {
         "command": "claudeCodeExtras.status",
-        "title": "Claude Code Extras: Show Status"
+        "title": "Extras for Claude Code: Show Status"
       },
       {
         "command": "claudeCodeExtras.refreshWorkPlan",
-        "title": "Claude Code Extras: Refresh Work Plan",
+        "title": "Extras for Claude Code: Refresh Work Plan",
         "icon": "$(refresh)"
       },
       {
         "command": "claudeCodeExtras.openWorkPlanFile",
-        "title": "Claude Code Extras: Open the Work Plan File",
+        "title": "Extras for Claude Code: Open the Work Plan File",
         "icon": "$(go-to-file)"
       },
       {
         "command": "claudeCodeExtras.installWorkPlanPlugin",
-        "title": "Claude Code Extras: Install the Work Plan Plugin for Claude Code"
+        "title": "Extras for Claude Code: Install the Work Plan Plugin for Claude Code"
       },
       {
         "command": "claudeCodeExtras.showOpenLatency",
-        "title": "Claude Code Extras: Show How Long Opening a Panel Took"
+        "title": "Extras for Claude Code: Show How Long Opening a Panel Took"
       },
       {
         "command": "claudeCodeExtras.disableWorkPlanPlugin",
-        "title": "Claude Code Extras: Stop Loading the Work Plan Plugin"
+        "title": "Extras for Claude Code: Stop Loading the Work Plan Plugin"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "claudeCodeExtras",
-          "title": "Claude Code Extras",
+          "title": "Extras for Claude Code",
           "icon": "images/workplan.svg"
         }
       ]
@@ -128,7 +128,7 @@
       ]
     },
     "configuration": {
-      "title": "Claude Code Extras",
+      "title": "Extras for Claude Code",
       "properties": {
         "claudeCodeExtras.enabled": {
           "type": "boolean",
@@ -154,7 +154,7 @@
           "type": "number",
           "default": 10,
           "minimum": 1,
-          "markdownDescription": "How long a panel or conversation has to take before it is recorded one by one, in seconds. Anything faster is only counted, so an ordinary day leaves a single line rather than one per open - the count is still what says whether a slow open is the exception or the rule. Read them with **Claude Code Extras: Show How Long Opening a Panel Took**."
+          "markdownDescription": "How long a panel or conversation has to take before it is recorded one by one, in seconds. Anything faster is only counted, so an ordinary day leaves a single line rather than one per open - the count is still what says whether a slow open is the exception or the rule. Read them with **Extras for Claude Code: Show How Long Opening a Panel Took**."
         },
         "claudeCodeExtras.recordOpenLatency": {
           "type": "boolean",
@@ -246,7 +246,7 @@
         "claudeCodeExtras.workPlan": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Keep a work plan for each conversation: the tree in the activity bar, the open rows put in front of the model every turn, and the reminder to reconcile them at the end of one. Turned off, the view and its activity bar icon go, nothing is put in front of the model, and a write to a plan file is refused so one is not kept where nobody can see it.\n\nWhat stays is the skill's own description, about 110 tokens a session, because the plugin is still registered with Claude Code. **Claude Code Extras: Stop Loading the Work Plan Plugin** removes that too; it is a separate command because it changes Claude Code's own settings rather than this extension's."
+          "markdownDescription": "Keep a work plan for each conversation: the tree in the activity bar, the open rows put in front of the model every turn, and the reminder to reconcile them at the end of one. Turned off, the view and its activity bar icon go, nothing is put in front of the model, and a write to a plan file is refused so one is not kept where nobody can see it.\n\nWhat stays is the skill's own description, about 110 tokens a session, because the plugin is still registered with Claude Code. **Extras for Claude Code: Stop Loading the Work Plan Plugin** removes that too; it is a separate command because it changes Claude Code's own settings rather than this extension's."
         }
       }
     }

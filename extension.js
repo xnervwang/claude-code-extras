@@ -4,7 +4,7 @@
 
 'use strict';
 /*
- * Claude Code Extras — user interface additions for the Claude Code panel in VS Code.
+ * Extras for Claude Code — user interface additions for the Claude Code panel in VS Code.
  *
  * This extension owns no user interface of its own. It patches the Claude Code extension's own files at rest, one
  * adapter per target file (see src/adapters.js), and every write is guarded the same way: match the expected code
@@ -67,7 +67,7 @@ async function offerReload(text) {
 }
 
 function activate(context) {
-  const log = vscode.window.createOutputChannel('Claude Code Extras');
+  const log = vscode.window.createOutputChannel('Extras for Claude Code');
   context.subscriptions.push(log);
   /*
    * When this host started, so that the patch write can be placed against the panel's own startup.
@@ -168,21 +168,21 @@ function activate(context) {
         }
       }
     }
-    if (!found && interactive) vscode.window.showWarningMessage('Claude Code Extras: the Claude Code extension is not installed, so there is nothing to patch.');
+    if (!found && interactive) vscode.window.showWarningMessage('Extras for Claude Code: the Claude Code extension is not installed, so there is nothing to patch.');
     // A shape mismatch after a Claude Code update would otherwise be silent, so it is said out loud.
-    if (problems.length) vscode.window.showWarningMessage('Claude Code Extras: ' + problems.join(' | '));
-    if (patched.length) offerReload(`Claude Code Extras is installed in ${patched.join(' and ')}. Reload the window once to start; after that, On/Off and colors change live.`);
-    if (restored.length) offerReload(`Claude Code Extras was removed from ${restored.join(' and ')}. Reload the window to finish.`);
+    if (problems.length) vscode.window.showWarningMessage('Extras for Claude Code: ' + problems.join(' | '));
+    if (patched.length) offerReload(`Extras for Claude Code is installed in ${patched.join(' and ')}. Reload the window once to start; after that, On/Off and colors change live.`);
+    if (restored.length) offerReload(`Extras for Claude Code was removed from ${restored.join(' and ')}. Reload the window to finish.`);
   }
 
   // Status bar toggle: shows the current state and flips it on click.
   const bar = vscode.window.createStatusBarItem('claudeCodeExtras.toggle', vscode.StatusBarAlignment.Left, 50);
-  bar.name = 'Claude Code Extras';
+  bar.name = 'Extras for Claude Code';
   bar.command = 'claudeCodeExtras.toggle';
   const renderBar = () => {
     const on = enabled() && !removed();
     bar.text = on ? '$(clock) Extras: On' : '$(circle-slash) Extras: Off';
-    bar.tooltip = on ? 'Claude Code Extras is ON — click to turn it off' : 'Claude Code Extras is OFF — click to turn it on';
+    bar.tooltip = on ? 'Extras for Claude Code is ON — click to turn it off' : 'Extras for Claude Code is OFF — click to turn it on';
     if (cfg().get(STATUS_BAR_SETTING, true)) bar.show(); else bar.hide();
   };
   context.subscriptions.push(bar);
@@ -205,7 +205,7 @@ function activate(context) {
     vscode.commands.registerCommand('claudeCodeExtras.status', () => {
       const lines = [];
       for (const adapter of ADAPTERS) for (const d of installs(adapter)) lines.push(`${adapter.name} ${path.basename(d)}: ${adapter.status(d)}`);
-      vscode.window.showInformationMessage('Claude Code Extras — ' + (lines.join(' | ') || 'Claude Code is not installed') + (removed() ? ' (removed)' : ''));
+      vscode.window.showInformationMessage('Extras for Claude Code — ' + (lines.join(' | ') || 'Claude Code is not installed') + (removed() ? ' (removed)' : ''));
     }),
     /* Every setting this extension has, in the editor's own settings UI: search, per-workspace values, sync and a JSON
        view come with it, and none of it is ours to maintain. */
@@ -252,7 +252,7 @@ function activate(context) {
         .concat(webview.SWITCHES.map((k) => 'claudeCodeExtras.show.' + k));
       if (!touched.some((k) => e.affectsConfiguration(k))) return;
       const c = cfg().get(COLOR_SETTING, '');
-      if (c && !safeColor(c)) vscode.window.showWarningMessage(`Claude Code Extras: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
+      if (c && !safeColor(c)) vscode.window.showWarningMessage(`Extras for Claude Code: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
       sync();
     }),
     // A Claude Code update arrives as a new folder, so patch it as soon as that folder appears.
@@ -584,7 +584,7 @@ function activate(context) {
       if (!file) {
         const plans = workplan.plans;
         if (!plans.length) {
-          vscode.window.showInformationMessage('Claude Code Extras: no conversation on this machine is keeping a work plan.');
+          vscode.window.showInformationMessage('Extras for Claude Code: no conversation on this machine is keeping a work plan.');
           return;
         }
         if (plans.length === 1) file = plans[0].file;

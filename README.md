@@ -1,19 +1,19 @@
-# Claude Code Extras for VS Code
+# Extras for Claude Code
 
 The work plan tracks what your Claude Code conversation still has to do; the extension also adds navigation, timestamps, reply figures, and sounds to Anthropic's official Claude Code chat panel. Requires the official extension; no additions without it.
 Not affiliated with Anthropic. Requires VS Code 1.94 or later. Version 1.0.0: 23 settings, 11 commands.
 
 ## Install
 
-Search for **Claude Code Extras** in the Extensions view, or run
+Search for **Extras for Claude Code** in the Extensions view, or run
 `code --install-extension xnervwang.claude-code-extras`. Anthropic's Claude Code extension installs
 as a dependency.
 
 Reload the VS Code window twice after installing. Run
-`Claude Code Extras: Show Status` for the patch status. In a Remote SSH window, install on the
+`Extras for Claude Code: Show Status` for the patch status. In a Remote SSH window, install on the
 remote.
 
-Claude Code Extras edits files inside the installed Claude Code extension. The patch is reverted
+Extras for Claude Code edits files inside the installed Claude Code extension. The patch is reverted
 by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
 alone with a warning.
 
@@ -56,7 +56,7 @@ The same conversation with one footer button pressed, leaving your messages and 
 
 ## Settings
 
-Open `Claude Code Extras: Settings` for the settings UI. Options cover message times, reply
+Open `Extras for Claude Code: Settings` for the settings UI. Options cover message times, reply
 figures, sub-agent tags, navigation, footer controls, sounds, session details, the work plan
 and its offer thresholds, and panel-opening latency recording. Message appearance:
 `claudeCodeExtras.userMessageColor` and `claudeCodeExtras.userMessageEdge`.
@@ -67,23 +67,23 @@ Turning it off hides the additions without restoring the original files.
 
 Turning off `claudeCodeExtras.workPlan` hides the view and stops plan updates. The registered
 plugin's skill description still loads in Claude Code; use
-`Claude Code Extras: Stop Loading the Work Plan Plugin` to stop loading it.
+`Extras for Claude Code: Stop Loading the Work Plan Plugin` to stop loading it.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `Claude Code Extras: Settings` | Open this extension's VS Code settings |
-| `Claude Code Extras: Toggle On/Off` | Toggle additions |
-| `Claude Code Extras: Turn On` | Show additions |
-| `Claude Code Extras: Turn Off` | Hide additions |
-| `Claude Code Extras: Remove from Claude Code (restore original files)` | Restore original files |
-| `Claude Code Extras: Show Status` | Report patch status and what was patched |
-| `Claude Code Extras: Refresh Work Plan` | Refresh work plan |
-| `Claude Code Extras: Open the Work Plan File` | Open current plan file |
-| `Claude Code Extras: Install the Work Plan Plugin for Claude Code` | Register companion plugin |
-| `Claude Code Extras: Show How Long Opening a Panel Took` | Read recorded panel-opening times |
-| `Claude Code Extras: Stop Loading the Work Plan Plugin` | Remove plugin from Claude Code settings |
+| `Extras for Claude Code: Settings` | Open this extension's VS Code settings |
+| `Extras for Claude Code: Toggle On/Off` | Toggle additions |
+| `Extras for Claude Code: Turn On` | Show additions |
+| `Extras for Claude Code: Turn Off` | Hide additions |
+| `Extras for Claude Code: Remove from Claude Code (restore original files)` | Restore original files |
+| `Extras for Claude Code: Show Status` | Report patch status and what was patched |
+| `Extras for Claude Code: Refresh Work Plan` | Refresh work plan |
+| `Extras for Claude Code: Open the Work Plan File` | Open current plan file |
+| `Extras for Claude Code: Install the Work Plan Plugin for Claude Code` | Register companion plugin |
+| `Extras for Claude Code: Show How Long Opening a Panel Took` | Read recorded panel-opening times |
+| `Extras for Claude Code: Stop Loading the Work Plan Plugin` | Remove plugin from Claude Code settings |
 
 ## Known limits
 
