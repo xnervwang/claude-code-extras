@@ -353,6 +353,77 @@ console.log('\nthe model pill comparison');
    Skipped only by `--without-version-record`, which the one command that writes the record passes when it runs this
    suite first. That is not a way around the gate: this section fails in exactly the state that command exists to
    correct, so leaving it in would block the fix with the defect it fixes. */
+/* ── a reopened conversation's window, and what its history is shown ──
+   Reopened, the panel has the token count but no window: that arrives only on the message that closes a turn, which the
+   transcript never records. These pin down when the page fills the window in, and that the history it replays does not
+   pick up the current figures as if they were its own. */
+console.log('\na reopened conversation');
+{
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', f), 'utf8');
+  const box = { out: {}, sessionRef: null, isOn: () => true, isOff: () => false };
+  new vm.Script(`(function(){${read('70-meter.js')}\n${read('75-turn-stats.js')}\n;` +
+    'out.fillWindow = fillWindow; out.statAt = statAt;})()', { filename: 'reopened' }).runInNewContext(box);
+  const session = (usage, pick) => ({
+    usageData: { value: Object.assign({ totalTokens: 0, totalCost: 0, contextWindow: 0, maxOutputTokens: 0 }, usage) },
+    currentModelInfo: { value: pick === undefined ? undefined : { resolvedModel: pick } },
+    lastServedModel: { value: 'claude-opus-5-5' },
+  });
+  const fill = (usage, pick) => { box.sessionRef = session(usage, pick); box.out.fillWindow(); return box.sessionRef.usageData.value; };
+
+  const cases = [
+    ['a 1M pick with 957,707 tokens', { totalTokens: 957707 }, 'global.anthropic.claude-opus-5-5[1m]', 1000000],
+    ['a standard pick with 150,000 tokens', { totalTokens: 150000 }, 'global.anthropic.claude-opus-5-5', 200000],
+    ['a standard-looking pick holding 300,000 tokens', { totalTokens: 300000 }, 'claude-opus-5-5', 1000000],
+    ['no pick known yet, 300,000 tokens', { totalTokens: 300000 }, undefined, 1000000],
+    ['no pick known yet, 150,000 tokens', { totalTokens: 150000 }, undefined, 0],
+    ['a token count of 0', { totalTokens: 0 }, 'global.anthropic.claude-opus-5-5[1m]', 0],
+  ];
+  for (const [what, usage, pick, want] of cases) {
+    const got = fill(usage, pick).contextWindow;
+    if (got === want) ok(want ? `${what}: the window is filled in as ${want}` : `${what}: nothing is filled in`);
+    else bad(`${what}: the window came out ${got}, not ${want}`);
+  }
+
+  // The meter divides by the window less min(reserve, cap): a filled reserve must sit at or above any plausible cap,
+  // and a real one must be left alone.
+  const r0 = fill({ totalTokens: 957707 }, 'x[1m]').maxOutputTokens;
+  const r1 = fill({ totalTokens: 957707, maxOutputTokens: 32000 }, 'x[1m]').maxOutputTokens;
+  if (r0 >= 1e6 && r1 === 32000) ok('a missing reserve is filled above any cap, and a real one is kept');
+  else bad(`the reserve came out ${r0} when missing and ${r1} when it was 32000`);
+
+  box.sessionRef = session({ totalTokens: 500000, contextWindow: 1000000 }, 'x[1m]');
+  const had = box.sessionRef.usageData.value;
+  box.out.fillWindow();
+  if (box.sessionRef.usageData.value === had) ok('a window the panel already has is left alone, object and all');
+  else bad('fillWindow replaced a window the panel already had');
+
+  box.sessionRef = session({ totalTokens: 500000 }, 'x[1m]');
+  box.isOn = () => false;
+  box.out.fillWindow();
+  const offWin = box.sessionRef.usageData.value.contextWindow;
+  box.isOn = () => true;
+  if (offWin === 0) ok('with the extension switched off the panel is not touched');
+  else bad('fillWindow wrote into the panel with the extension switched off');
+
+  // The history: the newest reply shows the current share, an older one first seen afterwards shows only the model.
+  box.sessionRef = session({ totalTokens: 957707, totalCost: 3.2 }, 'global.anthropic.claude-opus-5-5[1m]');
+  box.out.fillWindow();
+  const older = { id: 'older' }, newest = { id: 'newest' };
+  const nowLine = box.out.statAt(newest, true), oldLine = box.out.statAt(older, false);
+  if (/ctx 96%/.test(nowLine) && /cost \$3\.20/.test(nowLine)) ok(`the newest reply shows the current figures (${nowLine})`);
+  else bad(`the newest reply showed "${nowLine}"`);
+  if (!/ctx|cost/.test(oldLine) && /opus-5-5/.test(oldLine)) ok(`a reply from before the page loaded shows the model only (${oldLine})`);
+  else bad(`a reply from before the page loaded showed "${oldLine}", taking figures that are not its own`);
+
+  // A reply that was the newest once keeps what it showed then, after a later one takes over.
+  const first = { id: 'first' };
+  box.out.statAt(first, true);
+  box.sessionRef.usageData.value = Object.assign({}, box.sessionRef.usageData.value, { totalTokens: 980000 });
+  const kept = box.out.statAt(first, false);
+  if (/ctx 96%/.test(kept)) ok('a reply that was once the newest keeps its own figures afterwards');
+  else bad(`a reply that was once the newest later showed "${kept}"`);
+}
+
 console.log('\nverified builds');
 if (process.argv.includes('--without-version-record')) {
   note('asked to skip the record check, which is what writing the record does while it runs this suite');

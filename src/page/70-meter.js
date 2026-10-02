@@ -34,6 +34,45 @@
     var m = /(\d+)%/.exec(btn.getAttribute('aria-label') || '');
     return m ? Number(m[1]) : null;
   };
+  /*
+   * The window size a reopened conversation is missing, filled in until the panel learns the real one.
+   *
+   * Reopened, the panel replays the transcript and recovers the token count, but the window only ever arrives on the
+   * message that closes a turn, and that message is not written to the transcript. So until the first reply finishes the
+   * meter has no denominator and draws nothing, and the per-reply figure has no share to show. This writes only while
+   * the panel has no window of its own, and the first real one replaces it.
+   *
+   * Two sizes, told apart by the [1m] marker on the model that was picked. A table like that goes stale without saying
+   * so; it is acceptable here only because it is shown until the first turn closes and no longer. Over 200,000 tokens
+   * already settles it whatever the model says: a standard window cannot hold that many.
+   *
+   * The reserved output is filled too. The meter divides by the window less min(reserve, cap) less a margin, so a reserve
+   * left at 0 would read low and then jump when the first reply lands. Any value at or above the cap gives the panel's
+   * own figure without this file holding a copy of the cap, and nothing else in the panel reads that field.
+   *
+   * Nothing is written while the token count is 0. If the replay did not recover it, a meter reading 0% on a
+   * conversation that may hold most of a million tokens says something false, which is worse than saying nothing.
+   *
+   * The cost is NOT restored, on purpose. The only cost figure on disk is the transcript's cost-state row, and the panel
+   * is never sent that row - neither the panel bundle nor the host bundle mentions it. Restoring it would mean this
+   * extension's host reading the transcript and carrying the figure to the page through the shared live stylesheet,
+   * keyed by session: the channel whose races between windows once made settings flicker. That is a lot of machinery
+   * for a number that appears by itself as soon as the first reply closes its turn.
+   */
+  var STANDARD_WINDOW = 200000, LARGE_WINDOW = 1000000;
+  var fillWindow = function(){
+    if (!isOn() || (isOff('contextMeter') && isOff('contextShare'))) return;
+    var sig = sessionRef && sessionRef.usageData, u = sig && sig.value;
+    if (!u || u.contextWindow > 0 || !(u.totalTokens > 0)) return;
+    var info = sessionRef.currentModelInfo && sessionRef.currentModelInfo.value;
+    var pick = info && typeof info.resolvedModel === 'string' ? info.resolvedModel : '';
+    var win = u.totalTokens > STANDARD_WINDOW || /\[1m\]$/i.test(pick) ? LARGE_WINDOW : pick ? STANDARD_WINDOW : 0;
+    if (!win) return;
+    sig.value = Object.assign({}, u, {
+      contextWindow: win,
+      maxOutputTokens: u.maxOutputTokens > 0 ? u.maxOutputTokens : Number.MAX_SAFE_INTEGER,
+    });
+  };
   // Outline the context meter once the remaining share gets thin, ahead of an auto-compact.
   var LOW_AT = 15;
   var markCtxLow = function(){

@@ -169,6 +169,7 @@
     try { orderControls(); } catch (e) {}
     try { wireCtxButton(); } catch (e) {}
     try { watchIdle(); } catch (e) {}
+    try { fillWindow(); } catch (e) {}
     try { markCtxLow(); } catch (e) {}
     record({ users: tB - tA, prompts: tC - tB, replies: tD - tC, marks: tE - tD, toc: tF - tE,
              controls: clock() - tF, total: clock() - tA,
@@ -422,7 +423,7 @@
     setInterval(probe, POLL_MS);
     // The chime and the low-context outline must not depend on DOM churn: a turn can end without
     // any further mutation, which would leave the last sweep observing a still-busy state.
-    setInterval(function(){ try { watchIdle(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensurePlainControl(); } catch (e) {} try { orderControls(); } catch (e) {} }, 700);
+    setInterval(function(){ try { watchIdle(); } catch (e) {} try { fillWindow(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensurePlainControl(); } catch (e) {} try { orderControls(); } catch (e) {} }, 700);
     run();
     report();
   };
