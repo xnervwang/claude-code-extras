@@ -26,8 +26,35 @@ const EXTENSION_ID = 'anthropic.claude-code';
 // The edits are platform independent, but a package has to be picked; this is the one the author runs.
 const PLATFORM = process.env.CCE_TARGET_PLATFORM || 'linux-x64';
 
+/*
+ * The gallery answers 5xx often enough that one blip would paint a scheduled run red, and the run that goes red carries
+ * news about the edits - news that would be untrue. A transport error or a 5xx is worth another attempt; a 404 is an
+ * answer and is returned as it stands.
+ */
+const ATTEMPTS = 3;
+const WAIT_MS = [5000, 20000];
+
+async function fetchRetrying(url, init) {
+  let res, err;
+  for (let i = 0; i < ATTEMPTS; i++) {
+    if (i) await new Promise((done) => setTimeout(done, WAIT_MS[i - 1]));
+    try {
+      res = await fetch(url, init);
+      if (res.status < 500) return res;
+      err = new Error(`status ${res.status}`);
+    } catch (e) {
+      res = undefined;
+      err = e;
+    }
+    console.error(`attempt ${i + 1} of ${ATTEMPTS}: ${err.message}`);
+  }
+  // A 5xx on the last attempt is still an answer the caller can report against; never reaching the host is not.
+  if (res) return res;
+  throw err;
+}
+
 async function newestVersion() {
-  const res = await fetch(QUERY_URL, {
+  const res = await fetchRetrying(QUERY_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -51,7 +78,7 @@ async function newestVersion() {
 
 async function fetchPackage(url, dest) {
   // fetch undoes the gallery's gzip transport encoding on its own, leaving the vsix - which is itself a zip.
-  const res = await fetch(url, { redirect: 'follow' });
+  const res = await fetchRetrying(url, { redirect: 'follow' });
   if (!res.ok) throw new Error(`package download returned ${res.status}`);
   fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
 }

@@ -1,0 +1,19 @@
+# What a published package carries, by subtraction: the same set build/pack.sh copies, which is package.json,
+# extension.js, uninstall.js, src/, images/, claude-plugin/, README.md and LICENSE. Anything added to the repository
+# that is not one of those belongs on this list, or it ships to every install for no reason.
+.github/**
+.gitignore
+.vscodeignore
+build/**
+logs/**
+test/**
+CONTRIBUTING.md
+supported-versions.json
+
+# Python leaves compiled bytecode beside a module it imports, so running the plugin's hooks locally seeds these inside
+# the tree that ships. They are a build artifact of whoever last ran them.
+**/__pycache__/**
+
+# The README's screenshots. Packaging rewrites every relative image link to an absolute one, so the copies inside the
+# package are never the ones displayed - and they are most of its weight. The icon stays: that one is read from here.
+images/tools-*.png

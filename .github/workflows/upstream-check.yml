@@ -35,7 +35,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          node test/against-latest.js 2>&1 | tee report.txt
+          code=0
+          node test/against-latest.js 2>&1 | tee report.txt || code=$?
+          # The script tells two failures apart and so must this: 1 is an edit that no longer matches, which is the news
+          # this check exists to carry, and 2 is never having reached the marketplace. Filing the second as the first
+          # puts an untrue claim in the issue tracker, and a check that cries wolf stops being read.
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
 
       - name: Put the report in the run summary
         if: always()
@@ -43,13 +49,16 @@ jobs:
         run: |
           {
             echo '## Upstream check'
+            if [ "${{ steps.upstream.outputs.code }}" = '2' ]; then
+              echo 'The check could not run, so it says nothing about the edits.'
+            fi
             echo '```'
             cat report.txt || echo 'the check produced no report'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Open an issue when an edit stopped matching
-        if: failure()
+        if: steps.upstream.outputs.code == '1'
         uses: actions/github-script@v7
         with:
           script: |
