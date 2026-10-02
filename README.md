@@ -1,6 +1,6 @@
 # Claude Code Extras for VS Code
 
-Adds navigation, timestamps, reply figures, sounds, and a work-plan view to Anthropic's official Claude Code chat panel. Requires the official extension; no additions without it.
+The work plan tracks what your Claude Code conversation still has to do; the extension also adds navigation, timestamps, reply figures, and sounds to Anthropic's official Claude Code chat panel. Requires the official extension; no additions without it.
 Not affiliated with Anthropic. Requires VS Code 1.94 or later. Version 1.0.0: 23 settings, 11 commands.
 
 ## Install
@@ -19,6 +19,16 @@ alone with a warning.
 
 Verified against Claude Code 2.1.285 and 2.1.286; compatibility with other builds unknown.
 
+## Work plan
+
+The work plan is a tree of what the conversation you are looking at still has to do. It lives in its own activity-bar view. Across a long conversation, including a compaction, what is still open stays visible to you and in the model's context.
+
+Claude keeps the plan current; you do not. The extension ships a Claude Code plugin, installed on first activation, that writes it. Every turn, the plugin puts open rows in front of the model, says something at the end of a turn that changed things without touching the plan, and refuses a row whose description is longer than the view shows. Claude is told when to move a row: a new request becomes `discussing`; approval makes it `todo`; starting work makes it `doing`, before the work; finishing makes it `done`; a decision against it makes it `dropped` with the reason; leaving it for later makes it `parked` with the reason.
+
+If A needs B finished first, B becomes a child of A: a digression sits under the thing it interrupted. Rows have numbers such as 1, 2, and 2.1, so you can name one in conversation without quoting its title. The number is its place in the file; finishing a row leaves a gap rather than renumbering what follows. Unfinished rows appear first, newest first within that. The activity-bar badge counts open rows and is absent, rather than zero, when nothing is waiting.
+
+Each conversation has one file, named by session ID, under `~/.claude/plugins/data/agent-work-plan-claude-code-extras/`. The view reads those files; the extension never writes them. Correct a plan by hand from the title-bar button or a row's context menu. A plan belongs to one conversation: in-process sub-agents are not covered, and a detached agent is handed one task and left alone.
+
 ## Features
 
 | What it shows | Where it appears |
@@ -30,7 +40,7 @@ Verified against Claude Code 2.1.285 and 2.1.286; compatibility with other build
 | **Context meter:** visible even with over half the window free; outline at 15% remaining; category, memory-file, and custom-agent breakdown | Chat panel meter; hover tooltip |
 | **Session dates:** `11d · 09/05→09/16`; Claude Code relative last-active time, followed by date span | Sessions |
 | **Chimes:** two rising notes, three knocks, two falling notes; synthesized sound; no shipped audio files; footer mute button | Finished turn, permission request, question; local panel, including Remote SSH; footer |
-| **Work plan:** numbered rows, open rows first; badge counts open rows; discussing, to do, doing, parked, done, dropped; one plan file per conversation; companion plugin installed on first activation; plan files at `~/.claude/plugins/data/agent-work-plan-claude-code-extras/`; extension reads plans, does not write them | Activity-bar tree and work-plan rows; Claude Code plugin; plan-file directory |
+| **Work plan:** see [Work plan](#work-plan) | Activity-bar view |
 | **Session information:** session ID, starting directory, transcript location and size; click-to-copy values | Footer button and session information |
 
 ## Settings

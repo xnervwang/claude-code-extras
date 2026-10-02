@@ -1,7 +1,7 @@
 {
   "name": "claude-code-extras",
   "displayName": "Claude Code Extras for VS Code",
-  "description": "Adds timestamps, reply figures, navigation, context details, chimes, and work plans to the official Claude Code chat panel. Requires the Claude Code extension and patches its installed files. Not affiliated with Anthropic.",
+  "description": "Work plan: a tree of what the conversation still has to do, kept current by Claude itself; also adds timestamps, reply figures, navigation, context details, and chimes to the Claude Code chat panel. Patches the installed Claude Code extension's files. Not affiliated with Anthropic.",
   "version": "1.0.0",
   "publisher": "xnerv",
   "license": "BSD-3-Clause",
