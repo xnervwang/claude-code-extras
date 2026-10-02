@@ -3,9 +3,13 @@
   "displayName": "Claude Code Extras for VS Code",
   "description": "Work plan: a tree of what the conversation still has to do, kept current by Claude itself; also adds timestamps, reply figures, navigation, context details, and chimes to the Claude Code chat panel. Patches the installed Claude Code extension's files. Not affiliated with Anthropic.",
   "version": "1.0.0",
-  "publisher": "xnerv",
+  "publisher": "xnervwang",
   "license": "BSD-3-Clause",
   "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xnervwang/claude-code-extras-for-vscode"
+  },
   "engines": {
     "vscode": "^1.94.0"
   },

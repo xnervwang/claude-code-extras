@@ -231,7 +231,8 @@ function activate(context) {
       if (r.ok) await offerReload('The work plan plugin will stop loading in conversations started after a reload.');
     }),
     vscode.commands.registerCommand('claudeCodeExtras.openSettings',
-      () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:xnerv.claude-code-extras')),
+      // Our own id, so a change of publisher or name cannot leave this pointing at an extension that is not here.
+      () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:' + context.extension.id)),
     /* Reads the records rather than measuring anything, so it is also the way to see them after a window restart. */
     vscode.commands.registerCommand('claudeCodeExtras.showOpenLatency', () => {
       sampleLatency();

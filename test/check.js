@@ -509,8 +509,11 @@ if (explicit.length) {
      Counting a stale install as a failure there would report "an edit no longer matches" when every edit matched. */
   note('skipped: checking named bundles, not this machine');
 } else {
+  // The directory name VS Code gives an install, built from the manifest so a rename cannot leave this looking in the
+  // wrong place - which would read as "not installed here" however many times the extension was installed.
+  const mine = require('../package.json');
   const installed = extensionsDirs()
-    .map((d) => path.join(d, 'xnerv.claude-code-extras-1.0.0'))
+    .map((d) => path.join(d, `${mine.publisher}.${mine.name}-${mine.version}`))
     .find((d) => fs.existsSync(d));
   if (!installed) {
     note('this extension is not installed here; nothing to compare');
@@ -1271,7 +1274,7 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`a slow CLI spawn measured ${JSON.stringify(got)}`);
   }
   {
-    const dir = path.join('/a', 'logs', '20260101T000000', 'exthost7', 'xnerv.claude-code-extras');
+    const dir = path.join('/a', 'logs', '20260101T000000', 'exthost7', 'xnervwang.claude-code-extras');
     const want = path.join('/a', 'logs', '20260101T000000', 'exthost7', 'Anthropic.claude-code', 'Claude VSCode.log');
     if (L.logFile(dir) === want) ok('their log is found as a sibling of ours, not by taking the newest directory');
     else bad(`logFile gave ${L.logFile(dir)}`);

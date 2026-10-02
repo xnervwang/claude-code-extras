@@ -6,7 +6,7 @@ Not affiliated with Anthropic. Requires VS Code 1.94 or later. Version 1.0.0: 23
 ## Install
 
 Search for **Claude Code Extras** in the Extensions view, or run
-`code --install-extension xnerv.claude-code-extras`. Anthropic's Claude Code extension installs
+`code --install-extension xnervwang.claude-code-extras`. Anthropic's Claude Code extension installs
 as a dependency.
 
 Reload the VS Code window twice after installing. Run
