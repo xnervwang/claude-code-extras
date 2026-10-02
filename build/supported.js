@@ -196,7 +196,40 @@ function format(record) {
   }, null, 2) + '\n';
 }
 
+/*
+ * The one sentence in README.md that names the builds. It is written from the record rather than by hand: it is a
+ * compatibility claim that someone reads while deciding whether to install, and the first time it drifted it lost a
+ * build and nobody noticed until a person happened to read the line. Both halves below exist so that the writer and
+ * the check share one spelling of it - two spellings would drift the same way the sentence did.
+ */
+const README_FILE = path.join(ROOT, 'README.md');
+const README_LINE = /^Verified against Claude Code (.+); compatibility with other builds unknown\.$/m;
+
+function listed(versions) {
+  const v = versions.slice().sort(cmpVersion);
+  if (!v.length) return 'no build';
+  if (v.length === 1) return v[0];
+  return v.slice(0, -1).join(', ') + ' and ' + v[v.length - 1];
+}
+
+// What the README currently claims, or null when the sentence is not there at all - which the check reports as its own
+// failure, since a missing sentence cannot be kept in step by anything.
+function readmeClaims() {
+  const m = README_LINE.exec(fs.readFileSync(README_FILE, 'utf8'));
+  return m ? m[1].split(/,| and /).map((x) => x.trim()).filter(Boolean) : null;
+}
+
+function syncReadme(versions) {
+  const was = fs.readFileSync(README_FILE, 'utf8');
+  const now = was.replace(README_LINE,
+    `Verified against Claude Code ${listed(versions)}; compatibility with other builds unknown.`);
+  if (now === was) return false;
+  fs.writeFileSync(README_FILE, now);
+  return true;
+}
+
 module.exports = {
   SUPPORTED_FILE, extensionsDirs, pristine, installs, cmpVersion,
   verifyInstall, verifyHere, read, record, format, FOREIGN_MARKER,
+  README_FILE, listed, readmeClaims, syncReadme,
 };

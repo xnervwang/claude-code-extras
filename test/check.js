@@ -378,6 +378,14 @@ if (process.argv.includes('--without-version-record')) {
   } else {
     ok(`the record claims exactly what this machine verifies (${names.join(', ')})`);
   }
+
+  /* The README's compatibility sentence against the record. Nothing guarded it before, and it drifted: it named two
+     builds while the record named three, on a line people read to decide whether to install. */
+  const sentence = supported.readmeClaims();
+  if (!sentence) bad('README.md has no "Verified against Claude Code ...; compatibility with other builds unknown." line to keep in step');
+  else if (sentence.join(', ') !== claimed.join(', ')) {
+    bad(`the record names ${claimed.join(', ')} and README.md names ${sentence.join(', ')}${fix}`);
+  } else ok(`README.md names the builds the record does (${supported.listed(claimed)})`);
 }
 
 /* ── 4b. the scheduled-prompt section, host to page ──

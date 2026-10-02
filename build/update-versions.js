@@ -78,3 +78,6 @@ if (run.status !== 0) {
 console.log('  ' + tail);
 fs.writeFileSync(s.SUPPORTED_FILE, text);
 console.log(`\nwrote ${rel}: ${here.join(', ') || 'nothing'}`);
+// The README names the same builds. Written here rather than by hand so the claim cannot be left behind by an update,
+// which is how it lost a build once; test/check.js fails when the two disagree.
+if (s.syncReadme(here)) console.log(`wrote the sentence in README.md: ${s.listed(here)}`);

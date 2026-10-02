@@ -13,7 +13,8 @@
 - `src/plugin-install.js` registers the companion Claude Code plugin and unregisters it on uninstall.
 - `src/openlatency.js` pairs panel-opening times from the official extension's log.
 - `claude-plugin/` holds the companion plugin: the skill that maintains a plan and the hooks that keep it honest.
-- `test/check.js` runs 181 checks. It parses everything and checks every edit against an unpatched bundle.
+- `test/check.js` is the whole suite. It parses everything and checks every edit against an unpatched bundle. How
+  many checks it runs depends on how many Claude Code builds are installed, so the count is not quoted here.
 - `test/against-latest.js` checks the same edits against the current marketplace build.
 - `build/pack.sh` produces the `.vsix` without npm.
 - `build/supported.js`, `build/update-versions.js`, and `supported-versions.json` maintain the record of verified Claude Code builds.
