@@ -6,7 +6,11 @@ This project is not affiliated with Anthropic. It requires VS Code 1.94 or later
 
 ## Install
 
-Claude Code Extras is not published to the VS Code Marketplace. Build and install it from this repository:
+Install Anthropic's Claude Code extension first. Claude Code Extras adds to its panel and does nothing without it.
+
+Claude Code Extras is not on the VS Code Marketplace, and there is no plan to put it there. It is distributed as source because a Marketplace listing is not a good fit for an extension that edits another extension's installed files. It edits `webview/index.js`, `extension.js`, and `resources/claude-logo-done.svg` inside Claude Code.
+
+Build and install it from this repository:
 
 ```bash
 git clone git@github.com:xnervwang/claude-code-extras-for-vscode.git
@@ -16,13 +20,13 @@ bash build/pack.sh
 code --install-extension build/xnerv.claude-code-extras-*.vsix --force
 ```
 
-No `npm install` is needed. The project has no runtime or build dependencies; `node` builds it.
+You only need `node`. There are no dependencies to install. The check verifies that every edit matches the Claude Code build on your machine, so you know whether it is supported before installing.
 
-Reload the VS Code window twice. The first reload lets Claude Code Extras patch the installed Claude Code files. The second lets the panel load those changes. Run **Claude Code Extras: Show Status** to see what was patched.
+Reload the VS Code window twice. The first reload lets Claude Code Extras write its changes into the Claude Code files. The second lets the panel load them. Run **Claude Code Extras: Show Status** to see what it patched.
 
-In a Remote SSH window, install Claude Code Extras on the remote host, where the Claude Code files it edits are located.
+In a Remote SSH window, install Claude Code Extras on the remote. The files it edits are the ones the remote runs.
 
-To undo the changes, run **Claude Code Extras: Remove from Claude Code (restore original files)** or uninstall Claude Code Extras.
+To undo the changes, run **Claude Code Extras: Remove from Claude Code (restore original files)** or uninstall Claude Code Extras. Both restore the originals from backups kept beside them.
 
 ## What it adds
 
