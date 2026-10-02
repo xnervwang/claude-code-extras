@@ -1,70 +1,79 @@
 # Claude Code Extras for VS Code
 
-Claude Code Extras adds navigation, timestamps, reply figures, sounds, and a work-plan view to the chat panel in Anthropic's official Claude Code extension. The official extension must be installed; Claude Code Extras does nothing without it.
-
-This project is not affiliated with Anthropic. It requires VS Code 1.94 or later. Version 1.0.0 has 23 settings and 11 commands.
+Adds navigation, timestamps, reply figures, sounds, and a work-plan view to Anthropic's official Claude Code chat panel. Requires the official extension; no additions without it.
+Not affiliated with Anthropic. Requires VS Code 1.94 or later. Version 1.0.0: 23 settings, 11 commands.
 
 ## Install
 
-Search for **Claude Code Extras** in the Extensions view, or run `code --install-extension xnerv.claude-code-extras`. Anthropic's Claude Code extension comes with it as a dependency; Claude Code Extras adds to that panel and does nothing without it.
+Search for **Claude Code Extras** in the Extensions view, or run
+`code --install-extension xnerv.claude-code-extras`. Anthropic's Claude Code extension installs
+as a dependency.
 
-Reload the VS Code window twice. The first reload lets Claude Code Extras write its changes into the Claude Code files. The second lets the panel load them. Run **Claude Code Extras: Show Status** to see what it patched.
+Reload the VS Code window twice after installing. Run
+`Claude Code Extras: Show Status` for the patch status. In a Remote SSH window, install on the
+remote.
 
-In a Remote SSH window, install Claude Code Extras on the remote. The files it edits are the ones the remote runs.
+Claude Code Extras edits files inside the installed Claude Code extension. The patch is reverted
+by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
+alone with a warning.
 
-To undo the changes, run **Claude Code Extras: Remove from Claude Code (restore original files)** or uninstall Claude Code Extras. Both restore the originals from backups kept beside them.
+Verified against Claude Code 2.1.285 and 2.1.286; compatibility with other builds unknown.
 
-## What it adds
+## Features
 
-- **Timestamps:** Your messages, each reply block, and tool calls show times from the transcript. Tool calls show `start→result`. Today's entries show the clock; older entries also show the day and month. Reopened history retains its original times.
-- **Reply figures:** Each reply shows a line such as `2m10s · ctx 33% · cost $0.42 · opus-5 high`: turn duration, context-window use, running spend, and model. Closed turns retain their figures.
-- **Sub-agent tags and filters:** Rows show tags from sub-agent spawn descriptions, such as `#look up tomorrow's weather`. A footer filter switches between `All`, `Main`, and individual sub-agents. The table of contents follows the filter.
-- **Conversation navigation:** A table of contents on the right edge lists your messages by time and opening words. It has a filter box, marks compaction points, and scrolls to a message when clicked. Arrow buttons and the `,` and `.` keys step between messages. Buttons jump to the top or bottom.
-- **Context meter:** The meter stays visible, including when more than half the window is free. An outline warns at 15% remaining. Hover over it for a breakdown by category, memory file, and custom agent in the panel's tooltip.
-- **Session dates:** `11d` is Claude Code's own relative time for how long ago the session was last active; Claude Code Extras appends the date span, for example `11d · 09/05→09/16`.
-- **Chimes:** Different synthesized sounds mark a finished turn, a permission request, and a question: two rising notes, three knocks, and two falling notes. They play in the panel on your machine, including when VS Code is attached to a remote host over SSH. A footer button mutes them. No audio files ship.
-- **Work plan:** An activity-bar tree shows what the current conversation still has to do. Rows are numbered, open rows come first, and the badge counts open rows. The six states are discussing, to do, doing, parked, done, and dropped. A companion Claude Code plugin, installed on first activation, writes one plan file per conversation under `~/.claude/plugins/data/agent-work-plan-claude-code-extras/`. The extension reads those files; it does not write the plans.
-- **Session information:** A footer button shows the session ID, the conversation's starting directory, and the location and size of its transcripts. Click a value to copy it.
+| What it shows | Where it appears |
+| --- | --- |
+| **Timestamps:** transcript times; `start→result` for tool calls; clock today; day and month for older entries; original times in reopened history | Messages, reply blocks, tool calls |
+| **Reply figures:** `2m10s · ctx 33% · cost $0.42 · opus-5 high`; turn duration, context-window use, running spend, model | Each reply, including closed turns |
+| **Sub-agent tags and filters:** spawn descriptions, such as `#look up tomorrow's weather`; `All`, `Main`, and individual sub-agent filters; table of contents follows filter | Tags on rows; filters in footer |
+| **Conversation navigation:** message times, opening words, compaction points; filter box; click-to-scroll; message stepping with arrows, `,`, and `.`; top and bottom jumps | Right-edge table of contents; buttons |
+| **Context meter:** visible even with over half the window free; outline at 15% remaining; category, memory-file, and custom-agent breakdown | Chat panel meter; hover tooltip |
+| **Session dates:** `11d · 09/05→09/16`; Claude Code relative last-active time, followed by date span | Sessions |
+| **Chimes:** two rising notes, three knocks, two falling notes; synthesized sound; no shipped audio files; footer mute button | Finished turn, permission request, question; local panel, including Remote SSH; footer |
+| **Work plan:** numbered rows, open rows first; badge counts open rows; discussing, to do, doing, parked, done, dropped; one plan file per conversation; companion plugin installed on first activation; plan files at `~/.claude/plugins/data/agent-work-plan-claude-code-extras/`; extension reads plans, does not write them | Activity-bar tree and work-plan rows; Claude Code plugin; plan-file directory |
+| **Session information:** session ID, starting directory, transcript location and size; click-to-copy values | Footer button and session information |
 
-## How the patch works
+## Settings
 
-Claude Code Extras edits three files inside the installed Claude Code extension: `webview/index.js`, which is the panel; `extension.js`, its host-side Node bundle; and `resources/claude-logo-done.svg`, its done icon.
+Open `Claude Code Extras: Settings` for the settings UI. Options cover message times, reply
+figures, sub-agent tags, navigation, footer controls, sounds, session details, the work plan
+and its offer thresholds, and panel-opening latency recording. Message appearance:
+`claudeCodeExtras.userMessageColor` and `claudeCodeExtras.userMessageEdge`.
 
-Each edit matches a code shape rather than an identifier, because identifiers in the minified bundle change between builds. An edit must match exactly once. The patched file must parse before it is written. The original is backed up beside the file, and the replacement is atomic. If a build's shape no longer matches, Claude Code Extras warns and leaves the file unchanged rather than patching on a guess. Removing or uninstalling Claude Code Extras restores the originals from those backups.
+Most settings apply live without a reload; installing or upgrading the patch requires a reload.
+`claudeCodeExtras.enabled` is the same setting as the **Extras: On/Off** status bar item.
+Turning it off hides the additions without restoring the original files.
 
-Claude Code Extras has been verified against Claude Code **2.1.285** and **2.1.286**. Compatibility with other builds is unknown. `supported-versions.json` records which builds were verified against each commit's own code. A scheduled job checks the newest published Claude Code build four times a day and opens an issue if an edit stops matching. The 181 automated checks parse the injected script and run every edit against an unpatched Claude Code bundle.
+Turning off `claudeCodeExtras.workPlan` hides the view and stops plan updates. The registered
+plugin's skill description still loads in Claude Code; use
+`Claude Code Extras: Stop Loading the Work Plan Plugin` to stop loading it.
 
-## Commands and settings
+## Commands
 
-Open the Command Palette to run these commands:
-
-- `Claude Code Extras: Settings` — open VS Code settings filtered to this extension.
-- `Claude Code Extras: Toggle On/Off` — switch the additions on or off.
-- `Claude Code Extras: Turn On` — show the additions.
-- `Claude Code Extras: Turn Off` — hide the additions.
-- `Claude Code Extras: Remove from Claude Code (restore original files)` — restore the original Claude Code files.
-- `Claude Code Extras: Show Status` — check the patch status.
-- `Claude Code Extras: Refresh Work Plan` — refresh the work plan.
-- `Claude Code Extras: Open the Work Plan File` — open the current plan file.
-- `Claude Code Extras: Install the Work Plan Plugin for Claude Code` — register the companion plugin.
-- `Claude Code Extras: Show How Long Opening a Panel Took` — read recorded panel-opening times.
-- `Claude Code Extras: Stop Loading the Work Plan Plugin` — remove the plugin from Claude Code's settings.
-
-Settings let you choose which additions appear: message times and reply figures, sub-agent tags, navigation and footer controls, sounds, and session details. You can also change how your own messages look with `claudeCodeExtras.userMessageColor` and `claudeCodeExtras.userMessageEdge`. The work plan, its offer thresholds, and panel-opening latency recording have their own settings. Use **Claude Code Extras: Settings** to see all options.
-
-Most settings apply live, without a reload. Installing or upgrading the patch itself needs a reload. `claudeCodeExtras.enabled` is also the **Extras: On/Off** status bar setting. Turning it off hides the additions but leaves the patch in place. To restore the original files, use **Claude Code Extras: Remove from Claude Code (restore original files)**.
-
-Turning off `claudeCodeExtras.workPlan` hides the plan view and stops plan updates, but the registered plugin's skill description still loads in Claude Code. Use **Claude Code Extras: Stop Loading the Work Plan Plugin** to stop that too.
+| Command | What it does |
+| --- | --- |
+| `Claude Code Extras: Settings` | Open this extension's VS Code settings |
+| `Claude Code Extras: Toggle On/Off` | Toggle additions |
+| `Claude Code Extras: Turn On` | Show additions |
+| `Claude Code Extras: Turn Off` | Hide additions |
+| `Claude Code Extras: Remove from Claude Code (restore original files)` | Restore original files |
+| `Claude Code Extras: Show Status` | Report patch status and what was patched |
+| `Claude Code Extras: Refresh Work Plan` | Refresh work plan |
+| `Claude Code Extras: Open the Work Plan File` | Open current plan file |
+| `Claude Code Extras: Install the Work Plan Plugin for Claude Code` | Register companion plugin |
+| `Claude Code Extras: Show How Long Opening a Panel Took` | Read recorded panel-opening times |
+| `Claude Code Extras: Stop Loading the Work Plan Plugin` | Remove plugin from Claude Code settings |
 
 ## Known limits
 
-A Claude Code update may preserve every patched code shape but rename CSS classes used by the in-page script. In that case, the patch can apply without its panel features working. The script detects this and displays an orange exclamation mark in the panel's top-right corner.
-
-Uninstalling Claude Code Extras unregisters its companion plugin. Claude Code deletes a plugin's data directory when it is unregistered. Before that happens, the plans are copied to `~/.claude/agent-work-plan-plans-<timestamp>/`.
+- Patched code shapes with renamed CSS classes: panel features may fail; orange exclamation
+  mark at the panel's top right.
+- Uninstallation unregisters the plugin: Claude Code deletes its data directory; plans copied
+  beforehand to `~/.claude/agent-work-plan-plans-<timestamp>/`.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout, how to run the checks, and how the record of verified Claude Code builds works.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout, checks, and verified-build records.
 
 ## License
 
