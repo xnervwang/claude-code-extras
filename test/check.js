@@ -381,6 +381,18 @@ if (process.argv.includes('--without-version-record')) {
 
   /* The README's compatibility sentence against the record. Nothing guarded it before, and it drifted: it named two
      builds while the record named three, on a line people read to decide whether to install. */
+  /* The two counts the README quotes, against the manifest. Same reasoning as the sentence below: a number in a
+     published document that nothing derives it from goes stale at the first change that moves it. */
+  {
+    const m = /^.*?(\d+) settings, (\d+) commands\.$/m.exec(fs.readFileSync(supported.README_FILE, 'utf8'));
+    const c = require('../package.json').contributes;
+    const want = [Object.keys(c.configuration.properties).length, c.commands.length];
+    if (!m) bad('README.md does not say "N settings, N commands", so those numbers cannot be kept in step');
+    else if (Number(m[1]) !== want[0] || Number(m[2]) !== want[1]) {
+      bad(`the manifest has ${want[0]} settings and ${want[1]} commands; README.md says ${m[1]} and ${m[2]}`);
+    } else ok(`README.md counts the settings and commands the manifest has (${want[0]}, ${want[1]})`);
+  }
+
   const sentence = supported.readmeClaims();
   if (!sentence) bad('README.md has no "Verified against Claude Code ...; compatibility with other builds unknown." line to keep in step');
   else if (sentence.join(', ') !== claimed.join(', ')) {

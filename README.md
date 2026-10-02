@@ -1,7 +1,7 @@
 # Extras for Claude Code
 
-The work plan tracks what your Claude Code conversation still has to do; the extension also adds navigation, timestamps, reply figures, and sounds to Anthropic's official Claude Code chat panel. Requires the official extension; no additions without it.
-Not affiliated with Anthropic. Requires VS Code 1.94 or later. Version 1.0.0: 23 settings, 11 commands.
+This VS Code extension edits the installed Claude Code extension to add a Claude-maintained work plan to its chat panel. The plan keeps unfinished work on screen and puts it back in front of Claude after older turns are compacted. It also adds timestamps; reply duration, context use, running spend, and model; a filterable table of contents with message stepping; a context meter with a hover breakdown; sub-agent tags and filters; a fold for thinking and tool calls; chimes; and session details.
+Not affiliated with Anthropic. Requires Anthropic's Claude Code extension, which it adds nothing without, and VS Code 1.94 or later. 23 settings, 11 commands.
 
 ## Install
 
@@ -21,7 +21,7 @@ Verified against Claude Code 2.1.287; compatibility with other builds unknown.
 
 ## Work plan
 
-The work plan is a tree of what the conversation you are looking at still has to do. It lives in its own activity-bar view. Across a long conversation, including a compaction, what is still open stays visible to you and in the model's context.
+The work plan is a tree of what the conversation you are looking at still has to do, in its own activity-bar view. Compaction summarizes older turns to fit the context window, so Claude can lose track of the main task after several digressions. The plan stays in a file outside the conversation, named for its session ID, and a hook injects the open rows every turn: a task raised twenty turns and several compactions ago remains in front of Claude and visible in the plan's activity-bar view.
 
 Claude keeps the plan current; you do not. The extension ships a Claude Code plugin, installed on first activation, that writes it. Every turn, the plugin puts open rows in front of the model, says something at the end of a turn that changed things without touching the plan, and refuses a row whose description is longer than the view shows. Claude is told when to move a row: a new request becomes `discussing`; approval makes it `todo`; starting work makes it `doing`, before the work; finishing makes it `done`; a decision against it makes it `dropped` with the reason; leaving it for later makes it `parked` with the reason.
 
