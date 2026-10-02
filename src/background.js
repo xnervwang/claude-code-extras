@@ -33,9 +33,12 @@ const SUFFIX = '.background';
 const LINK_FILE = /^[0-9a-f][0-9a-f-]{7,}\.background$/i;
 const SESSION = /^[0-9a-f][0-9a-f-]{7,}$/i;
 const SHORT_ID = /^[0-9a-f]{8}$/;
-/* The CLI's own words, middle dot and all. When the output went to a terminal the id is wrapped in colour codes. */
+/* The CLI's own words, middle dot and all, at the start of a line. When the output went to a terminal the id is wrapped
+   in colour codes. */
 const MARK = Buffer.from('backgrounded · ', 'utf8');
-const ID_AFTER = /backgrounded · (?:\x1b\[[0-9;]*m)*([0-9a-f]{8})(?![0-9a-f])/g;
+const ID_AFTER = /^backgrounded · (?:\x1b\[[0-9;]*m)*([0-9a-f]{8})(?![0-9a-f])/gm;
+/* The flag that starts one, found in the command a tool result answers. */
+const BG_FLAG = Buffer.from('--bg', 'utf8');
 const CHUNK = 8 << 20;
 /* The stylesheet carries all of this to every panel on every change, so the caps are about its size, not about how
    many sessions anyone starts. */
@@ -48,36 +51,40 @@ const PERSIST_EVERY = 1 << 20;
 
 function planDir() { return require('./workplan').planDir(); }
 
-/** The text of every tool result in one transcript row. Prose is not looked at: a mention is not a launch. */
-function resultTexts(row) {
-  const out = [];
-  const blocks = row && row.message && Array.isArray(row.message.content) ? row.message.content : [];
-  for (const b of blocks) {
-    if (!b || b.type !== 'tool_result') continue;
-    if (typeof b.content === 'string') out.push(b.content);
-    else if (Array.isArray(b.content)) for (const c of b.content) if (c && typeof c.text === 'string') out.push(c.text);
-  }
-  return out;
-}
+const textOf = (b) => (typeof b.content === 'string' ? b.content
+  : Array.isArray(b.content) ? b.content.map((c) => (c && typeof c.text === 'string' ? c.text : '')).join('') : '');
 
 /*
- * The ids one transcript line says were launched. Three conditions together, because each one alone has been met by
- * something that was not a launch: the words have to be in a tool result, be followed by exactly eight hex digits, and
- * name a session that has a record. A document describing the format matched the words and not the digits.
+ * One transcript line, read for launches. Every condition below has been met on its own by something that was not one.
+ *
+ * The output has to answer a command that ran `--bg`: a command that printed an earlier launch back - a grep over
+ * another transcript, say - produced the very same line, at the start of it, for an id that was real and still had a
+ * record, so nothing in the text could tell the two apart. The words have to open a line, which keeps out a launch
+ * quoted in passing; be followed by exactly eight hex digits, which keeps out a document describing the format; and
+ * name a session that has a record. The CLI's hints after the id are not required: a launch whose output was cut short
+ * has none, and that is an ordinary launch.
+ *
+ * `ran` carries the commands across lines and passes, since a call and its result are separate rows.
  */
-function idsInLine(line, jobs) {
+function readLine(line, ran, jobs, seen) {
   let row;
-  try { row = JSON.parse(line); } catch (_) { return []; }
-  const found = [];
-  for (const text of resultTexts(row)) {
+  try { row = JSON.parse(line); } catch (_) { return; }
+  const blocks = row && row.message && Array.isArray(row.message.content) ? row.message.content : [];
+  for (const b of blocks) {
+    if (!b) continue;
+    if (b.type === 'tool_use' && b.input && typeof b.input.command === 'string' && b.input.command.includes('--bg')) {
+      ran.add(b.id);
+      if (ran.size > 500) ran.delete(ran.values().next().value);
+      continue;
+    }
+    if (b.type !== 'tool_result' || !ran.has(b.tool_use_id)) continue;
+    const text = textOf(b);
     ID_AFTER.lastIndex = 0;
     let m;
     while ((m = ID_AFTER.exec(text))) {
-      const id = m[1];
-      if (!found.includes(id) && fs.existsSync(path.join(jobs, id, 'state.json'))) found.push(id);
+      if (!seen.has(m[1]) && fs.existsSync(path.join(jobs, m[1], 'state.json'))) seen.add(m[1]);
     }
   }
-  return found;
 }
 
 /* Session ids are unique across every project on a machine, so the transcript is found by name, once. */
@@ -116,6 +123,7 @@ function writeLink(file, link) {
 /* What this host has found per conversation, kept so that a write which lost a race with another window's write puts
    back what the other one did not know about, the next time this host writes. */
 const known = new Map();
+const commands = new Map();
 const busy = new Map();
 
 /**
@@ -144,6 +152,8 @@ async function scanOnce(session, opts) {
   const from = link.scannedTo <= size ? link.scannedTo : 0;
   const seen = new Set(link.ids);
   for (const id of known.get(session) || []) seen.add(id);
+  if (!commands.has(session)) commands.set(session, new Set());
+  const ran = commands.get(session);
   let consumed = from;
   if (from < size) {
     const fh = await fs.promises.open(transcript, 'r');
@@ -158,12 +168,18 @@ async function scanOnce(session, opts) {
         const data = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : buf.subarray(0, bytesRead);
         const last = data.lastIndexOf(0x0a);
         if (last === -1) { carry = Buffer.from(data); continue; }
-        let at = 0;
-        while ((at = data.indexOf(MARK, at)) !== -1 && at < last) {
-          const lineStart = data.lastIndexOf(0x0a, at) + 1;
-          const lineEnd = data.indexOf(0x0a, at);
-          for (const id of idsInLine(data.subarray(lineStart, lineEnd).toString('utf8'), jobs)) seen.add(id);
-          at = lineEnd + 1;
+        // Only the lines that hold one of the two needles are parsed, in file order, so that a call is seen before
+        // the result that answers it.
+        const starts = new Set();
+        for (const needle of [BG_FLAG, MARK]) {
+          let at = 0;
+          while ((at = data.indexOf(needle, at)) !== -1 && at < last) {
+            starts.add(data.lastIndexOf(0x0a, at) + 1);
+            at = data.indexOf(0x0a, at) + 1;
+          }
+        }
+        for (const ls of [...starts].sort((a, b) => a - b)) {
+          readLine(data.subarray(ls, data.indexOf(0x0a, ls)).toString('utf8'), ran, jobs, seen);
         }
         consumed = start + last + 1;
         carry = Buffer.from(data.subarray(last + 1));
@@ -256,6 +272,6 @@ function collect(opts = {}) {
 }
 
 module.exports = {
-  scan, collect, readState, idsInLine, transcriptOf,
+  scan, collect, readState, transcriptOf,
   SUFFIX, LINK_FILE, MAX_SESSIONS, MAX_PER_SESSION, MAX_ENTRIES,
 };

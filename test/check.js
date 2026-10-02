@@ -620,21 +620,32 @@ console.log('\nbackground sessions');
       intent: '<!-- WRITING-CONTRACT\nscope: what this is for\n-->\n\n# Do the thing\nthen stop',
     }, fields || {})));
   };
-  const result = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: [
-    { type: 'tool_result', tool_use_id: 't', content: text }] } }) + '\n';
+  let callNo = 0;
+  // A call and the result that answers it: two rows, as a transcript records them.
+  const ran = (command, text) => {
+    const id = 'toolu_' + (++callNo);
+    return JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [
+      { type: 'tool_use', id, name: 'Bash', input: { command } }] } }) + '\n'
+      + JSON.stringify({ type: 'user', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: id, content: text }] } }) + '\n';
+  };
   const prose = (text) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [
     { type: 'text', text }] } }) + '\n';
   const launched = (id) => `backgrounded · ${id}\n  claude agents             list sessions\n  claude attach ${id}    open in this terminal\n`;
   job('1a2b3c4d');
   job('5e6f7a8b', { state: 'blocked', needs: 'decide which of the two copies to keep' });
   job('0badc0de');
+  job('cafef00d');   // a real session, only printed back by another command
+  job('deadbea7');
   job('77777777', { state: 'done', lastTerminalAt: '2026-10-02T11:00:00.000Z', output: { result: 'all 11 ids kept' } });
   fs.writeFileSync(transcript,
-    prose('the output looks like backgrounded · 0badc0de, for example') +   // a mention, not a launch
-    result(launched('1a2b3c4d')) +                                            // a launch
-    result('the format is backgrounded · [0-9a-f]{8} followed by hints') +   // a document describing it
-    result('backgrounded · \x1b[36m5e6f7a8b\x1b[39m\n') +                    // a launch, the id coloured
-    result(launched('99999999')));                                            // no record of that one
+    prose('the output looks like backgrounded · 0badc0de, for example') +           // a mention, not a launch
+    ran('claude --bg "task one"', launched('1a2b3c4d') + 'note: backgrounded · cafef00d is older\n') + // and one in passing
+    ran('cat notes.md', 'the format is backgrounded · [0-9a-f]{8} followed by hints') + // a document describing it
+    ran('claude --bg "task two"', 'backgrounded · \x1b[36m5e6f7a8b\x1b[39m\n') +        // the id coloured
+    ran('grep -h backgrounded old.jsonl', launched('cafef00d')) +                     // an earlier launch printed back
+    ran('claude --bg "task three"', 'Starting background service…\nbackgrounded · deadbea7') + // hints cut off
+    ran('claude --bg "task four"', launched('99999999')));                            // no record of that one
 
   const scanAll = (steps) => {
     const script = `
@@ -655,7 +666,7 @@ console.log('\nbackground sessions');
     return JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' }));
   };
 
-  const half = result(launched('77777777'));
+  const half = ran('claude --bg "task five"', launched('77777777'));
   const filler = prose('still working on it');
   const steps = scanAll([
     {},
@@ -666,10 +677,10 @@ console.log('\nbackground sessions');
   else {
     const [first, partial, whole] = steps;
     const ids = (first.link && first.link.ids) || [];
-    if (ids.join() === '1a2b3c4d,5e6f7a8b') ok('two launches are found, the coloured one included');
+    if (ids.join() === '1a2b3c4d,5e6f7a8b,deadbea7') ok('three launches are found: coloured, and with the hints cut off');
     else bad(`the first scan recorded ${JSON.stringify(ids)}`);
-    if (!ids.includes('0badc0de') && !ids.includes('99999999')) {
-      ok('a mention in prose, the format written out, and a session with no record are all left out');
+    if (!ids.includes('0badc0de') && !ids.includes('99999999') && !ids.includes('cafef00d')) {
+      ok('a mention in prose or in passing, the format written out, a launch printed back by grep, and a session with no record are all left out');
     } else bad(`something that was not a launch was recorded: ${JSON.stringify(ids)}`);
     // In bytes: the middle dot in the CLI's words is two of them, so a string's length is not the file's.
     const size0 = fs.statSync(transcript).size - Buffer.byteLength(filler) - Buffer.byteLength(half);
@@ -687,7 +698,7 @@ console.log('\nbackground sessions');
   {
     const SID2 = 'bbbbbbbb-1111-2222-3333-444444444444';
     const t2 = path.join(proj, SID2 + '.jsonl');
-    fs.writeFileSync(t2, prose('nothing launched here') + result('ls -la output'));
+    fs.writeFileSync(t2, prose('nothing launched here') + ran('ls -la', 'total 0'));
     const script = `require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))})
       .scan(${JSON.stringify(SID2)}, ${JSON.stringify({ dir: plans, jobs, transcript: t2 })})
       .then((r) => process.stdout.write(JSON.stringify(r)));`;
@@ -700,7 +711,7 @@ console.log('\nbackground sessions');
   const list = bg.collect({ dir: plans, jobs });
   const byId = Object.fromEntries(list.map((e) => [e.id, e]));
   const e1 = byId['1a2b3c4d'], e2 = byId['5e6f7a8b'], e3 = byId['77777777'];
-  if (list.length === 3 && e1 && e1.session === SID && e1.detail === 'reading files' && e1.tokens === 12000) {
+  if (list.length === 4 && e1 && e1.session === SID && e1.detail === 'reading files' && e1.tokens === 12000) {
     ok('each recorded session is read from its own state, under the conversation that started it');
   } else bad(`collect gave ${JSON.stringify(list)}`);
   if (e1 && e1.task.startsWith('# Do the thing')) ok('the task is shown without the comment block it opens with');
@@ -744,7 +755,7 @@ console.log('\nbackground sessions');
   const api = sandbox.window;
   const tree = api.__cceSchedule(h);
   const flat = JSON.stringify(calls);
-  if (tree && flat.includes('3 background sessions') && flat.includes('Waiting for you: decide which of the two copies')) {
+  if (tree && flat.includes('4 background sessions') && flat.includes('Waiting for you: decide which of the two copies')) {
     ok('the agent map lists this conversation\'s sessions, a waiting one saying what it waits for');
   } else bad('the section did not render the sessions as expected');
   if (flat.includes('claude attach 1a2b3c4d') && flat.includes('claude logs 5e6f7a8b')) {
@@ -754,7 +765,7 @@ console.log('\nbackground sessions');
   if (!bare.length) ok('every element passes its children as an array');
   else bad(`${bare.length} element(s) pass children as a bare value`);
   const label = api.__cceAgentsLabel('3 agents', 3);
-  if (label === '3 agents · 2 bg (1 waiting)') ok(`the button counts the sessions still running or waiting (${label})`);
+  if (label === '3 agents · 3 bg (1 waiting)') ok(`the button counts the sessions still running or waiting (${label})`);
   else bad(`the button read "${label}"`);
   if (api.__cceScheduleCount() >= 2) ok('the sessions open the button even with no agent running');
   else bad('the button would stay hidden with only background sessions');
