@@ -29,6 +29,17 @@ If A needs B finished first, B becomes a child of A: a digression sits under the
 
 Each conversation has one file, named by session ID, under `~/.claude/plugins/data/agent-work-plan-claude-code-extras/`. The view reads those files; the extension never writes them. Correct a plan by hand from the title-bar button or a row's context menu. A plan belongs to one conversation: in-process sub-agents are not covered, and a detached agent is handed one task and left alone.
 
+## What it looks like
+
+The work plan on the left, times on every message and reply, the table of contents at the right
+edge, and the footer controls. Thinking and tool calls shown, which is the default:
+
+![Chat panel with thinking and tool calls shown](images/tools-expanded.png)
+
+The same conversation with one footer button pressed, leaving your messages and Claude's replies:
+
+![The same conversation with thinking and tool calls folded away](images/tools-folded.png)
+
 ## Features
 
 | What it shows | Where it appears |
