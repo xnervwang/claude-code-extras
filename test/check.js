@@ -1409,6 +1409,16 @@ console.log('\nwhat the Stop hook says, and how often');
     fs.rmSync(u.dir, { recursive: true, force: true });
   }
   {
+    /* A session that keeps no transcript - `claude -p --no-session-persistence` is one - still runs this hook, with a
+       path to a file that was never written. A traceback here is drawn in the panel as a failed Stop hook. */
+    const t = stage(10, { nodes: [{ title: 'x', state: 'todo' }] });
+    fs.rmSync(t.transcript);
+    const r = run(t);
+    if (r.status === 0 && !r.said) ok('a transcript that cannot be read leaves the hook silent, not failing');
+    else bad(`with no transcript the hook exited ${r.status} and said ${JSON.stringify(r.said.slice(0, 120))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  {
     /* A file that is not there, or is nonsense, leaves the plugin on its own defaults - it ships without this extension. */
     const t = stage(40, null, 3, { offerMinTurns: 'lots', offerMinToolCalls: 0 });
     const r = run(t);

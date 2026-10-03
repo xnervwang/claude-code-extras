@@ -109,7 +109,7 @@ def turn_shape(transcript, plan=""):
             fh.seek(size - window)
             lines = fh.read().decode("utf-8", "replace").split("\n")
     except Exception:
-        return None, 0, 0, False
+        return None, 0, 0, 0, False
     rows = []
     for line in lines:
         if '"type"' not in line:
