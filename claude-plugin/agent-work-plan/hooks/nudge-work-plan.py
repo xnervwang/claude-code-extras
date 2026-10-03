@@ -49,36 +49,16 @@ for a signal that happens to correlate is how a check starts passing for the wro
 """
 import json
 import os
-import re
 import sys
 
 # Set before the import below: see inject-work-plan.py. A hook that runs on every turn leaves no bytecode behind in the
 # installed plugin directory.
 sys.dont_write_bytecode = True
 
+from changes import changes
 from plan_path import plan_file, settings
 
 # Every threshold this uses is in plan_path.DEFAULTS, where the editor's settings can override it.
-
-
-# Tools that change something by definition. Everything not named here - reading, searching, fetching, measuring - is a
-# turn looking at the world rather than altering it, and owes the plan nothing.
-CHANGING_TOOLS = ("Write", "Edit", "NotebookEdit")
-# A shell command that changes something. Bash cannot be judged by its name, so it is judged by what it runs, and the
-# uncertain cases are resolved towards silence: a command this misses makes the reminder miss a turn, while a command it
-# wrongly catches puts the reminder back on the turns it was just taken off.
-#
-# The redirection branch is the delicate one, because `>` is a redirect in a shell and a comparison everywhere else, and
-# a heredoc script is passed as one argument so both meanings turn up in the same string. It therefore excludes `2>&1`
-# and `>/dev/null`, which appear in commands that only read, and `>=` and `=>`, which are not redirects at all - a
-# `count >= 4` inside an embedded script read as a write and put the reminder back on turns that had changed nothing.
-CHANGING_SHELL = re.compile(
-    r"\bgit\s+(commit|add|push|mv|rm|apply|checkout|reset|revert|tag|stash)\b"
-    r"|\b(tee|mkdir|rmdir|touch|mv|cp|rm|chmod|chown|ln|truncate|install)\s"
-    r"|\bsed\s+-i"
-    r"|(?<![>=])>>?\s*(?!/dev/)[^&=\s|]"
-    r"|\bopen\([^)]*['\"][wa]"
-)
 
 
 def changed(row):
@@ -86,19 +66,9 @@ def changed(row):
     content = (row.get("message") or {}).get("content")
     if not isinstance(content, list):
         return 0
-    n = 0
-    for block in content:
-        if not isinstance(block, dict) or block.get("type") != "tool_use":
-            continue
-        name = block.get("name") or ""
-        if name in CHANGING_TOOLS:
-            n += 1
-            continue
-        if name == "Bash":
-            command = (block.get("input") or {}).get("command")
-            if isinstance(command, str) and CHANGING_SHELL.search(command):
-                n += 1
-    return n
+    return sum(1 for block in content
+               if isinstance(block, dict) and block.get("type") == "tool_use"
+               and changes(block.get("name") or "", block.get("input")))
 
 
 def spoke(row):

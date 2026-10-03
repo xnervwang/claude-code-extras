@@ -1003,6 +1003,26 @@ console.log('\nabandoned work plans');
         return t;
       },
       (t, r) => r.deleted === 0 && left(t.dir).join() === id(2) + '.background'],
+    /* The mark saying which turn a conversation is in. Rewritten every turn, so a live conversation's is always young;
+       one that outlived its conversation is the only kind that gets old. */
+    ['the mark of a conversation\'s current turn goes when the conversation does',
+      () => {
+        const t = build([id(1)], []);
+        const f = path.join(t.dir, id(2) + '.turn');
+        fs.writeFileSync(f, '{"prompt":"p","began":1}');
+        fs.utimesSync(f, OLD / 1000, OLD / 1000);
+        return t;
+      },
+      (t, r) => r.deleted === 1 && left(t.dir).length === 0],
+    ['and is kept while the conversation is still there',
+      () => {
+        const t = build([id(2)], []);
+        const f = path.join(t.dir, id(2) + '.turn');
+        fs.writeFileSync(f, '{"prompt":"p","began":1}');
+        fs.utimesSync(f, OLD / 1000, OLD / 1000);
+        return t;
+      },
+      (t, r) => r.deleted === 0 && left(t.dir).join() === id(2) + '.turn'],
   ];
 
   for (const [what, make, want] of cases) {
@@ -1111,8 +1131,15 @@ console.log('\nwhat is left to do, drawn first');
   } else bad(`doing sorted to ${titles(plan.openFirst(withDoing))}, open states ${plan.OPEN_STATES.join()}`);
 
   /* An unknown state falls back to todo, so a plan written by a newer build stays readable rather than half-rendering. */
-  if (plan.STATES.includes('doing') && plan.STATES.length === 6) ok('six states, doing among them');
-  else bad(`the states are ${plan.STATES.join()}`);
+  if (plan.STATES.length === 7 && plan.STATES.includes('doing') && plan.STATES.includes('waiting')) {
+    ok('seven states, doing and waiting among them');
+  } else bad(`the states are ${plan.STATES.join()}`);
+
+  /* A row waiting on somebody is still unfinished, so it is drawn and injected with the rest of the open work. */
+  const withWaiting = [N('a', 'done'), N('b', 'waiting'), N('c', 'todo')];
+  if (titles(plan.openFirst(withWaiting)) === 'c,b,a' && plan.OPEN_STATES.includes('waiting')) {
+    ok('a row waiting on somebody counts as open');
+  } else bad(`waiting sorted to ${titles(plan.openFirst(withWaiting))}, open states ${plan.OPEN_STATES.join()}`);
 
   /* Nothing to separate still means newest first: the two groups are an ordering on top of that, not instead of it. */
   const allDone = [N('a', 'done'), N('b', 'dropped')];
@@ -1808,18 +1835,25 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
     encoding: 'utf8', input: JSON.stringify(payload),
   }).stdout || '').trim();
 
+  /* Two changes in one batch, which is what the reminder at the start of the work needs before it says anything. */
+  const working = { session_id: session, prompt_id: 'p-switch', hook_event_name: 'PostToolBatch',
+    tool_calls: [{ tool_name: 'Edit', tool_input: {} }, { tool_name: 'Write', tool_input: {} }] };
   for (const [what, enabled] of [['on by default', undefined], ['on', true]]) {
     const t = stage(enabled);
-    const injected = run('inject-work-plan.py', t.dir, { session_id: session, hook_event_name: 'UserPromptSubmit' });
+    const injected = run('inject-work-plan.py', t.dir,
+      { session_id: session, prompt_id: 'p-switch', hook_event_name: 'UserPromptSubmit' });
     const nudged = run('nudge-work-plan.py', t.dir,
       { session_id: session, transcript_path: t.transcript, hook_event_name: 'Stop' });
-    if (injected.includes('a row') && nudged.includes('neither read nor updated')) ok(`${what}: the rows arrive and the reminder speaks`);
-    else bad(`${what}: injected ${injected.length} bytes, nudge ${nudged.length} bytes`);
+    const reminded = run('remind-work-plan.py', t.dir, working);
+    if (injected.includes('a row') && nudged.includes('neither read nor updated') && reminded.includes('no row of the work plan is `doing`')) {
+      ok(`${what}: the rows arrive, and both reminders speak`);
+    } else bad(`${what}: injected ${injected.length} bytes, nudge ${nudged.length} bytes, start-of-work ${reminded.length} bytes`);
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
   {
     const t = stage(false);
-    const injected = run('inject-work-plan.py', t.dir, { session_id: session, hook_event_name: 'UserPromptSubmit' });
+    const injected = run('inject-work-plan.py', t.dir,
+      { session_id: session, prompt_id: 'p-switch', hook_event_name: 'UserPromptSubmit' });
     if (!injected) ok('off: nothing is put in front of the model, which is where the tokens went');
     else bad(`off: still injected ${injected.length} bytes`);
 
@@ -1827,6 +1861,15 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
       { session_id: session, transcript_path: t.transcript, hook_event_name: 'Stop' });
     if (!nudged) ok('off: the end of a turn says nothing');
     else bad(`off: still nudged ${JSON.stringify(nudged.slice(0, 80))}`);
+
+    /* Off leaves no mark of the turn, and the reminder at the start of the work is silent even where a mark is left over
+       from before the switch, since it checks for itself. */
+    const left = fs.existsSync(path.join(t.dir, session + '.turn'));
+    fs.writeFileSync(path.join(t.dir, session + '.turn'),
+      JSON.stringify({ prompt: 'p-switch', began: Date.now() / 1000, changes: 5, reminded: false }));
+    const reminded = run('remind-work-plan.py', t.dir, working);
+    if (!left && !reminded) ok('off: no mark of the turn is left, and the start of the work says nothing');
+    else bad(`off: mark left ${left}, start-of-work said ${JSON.stringify(reminded.slice(0, 80))}`);
 
     /* The description of the skill stays in context while the plugin is loaded, so an agent can decide to keep a plan on
        its own. This is the only thing left that can stop one being kept where nobody can see it. */
@@ -1918,6 +1961,415 @@ console.log('\nwhose plan the tree shows');
     ok('the show-everything function is gone, not just unreferenced');
   } else bad('readPlans is still defined in workplan.js');
   fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(stub, { force: true });
+}
+
+/* ── 16. one list of states, in three places ──
+   The view draws a state, the plugin's scripts write and read it, and the skill tells the model what each one means.
+   The three cannot import from each other - JavaScript, Python and prose - so this is what holds them together. A state
+   one of them does not know is drawn as `todo`, refused by the row command, or never explained, and none of those says
+   anything when it happens. */
+console.log('\none list of states, in three places');
+{
+  const root = path.join(__dirname, '..');
+  const plan = require('../src/workplan');
+  const py = fs.readFileSync(path.join(root, 'claude-plugin', 'agent-work-plan', 'hooks', 'plan_path.py'), 'utf8');
+  const skill = fs.readFileSync(path.join(root, 'claude-plugin', 'agent-work-plan', 'skills', 'maintain', 'SKILL.md'), 'utf8');
+  const tuple = /^STATES = \(([^)]*)\)/m.exec(py);
+  const inPython = tuple ? (tuple[1].match(/"([a-z]+)"/g) || []).map((s) => s.slice(1, -1)) : [];
+  const inSkill = [];
+  for (const line of skill.split('\n')) {
+    const m = /^\| `([a-z]+)` \|/.exec(line);
+    // The table's own header is `state`, written the same way as the rows under it.
+    if (m && m[1] !== 'state' && !inSkill.includes(m[1])) inSkill.push(m[1]);
+  }
+  const want = plan.STATES.join();
+  if (inPython.join() === want) ok(`the plugin's scripts and the view list the same ${plan.STATES.length} states, in one order`);
+  else bad(`the view lists ${want}, plan_path.py ${inPython.join()}`);
+  if (inSkill.slice().sort().join() === plan.STATES.slice().sort().join()) ok('the skill explains every one of them, and no other');
+  else bad(`the skill's table has ${inSkill.join()}, the view ${want}`);
+}
+
+/* ── 17. what the injected block says about the work in hand ──
+   The block is the one thing said before the work rather than after it, so what it says about `doing` is checked here
+   word for word: whether anything is `doing` changes the sentence, how long a row has been `doing` or `waiting` is on the
+   row, and the command that changes a row is given with a path that exists. */
+console.log('\nwhat the injected block says about the work in hand');
+{
+  const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+  const session = '43000000-0000-0000-0000-000000000000';
+  const inject = (nodes, extra = {}) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-inj-'));
+    fs.writeFileSync(path.join(dir, session + '.json'), JSON.stringify({ nodes }));
+    const r = cp.spawnSync('python3', [path.join(hooks, 'inject-work-plan.py'), dir], {
+      encoding: 'utf8',
+      input: JSON.stringify(Object.assign({ session_id: session, hook_event_name: 'UserPromptSubmit' }, extra)),
+    });
+    let text = '', mark = null;
+    try { text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) {}
+    try { mark = JSON.parse(fs.readFileSync(path.join(dir, session + '.turn'), 'utf8')); } catch (_) {}
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { text, mark };
+  };
+  const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
+  const rowOf = (text, title) => text.split('\n').find((l) => l.includes('. ' + title + '   [')) || '';
+
+  {
+    const idle = inject([{ title: 'a', state: 'todo' }]).text;
+    const busy = inject([{ title: 'a', state: 'doing' }]).text;
+    if (idle.includes('Nothing is `doing` right now.') && !idle.includes('earlier turn')) ok('with nothing doing, it says so');
+    else bad(`with nothing doing it said ${JSON.stringify(idle.slice(0, 200))}`);
+    if (busy.includes('left that way by an earlier turn') && !busy.includes('Nothing is `doing`')) {
+      ok('with a row doing, it says that row was left by an earlier turn');
+    } else bad(`with a row doing it said ${JSON.stringify(busy.slice(0, 200))}`);
+  }
+  {
+    const text = inject([
+      { title: 'working', state: 'doing', since: ago(2 * 3600 + 60) },
+      { title: 'held', state: 'waiting', since: ago(3 * 86400 + 60), note: 'on the user' },
+      { title: 'untimed', state: 'doing' },
+      { title: 'queued', state: 'todo', since: ago(5 * 3600) },
+      { title: 'colonless', state: 'doing', since: ago(5 * 3600 + 60).replace(/\.\d+Z$/, '+0000') },
+    ]).text;
+    const got = ['working', 'held', 'untimed', 'queued', 'colonless'].map((t) => rowOf(text, t).replace(/^.*\[/, '['));
+    const want = ['[doing for 2h]', '[waiting for 3d · on the user]', '[doing]', '[todo]', '[doing for 5h]'];
+    if (got.join('|') === want.join('|')) ok('a row doing or waiting says for how long, whichever way its time is written');
+    else bad(`the rows came out ${JSON.stringify(got)}`);
+  }
+  {
+    const text = inject([{ title: 'a', state: 'todo' }]).text;
+    const m = /To change a row: python3 (\S+) (\S+) set <row> <state>/.exec(text);
+    if (m && fs.existsSync(m[1]) && path.basename(m[1]) === 'plan-row.py' && m[2].endsWith(session + '.json')) {
+      ok('the command that changes a row is given with a path that exists, against this plan');
+    } else bad(`the command line is ${JSON.stringify(m && m[0])}`);
+  }
+  {
+    const before = Date.now() / 1000;
+    const marked = inject([{ title: 'a', state: 'todo' }], { prompt_id: 'p-17' }).mark;
+    const unnamed = inject([{ title: 'a', state: 'todo' }]).mark;
+    const allClosed = inject([{ title: 'a', state: 'done' }], { prompt_id: 'p-17b' });
+    if (marked && marked.prompt === 'p-17' && marked.began >= before - 1 && marked.reminded === false && marked.changes === 0) {
+      ok('a turn leaves a mark naming its prompt and when it began');
+    } else bad(`the mark was ${JSON.stringify(marked)}`);
+    if (!unnamed) ok('a turn without a prompt id leaves no mark, since nothing could match it');
+    else bad(`a turn with no prompt id left ${JSON.stringify(unnamed)}`);
+    /* Nothing open means nothing to inject - and new work started in that turn is exactly what the mark is for. */
+    if (!allClosed.text && allClosed.mark && allClosed.mark.prompt === 'p-17b') ok('a plan with nothing open injects nothing, and still marks the turn');
+    else bad(`with nothing open: injected ${allClosed.text.length} bytes, mark ${JSON.stringify(allClosed.mark)}`);
+  }
+}
+
+/* ── 18. the reminder when a turn starts working ──
+   It speaks at most once a turn and only when it is owed, and most of what is tested here is the silence: a reminder
+   that fires where nothing was owed teaches the reader to skip it, which costs the one time it is needed. */
+console.log('\nthe reminder when a turn starts working');
+{
+  const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+  const session = '44000000-0000-0000-0000-000000000000';
+  const stage = (nodes, limits) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-remind-'));
+    const plan = path.join(dir, session + '.json');
+    fs.writeFileSync(plan, JSON.stringify({ nodes }));
+    const back = Date.now() / 1000 - 3600;
+    fs.utimesSync(plan, back, back);
+    if (limits) fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(limits));
+    return { dir, plan };
+  };
+  const begin = (t, prompt) => cp.spawnSync('python3', [path.join(hooks, 'inject-work-plan.py'), t.dir], {
+    encoding: 'utf8', input: JSON.stringify({ session_id: session, prompt_id: prompt, hook_event_name: 'UserPromptSubmit' }),
+  });
+  const batch = (t, prompt, calls, extra = {}) => (cp.spawnSync('python3', [path.join(hooks, 'remind-work-plan.py'), t.dir], {
+    encoding: 'utf8',
+    input: JSON.stringify(Object.assign({ session_id: session, prompt_id: prompt, hook_event_name: 'PostToolBatch',
+      tool_calls: calls }, extra)),
+  }).stdout || '').trim();
+  const spoke = (s) => s.includes('no row of the work plan is `doing`');
+  const E = { tool_name: 'Edit', tool_input: { file_path: '/elsewhere/a.js' } };
+  const R = { tool_name: 'Read', tool_input: { file_path: '/elsewhere/a.js' } };
+  const todo = [{ title: 'a', state: 'todo' }];
+  const done = (t) => fs.rmSync(t.dir, { recursive: true, force: true });
+
+  {
+    const t = stage(todo);
+    begin(t, 'p1');
+    const said = [batch(t, 'p1', [R]), batch(t, 'p1', [E]), batch(t, 'p1', [E]), batch(t, 'p1', [E])].map(spoke);
+    if (said.join() === 'false,false,true,false') ok('silent through reading and one change, speaks at the second, and only once');
+    else bad(`reading, then three changes, spoke ${JSON.stringify(said)}`);
+    begin(t, 'p2');
+    if (spoke(batch(t, 'p2', [E, E]))) ok('the next turn can be told again, and two changes in one batch are enough');
+    else bad('a new turn with two changes in one batch said nothing');
+    done(t);
+  }
+  {
+    /* A sub-agent shares the session id, and its work is recorded by the thread that sent it. Its calls must not count
+       towards the main thread's turn either, or the main thread would be told on its first change of its own. */
+    const t = stage(todo);
+    begin(t, 'p1');
+    const sub = batch(t, 'p1', [E, E], { agent_id: 'agent-1' });
+    const main = batch(t, 'p1', [E]);
+    if (!sub && !main) ok('a sub-agent is not told, and what it changed does not count towards the turn');
+    else bad(`sub-agent said ${JSON.stringify(sub.slice(0, 60))}, main thread after it ${JSON.stringify(main.slice(0, 60))}`);
+    done(t);
+  }
+  {
+    const t = stage(todo);
+    begin(t, 'p1');
+    if (!batch(t, 'p0', [E, E])) ok('a batch from a turn that left no mark says nothing');
+    else bad('a batch whose prompt id matches no mark was spoken to');
+    done(t);
+  }
+  {
+    /* A turn that has already been to the plan has settled it, whatever it wrote there. */
+    const t = stage(todo);
+    begin(t, 'p1');
+    const now = Date.now() / 1000 + 1;
+    fs.utimesSync(t.plan, now, now);
+    if (!batch(t, 'p1', [E, E])) ok('a turn that has written to the plan is left alone');
+    else bad('a turn that had written to the plan was still told');
+    done(t);
+  }
+  {
+    const t = stage([{ title: 'a', state: 'todo', children: [{ title: 'b', state: 'doing' }] }]);
+    begin(t, 'p1');
+    if (!batch(t, 'p1', [E, E])) ok('a row doing anywhere in the tree is enough to say nothing');
+    else bad('a plan with a nested doing row was still told');
+    done(t);
+  }
+  {
+    /* Keeping the plan is not the work the plan is about. */
+    const t = stage(todo);
+    begin(t, 'p1');
+    const keep = { tool_name: 'Bash', tool_input: { command: `python3 fix.py > ${t.plan}` } };
+    const kept = batch(t, 'p1', [keep, keep]);
+    const after = batch(t, 'p1', [E]);
+    if (!kept && !after) ok('calls that only keep the plan neither count nor speak');
+    else bad(`keeping the plan said ${JSON.stringify(kept.slice(0, 60))}, one change after it ${JSON.stringify(after.slice(0, 60))}`);
+    done(t);
+  }
+  {
+    const t = stage(todo, { nudgeMinChanges: 1 });
+    begin(t, 'p1');
+    if (spoke(batch(t, 'p1', [E]))) ok('how many changes it waits for is read from the settings file');
+    else bad('with the threshold at one, the first change said nothing');
+    done(t);
+  }
+  {
+    const t = stage(todo);
+    begin(t, 'p1');
+    let said = '';
+    try { said = JSON.parse(batch(t, 'p1', [E, E])).hookSpecificOutput.additionalContext; } catch (_) {}
+    const m = /\n {2}python3 (\S+) (\S+) set <row> doing\n/.exec(said);
+    if (m && fs.existsSync(m[1]) && m[2] === t.plan) ok('what it says names the row command with its full path');
+    else bad(`it said ${JSON.stringify(said.slice(0, 300))}`);
+    done(t);
+  }
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-remind-'));
+    if (!batch({ dir }, 'p1', [E, E])) ok('a conversation with no plan is not told anything');
+    else bad('a conversation with no plan was told to mark a row');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/* ── 19. the row command ──
+   The one script here that writes a plan, so what it must leave alone matters as much as what it changes: every other
+   row, every other field, and a correction the user made by hand a moment ago. */
+console.log('\nthe row command');
+{
+  const tool = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks', 'plan-row.py');
+  const session = '45000000-0000-0000-0000-000000000000';
+  const stage = (body, name = session + '.json') => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-row-'));
+    const file = path.join(dir, name);
+    if (body !== undefined) fs.writeFileSync(file, typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+    return { dir, file };
+  };
+  const row = (t, ...args) => cp.spawnSync('python3', [tool, t.file, ...args], { encoding: 'utf8' });
+  const read = (t) => JSON.parse(fs.readFileSync(t.file, 'utf8'));
+  const recent = (stamp) => typeof stamp === 'string' && Math.abs(Date.parse(stamp) - Date.now()) < 120000;
+  const plan = () => ({
+    title: 'demo',
+    nodes: [
+      { title: 'one', state: 'todo', detail: 'kept as it is', opened: '2026-01-01T00:00:00+00:00' },
+      { title: 'two', state: 'todo', handEdited: true, children: [{ title: 'two-a', state: 'todo', note: 'n' }] },
+    ],
+  });
+  const done = (t) => fs.rmSync(t.dir, { recursive: true, force: true });
+
+  {
+    const t = stage(plan());
+    const r = row(t, 'set', '2.1', 'doing');
+    const d = read(t);
+    const kid = d.nodes[1].children[0];
+    const rest = JSON.stringify([d.title, d.nodes[0], d.nodes[1].handEdited, d.nodes[1].title, kid.note]);
+    if (r.status === 0 && r.stdout.trim() === 'row 2.1: todo -> doing' && kid.state === 'doing' && recent(kid.since)) {
+      ok('a row is set by its number, with the time it entered the state');
+    } else bad(`set 2.1 doing: status ${r.status}, said ${JSON.stringify(r.stdout + r.stderr)}, row ${JSON.stringify(kid)}`);
+    if (rest === JSON.stringify(['demo', plan().nodes[0], true, 'two', 'n'])) ok('and every other row and field is left as it was');
+    else bad(`other content moved: ${rest}`);
+    done(t);
+  }
+  {
+    const t = stage(plan());
+    row(t, 'set', '1', 'done');
+    const closed = read(t).nodes[0];
+    row(t, 'set', '1', 'todo');
+    const reopened = read(t).nodes[0];
+    if (closed.closed && closed.closed === closed.since && !('closed' in reopened) && reopened.opened === '2026-01-01T00:00:00+00:00') {
+      ok('closing a row stamps when, and reopening it takes the stamp away again');
+    } else bad(`closed ${JSON.stringify(closed)}, reopened ${JSON.stringify(reopened)}`);
+    done(t);
+  }
+  {
+    const t = stage(plan());
+    row(t, 'set', '1', 'waiting', '--note', 'on the user');
+    const noted = read(t).nodes[0].note;
+    row(t, 'set', '1', 'doing', '--note', '');
+    const cleared = read(t).nodes[0];
+    if (noted === 'on the user' && !('note' in cleared)) ok('a note is set with the state, and an empty one removes it');
+    else bad(`note was ${JSON.stringify(noted)}, then ${JSON.stringify(cleared.note)}`);
+    done(t);
+  }
+  {
+    const t = stage(plan());
+    const top = row(t, 'add', 'doing', '修一下标题');
+    const under = row(t, 'add', 'todo', 'two-b', '--under', '2');
+    const d = read(t);
+    const added = d.nodes[2];
+    if (top.stdout.trim() === 'row 3 added: doing' && added.title === '修一下标题' && added.state === 'doing'
+      && recent(added.opened) && added.opened === added.since && Array.isArray(added.children)
+      && under.stdout.trim() === 'row 2.2 added: todo' && d.nodes[1].children[1].title === 'two-b') {
+      ok('a row is added at the end or under another, and says the number it got');
+    } else bad(`added ${JSON.stringify(top.stdout + top.stderr)} and ${JSON.stringify(under.stdout + under.stderr)}`);
+    if (fs.readFileSync(t.file, 'utf8').includes('修一下标题')) ok('a title in the conversation\'s own language is written as it is, not escaped');
+    else bad('a non-ASCII title was written as escapes');
+    done(t);
+  }
+  {
+    const t = stage(undefined);
+    const r = row(t, 'add', 'doing', 'first');
+    if (r.status === 0 && read(t).nodes.length === 1) ok('adding a row to a plan that does not exist yet starts one');
+    else bad(`adding to no plan: status ${r.status}, ${JSON.stringify(r.stderr)}`);
+    done(t);
+  }
+  {
+    /* Every refusal leaves the file exactly as it was. */
+    const refusals = [
+      ['a row that is not there', () => stage(plan()), (t) => row(t, 'set', '9', 'doing'), 1],
+      ['a state that is not one of the seven', () => stage(plan()), (t) => row(t, 'set', '1', 'started'), 2],
+      ['a file that does not parse', () => stage('{"nodes": [}'), (t) => row(t, 'set', '1', 'doing'), 1],
+      ['a file that is not a plan', () => stage(plan(), 'notes.json'), (t) => row(t, 'set', '1', 'doing'), 1],
+      ['plans switched off', () => {
+        const t = stage(plan());
+        fs.writeFileSync(path.join(t.dir, 'config.json'), '{"enabled": false}');
+        return t;
+      }, (t) => row(t, 'set', '1', 'doing'), 1],
+    ];
+    for (const [what, make, act, code] of refusals) {
+      const t = make();
+      const before = fs.readFileSync(t.file, 'utf8');
+      const r = act(t);
+      const after = fs.readFileSync(t.file, 'utf8');
+      const strays = fs.readdirSync(t.dir).filter((n) => n.endsWith('.tmp'));
+      if (r.status === code && before === after && !strays.length) ok(`refused, and nothing touched: ${what}`);
+      else bad(`${what}: status ${r.status}, file changed ${before !== after}, left ${JSON.stringify(strays)}`);
+      done(t);
+    }
+    const t = stage(undefined);
+    const r = row(t, 'set', '1', 'doing');
+    if (r.status === 1 && !fs.existsSync(t.file)) ok('setting a row in a plan that does not exist creates nothing');
+    else bad(`set on no plan: status ${r.status}, file made ${fs.existsSync(t.file)}`);
+    done(t);
+  }
+}
+
+/* ── 20. how a row being worked on, or waiting, is drawn ──
+   Uses the same stub of the editor's API as section 15, made again here since that section removes it. */
+console.log('\nhow a row being worked on, or waiting, is drawn');
+{
+  const Module = require('module');
+  const realResolve = Module._resolveFilename;
+  const stub = path.join(os.tmpdir(), 'cce-vscode-stub-20.js');
+  fs.writeFileSync(stub, `
+    class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
+    module.exports = {
+      TreeItem,
+      TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+      ThemeIcon: class { constructor(id, color) { this.id = id; this.color = color; } },
+      ThemeColor: class { constructor(id) { this.id = id; } },
+      MarkdownString: class { constructor(v) { this.value = v; } },
+      Uri: { file: (p) => ({ fsPath: p }) },
+      EventEmitter: class { constructor() { this.event = () => ({ dispose() {} }); } fire() {} },
+    };
+  `);
+  Module._resolveFilename = function (request, ...rest) {
+    return request === 'vscode' ? stub : realResolve.call(this, request, ...rest);
+  };
+  let viewMod;
+  try {
+    delete require.cache[require.resolve('../src/workplan-view')];
+    viewMod = require('../src/workplan-view');
+  } finally {
+    Module._resolveFilename = realResolve;
+  }
+  const plan = require('../src/workplan');
+
+  {
+    const icons = plan.STATES.map((s) => viewMod.LOOK[s] && viewMod.LOOK[s].icon);
+    const w = viewMod.LOOK.waiting;
+    if (icons.every(Boolean) && new Set(icons).size === icons.length && w && w.icon === 'watch' && w.color === 'charts.yellow') {
+      ok('every state has its own shape, and waiting is a yellow watch');
+    } else bad(`icons per state: ${JSON.stringify(icons)}`);
+  }
+  {
+    const now = Date.now();
+    const at = (s, state = 'doing') => viewMod.held({ state, since: now - s * 1000 }, now);
+    const got = [at(30), at(61 * 60), at(49 * 3600), at(3600, 'todo'), viewMod.held({ state: 'doing', since: 0 }, now),
+      at(-600)];
+    if (got.join() === '1m,1h,2d,,,') ok('how long, in minutes, hours or days, and nothing where it does not apply');
+    else bad(`held() gave ${JSON.stringify(got)}`);
+  }
+  {
+    /* The tree and the model read the same figure for the same row, which needs the two to step at the same places. */
+    const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+    const session = '46000000-0000-0000-0000-000000000000';
+    const spans = [30, 59 * 60 + 30, 61 * 60, 47 * 3600 + 60, 49 * 3600, 10 * 86400];
+    const now = Date.now();
+    const nodes = spans.map((s, i) => ({ title: 'r' + i, state: 'doing', since: new Date(now - s * 1000).toISOString() }));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-age-'));
+    fs.writeFileSync(path.join(dir, session + '.json'), JSON.stringify({ nodes }));
+    const r = cp.spawnSync('python3', [path.join(hooks, 'inject-work-plan.py'), dir], {
+      encoding: 'utf8', input: JSON.stringify({ session_id: session, hook_event_name: 'UserPromptSubmit' }),
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+    let text = '';
+    try { text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) {}
+    const py = spans.map((_, i) => ((new RegExp('\\. r' + i + ' {3}\\[doing for (\\w+)\\]').exec(text)) || [])[1]);
+    const js = nodes.map((n) => viewMod.held({ state: 'doing', since: Date.parse(n.since) }, now));
+    if (py.join() === js.join()) ok(`the tree and the injected block give the same figure: ${js.join(' ')}`);
+    else bad(`the injected block says ${py.join()}, the tree ${js.join()}`);
+  }
+  {
+    const p = new viewMod.WorkPlanProvider();
+    const element = (node) => ({ kind: 'node', node, plan: { session: 's', file: '/f' }, path: [], key: 'k', num: '3' });
+    const now = Date.now();
+    const busy = p.getTreeItem(element({ title: 't', state: 'doing', note: '', detail: '', opened: now - 7200e3,
+      since: now - 7200e3 - 60e3, closed: 0, children: [] }));
+    const over = p.getTreeItem(element({ title: 't', state: 'done', note: '', detail: '', opened: now - 7200e3,
+      since: now - 60e3, closed: now - 60e3, children: [] }));
+    if (/ · for 2h$/.test(busy.description) && busy.tooltip.value.includes('doing for 2h')
+      && busy.command.arguments[0].state === 'doing for 2h' && !/for /.test(over.description)) {
+      ok('a row doing says for how long on the row, in the hover and in the dialog; a closed row does not');
+    } else bad(`doing row: ${JSON.stringify(busy.description)}; done row: ${JSON.stringify(over.description)}`);
+  }
+  {
+    /* The figure goes stale with nothing in the file changing, so it has to be part of what decides a redraw. */
+    const now = Date.now();
+    const nodes = [{ state: 'todo', children: [{ state: 'waiting', since: now - 30e3, children: [] }] }];
+    if (viewMod.heldAll(nodes, now).join() !== viewMod.heldAll(nodes, now + 3 * 3600e3).join()) {
+      ok('the time a row has waited changes what the tree compares, so it is redrawn as the time passes');
+    } else bad('the figure is the same an hour later, so the tree would never redraw it');
+  }
   fs.rmSync(stub, { force: true });
 }
 

@@ -30,6 +30,16 @@
           }
         ]
       }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/remind-work-plan.py\" \"${CLAUDE_PLUGIN_DATA}\""
+          }
+        ]
+      }
     ]
   }
 }

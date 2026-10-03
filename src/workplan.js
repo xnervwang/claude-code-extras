@@ -24,10 +24,11 @@
  * Nothing here writes those files. The shape below is the whole contract between the two halves:
  *
  *   { "title": "optional name for this conversation",
- *     "nodes": [ { "title": "...", "state": "discussing|todo|parked|done|dropped",
+ *     "nodes": [ { "title": "...", "state": "discussing|todo|doing|waiting|parked|done|dropped",
  *                  "note": "optional, read in the dialog and the hover rather than on the row",
  *                  "detail": "optional, several lines; what the row cannot say in its width",
  *                  "opened": "optional ISO 8601; when this row was added",
+ *                  "since": "optional ISO 8601; when it entered the state it is in",
  *                  "closed": "optional ISO 8601; when it reached done or dropped",
  *                  "children": [ ... ] } ] }
  *
@@ -61,7 +62,11 @@ const NUDGE_FILE = /^[0-9a-f][0-9a-f-]{7,}\.nudged$/i;
 /* Which detached sessions a conversation started, written by src/background.js. It describes the conversation, so it
    goes when the conversation does. The pattern is that module's own, so the two cannot disagree about the name. */
 const { LINK_FILE: BACKGROUND_FILE } = require('./background');
-const STATES = ['discussing', 'todo', 'doing', 'parked', 'done', 'dropped'];
+/* Which turn a conversation is in and how far that turn has got, left by the plugin's injection hook for the hook that
+   reminds a turn to mark what it is working on. Rewritten every turn, and gone with the conversation like the rest. */
+const TURN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.turn$/i;
+/* The same list as STATES in the plugin's plan_path.py, in the same order; test/check.js holds them together. */
+const STATES = ['discussing', 'todo', 'doing', 'waiting', 'parked', 'done', 'dropped'];
 /* Depth and count are bounded because the file is written by another process: a cycle turned into JSON, or a runaway
    generator, would otherwise be rendered forever. Both are far above any plan a person reads. */
 const MAX_DEPTH = 8;
@@ -126,7 +131,7 @@ function node(raw, depth, budget) {
   }
   return {
     title, state, note: text(raw.note, 120), detail: detail(raw.detail),
-    opened: when(raw.opened), closed: when(raw.closed), children,
+    opened: when(raw.opened), since: when(raw.since), closed: when(raw.closed), children,
   };
 }
 
@@ -228,8 +233,8 @@ function sweepOrphans(opts = {}) {
   try { names = fs.readdirSync(dir); } catch (_) { return { deleted: 0, kept: 0, why: '' }; }
   let deleted = 0, kept = 0;
   for (const name of names) {
-    if (!PLAN_FILE.test(name) && !OFFER_FILE.test(name) && !NUDGE_FILE.test(name) && !BACKGROUND_FILE.test(name)) continue;
-    if (live.has(name.replace(/\.(json|offered|nudged|background)$/i, ''))) { kept++; continue; }
+    if (![PLAN_FILE, OFFER_FILE, NUDGE_FILE, BACKGROUND_FILE, TURN_FILE].some((re) => re.test(name))) continue;
+    if (live.has(name.replace(/\.(json|offered|nudged|background|turn)$/i, ''))) { kept++; continue; }
     const file = path.join(dir, name);
     let st;
     try { st = fs.statSync(file); } catch (_) { continue; }
@@ -243,7 +248,7 @@ function sweepOrphans(opts = {}) {
 }
 
 /** The states that mean a row still needs something done to it. */
-const OPEN_STATES = ['discussing', 'todo', 'doing', 'parked'];
+const OPEN_STATES = ['discussing', 'todo', 'doing', 'waiting', 'parked'];
 
 /**
  * The same rows with the unfinished ones first, each group keeping the order it had.
@@ -270,7 +275,7 @@ function openFirst(items, stateOf = (n) => n && n.state) {
 }
 
 /** Open counts, which is what the view puts in its title so the shape of the work is legible without expanding it. */
-function countOpen(nodes, acc = { discussing: 0, todo: 0, doing: 0, parked: 0, done: 0, dropped: 0 }) {
+function countOpen(nodes, acc = { discussing: 0, todo: 0, doing: 0, waiting: 0, parked: 0, done: 0, dropped: 0 }) {
   for (const n of nodes || []) {
     acc[n.state] = (acc[n.state] || 0) + 1;
     countOpen(n.children, acc);
@@ -280,6 +285,6 @@ function countOpen(nodes, acc = { discussing: 0, todo: 0, doing: 0, parked: 0, d
 
 module.exports = {
   readPlan, countOpen, planDir, liveSessions, sweepOrphans, openFirst,
-  DATA_ROOT, PLAN_DIR, PLAN_FILE, OFFER_FILE, NUDGE_FILE, BACKGROUND_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
+  DATA_ROOT, PLAN_DIR, PLAN_FILE, OFFER_FILE, NUDGE_FILE, BACKGROUND_FILE, TURN_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
   STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
 };

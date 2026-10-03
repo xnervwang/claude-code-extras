@@ -24,7 +24,7 @@ const { readPlan, countOpen, openFirst } = require('./workplan');
 const LOOK = {
   discussing: { icon: 'comment-discussion', color: 'charts.yellow', word: 'discussing' },
   /* Purple, which is the slot left once every other meaning is taken. Blue is the row being worked on, green is finished,
-     yellow is the one waiting on a person, and grey is the two that are not going to happen - and an agreed row that has
+     yellow is a row waiting on somebody, and grey is the two that are not going to happen - and an agreed row that has
      simply not started belongs to none of those. Orange was tried and is a warning in this palette and most others: a
      queue is not a problem, and `todo` is usually the state with the most rows in it, so the tree would light up in the
      colour meant for trouble and drown the yellow that actually wants attention. */
@@ -32,11 +32,43 @@ const LOOK = {
   /* A filled triangle in blue. Nothing else here is a triangle, so it reads as its own thing at sixteen pixels, and it
      is the shape everything else uses for running. */
   doing: { icon: 'debug-start', color: 'charts.blue', word: 'doing' },
+  /* Started, and now held up by someone outside the conversation - the user, another team, a job running elsewhere.
+     Yellow, like `discussing`, because both are rows waiting on somebody, and most often on the reader; the shapes keep
+     them apart. It is its own state because `doing` was being used for it: four of the six rows `doing` on the machine
+     this was written on said in their notes that they were waiting, and a tree that shows those as being worked on gets
+     wrong the one thing it is watched for. */
+  waiting: { icon: 'watch', color: 'charts.yellow', word: 'waiting' },
   parked: { icon: 'debug-pause', color: 'descriptionForeground', word: 'parked' },
   done: { icon: 'pass-filled', color: 'charts.green', word: 'done' },
   dropped: { icon: 'circle-slash', color: 'descriptionForeground', word: 'dropped' },
 };
-const OPEN = ['discussing', 'todo', 'doing', 'parked'];
+const OPEN = ['discussing', 'todo', 'doing', 'waiting', 'parked'];
+
+/*
+ * How long a row has been in a state it is meant to leave soon, or nothing.
+ *
+ * Only `doing` and `waiting`, and only from `since`, which the plugin's row command writes on every change of state. A
+ * row `doing` for three days is not being done, and the time is the one thing on the row that can say so. The steps are
+ * the same as the injected block's (age() in inject-work-plan.py), so the tree and the model read the same figure.
+ */
+const TIMED = ['doing', 'waiting'];
+function held(node, now = Date.now()) {
+  if (!node || !TIMED.includes(node.state) || !node.since || now < node.since) return '';
+  const s = Math.floor((now - node.since) / 1000);
+  if (s < 3600) return Math.max(1, Math.floor(s / 60)) + 'm';
+  if (s < 48 * 3600) return Math.floor(s / 3600) + 'h';
+  return Math.floor(s / 86400) + 'd';
+}
+
+/* Every such figure in a tree, in file order. Part of what decides whether the tree is redrawn, since the figure goes
+   stale with nothing in the file changing. */
+function heldAll(nodes, now = Date.now(), out = []) {
+  for (const n of nodes || []) {
+    out.push(held(n, now));
+    heldAll(n.children, now, out);
+  }
+  return out;
+}
 
 const p2 = (n) => (n < 10 ? '0' : '') + n;
 
@@ -130,8 +162,13 @@ class WorkPlanProvider {
        a view whose only claim is "what THIS conversation has to do" has no business showing other people's leftovers. */
     const plans = this.focus ? readPlan(this.focus) : [];
     /* The focus is part of the signature because two conversations can hold identical plans - most often two empty ones.
-       Comparing only the content would then find no change and leave the previous conversation's tree on screen. */
-    const signature = JSON.stringify([this.focus, plans.map((p) => [p.session, p.title, p.error, p.nodes])]);
+       Comparing only the content would then find no change and leave the previous conversation's tree on screen. The
+       time a row has been `doing` or `waiting` is part of it for the opposite reason: the figure changes while the file
+       does not, and the periodic refresh is the only thing that will ever redraw it. Its steps are minutes at the finest,
+       so this redraws at most once a minute. */
+    const now = Date.now();
+    const signature = JSON.stringify([this.focus,
+      plans.map((p) => [p.session, p.title, p.error, p.nodes, heldAll(p.nodes, now)])]);
     if (signature === this.signature) return false;
     this.plans = plans;
     this.signature = signature;
@@ -227,8 +264,12 @@ class WorkPlanProvider {
       : vscode.TreeItemCollapsibleState.None);
     item.id = element.key;
     const times = stamp(node.opened, node.closed);
+    const lasted = held(node);
+    const word = look.word + (lasted ? ' for ' + lasted : '');
     /*
-     * The row carries its time and nothing else beside the title.
+     * The row carries its time and nothing else beside the title - and, on a row `doing` or `waiting`, how long it has
+     * been so, since that is the one fact about such a row that cannot wait for the hover: a stale one looks exactly like
+     * a live one otherwise.
      *
      * Not the state, because the icon already says it and a row should not say one thing twice. Not the note either: it
      * is the longest part of a row and the least urgent, so it pushes the title out of a narrow view to say something
@@ -237,10 +278,10 @@ class WorkPlanProvider {
      * A row with no time therefore shows only its title. That is deliberate rather than a gap - making the note appear
      * just for those rows would give two rows that look alike different behaviour, with nothing on either saying why.
      */
-    item.description = times;
+    item.description = [times, lasted ? 'for ' + lasted : ''].filter(Boolean).join(' · ');
     item.iconPath = new vscode.ThemeIcon(look.icon, new vscode.ThemeColor(look.color));
     item.contextValue = 'cceWorkPlanNode';
-    const head = `**${node.title}**\n\n${look.word}${node.note ? ' — ' + node.note : ''}`
+    const head = `**${node.title}**\n\n${word}${node.note ? ' — ' + node.note : ''}`
       + (times ? '\n\n' + times : '');
     item.tooltip = new vscode.MarkdownString(node.detail ? head + '\n\n' + node.detail : head);
     /*
@@ -256,7 +297,7 @@ class WorkPlanProvider {
       command: 'claudeCodeExtras.showWorkPlanDetail',
       title: 'Show the description',
       arguments: [{
-        title: node.title, state: look.word, note: node.note, detail: node.detail,
+        title: node.title, state: word, note: node.note, detail: node.detail,
         path: element.path, children: kids.length, times,
       }],
     };
@@ -264,4 +305,4 @@ class WorkPlanProvider {
   }
 }
 
-module.exports = { WorkPlanProvider, summary, hasOpen, stamp, LOOK, OPEN };
+module.exports = { WorkPlanProvider, summary, hasOpen, stamp, held, heldAll, LOOK, OPEN, TIMED };

@@ -1,6 +1,6 @@
 ---
 name: maintain
-description: Keep this conversation's work plan up to date - the tree of what it still has to do, with a state on every row. Use it when the user raises something new to be done, when they approve something, when a piece of work is finished or abandoned, and when doing one thing turns out to require finishing another first. Also use it before ending a turn that changed the shape of the work, which is what the Stop hook asks for.
+description: Keep this conversation's work plan up to date - the tree of what it still has to do, with a state on every row. Use it when the user raises something new to be done, when they approve something, when you start work on a row, when a row comes to wait on someone else, when a piece of work is finished or abandoned, and when doing one thing turns out to require finishing another first. Also use it before ending a turn that changed the shape of the work, which is what the Stop hook asks for.
 version: 1.0.0
 tags: [work-plan, task-tracking, long-conversation, handoff]
 ---
@@ -68,6 +68,7 @@ anything is inserted, and then the file contradicts itself.
       "note": "optional: a commit, why it is parked, who asked",
       "detail": "optional: several lines. What the row cannot say in its width - the user's own words, what was\nalready established, what to watch out for when this is picked up.",
       "opened": "2026-09-28T23:45:12+00:00",
+      "since": "2026-09-29T00:00:00+00:00",
       "closed": "2026-09-29T01:10:03+00:00",
       "children": []
     }
@@ -94,13 +95,14 @@ reader of the conversation. Only text fixed in a shipped file has to be English 
 conversations are in languages of their own, and no one can switch it per reader. So the `state` keywords below stay as
 they are, and so does every word the extension and these hooks draw for themselves.
 
-The five `state` values are fixed keywords and are always these:
+The seven `state` values are fixed keywords and are always these:
 
 | `state` | what it means |
 |---|---|
 | `discussing` | raised, not yet agreed to be done |
 | `todo` | agreed, not started |
-| `doing` | agreed, and being worked on right now |
+| `doing` | agreed, and being worked on right now by this conversation or an agent it started with `claude --bg` |
+| `waiting` | agreed and started, but held up by someone or something outside this conversation; what it waits on goes in `note` |
 | `parked` | deliberately not being done now, with the reason in `note` |
 | `done` | finished |
 | `dropped` | decided against, with the reason in `detail` |
@@ -110,15 +112,20 @@ still agreed and still unfinished, which is what `todo` used to cover on its own
 each row carries its own state, and one turn can have work going in more than one place. Who is doing it, when that is
 worth saying, goes in `note`: the main thread, a sub-agent, a detached one.
 
-**A `doing` row found at the start of a turn is stale.** Nothing runs between turns, so whatever was being worked on
-when the last one ended is not being worked on now. Put it back to `todo` while reconciling, unless this turn is going
-to continue it - and if it never got finished, that is worth a word in `note` rather than being silently reset. Nothing
+**A `doing` row found at the start of a turn is stale unless this turn carries on with it or an agent this conversation
+started with `claude --bg` is still working on it.** Between turns, nothing else in this conversation runs. Move a stale
+row to `waiting` if it waits on someone or something outside this conversation, to `done` if it is finished, and otherwise
+back to `todo` - and if it never got finished, that is worth a word in `note` rather than being silently reset. Nothing
 else cleans these up: an agent that was killed did not get to, and no hook can tell which row it had been on.
 
-## The two times
+## The three times
 
-`opened` goes on a row when you add it. `closed` goes on when you move it to `done` or `dropped`, and only then - a
-`parked` row is still open and has no end yet.
+`opened` goes on a row when you add it. `since` is an ISO 8601 time for when the row entered its current state; the row
+command writes it on every change of state. `closed` goes on when you move it to `done` or `dropped`, and only then - a
+`parked` row is still open and has no end yet. Moving a closed row back to an open state removes `closed`.
+
+The injected rows and the tree view show how long a `doing` or `waiting` row has been in that state, using `since` -
+for example, `doing for 2h`. A row without `since` shows no duration.
 
 **Read the clock; never write a time from memory.** You do not know what time it is. A value you invent looks exactly
 like a real one in the file and is only discovered when the rows sort into the wrong order:
@@ -127,7 +134,7 @@ like a real one in the file and is only discovered when the rows sort into the w
 date -Is
 ```
 
-Both fields are optional, and a row that has neither is fine - it simply shows no time. **Do not fill them in for rows
+All three fields are optional, and a row that has none is fine - it simply shows no time. **Do not fill them in for rows
 that predate them.** The date in an old row's `note` has no clock in it, so any time you supply for one is invented, and
 the whole point of these fields is that they can be trusted.
 
@@ -144,8 +151,12 @@ undo.
 | What just happened | What to do |
 |---|---|
 | The user raises something new to be done | Add a node with state `discussing` and an `opened` time |
+| The user asks for work in this message and you start on it now | Add a node as `doing` straight away; it does not need to pass through `todo` |
+| The user asks you to look into something | Add a row for looking into it, `doing` while you look and `done` when you have answered; add any work it turns up that might be worth doing as `discussing` |
 | The user says to go ahead with it | Move that node to `todo` |
 | You are about to start on it | Move it to `doing`, before the work rather than after |
+| An agreed, started row is held up by someone or something outside this conversation | Move it to `waiting` when that happens; put what it waits on in `note` |
+| You pick up a `waiting` row again | Move it to `doing` when you resume work |
 | The work is finished, or the user says it is | Move it to `done` and set `closed` |
 | The user decides against it | Move it to `dropped` and set `closed`, with the reason in `detail` |
 | Doing A turns out to need B finished first | Add B as a child of A, with its own `opened` |
@@ -158,21 +169,48 @@ for.
 
 That gate is on `todo`, not on the ones after it. Moving a row you are already agreed on to `doing` and then to `done` is
 reporting what happened, so it needs nobody's permission; what needs permission is calling something agreed in the first
-place. A row cannot reach `doing` without having been `todo`, so the gate is already behind it.
+place. Work the user asks for in this message and that you start now can go straight to `doing`: their request is the
+word `todo` needs, so it does not need a separate `todo` step.
 
 | Move | Whose word |
 |---|---|
 | anything → `todo` | the user's, always |
 | `todo` → `doing` → `done` | yours, as it happens |
+| `doing` ↔ `waiting` | yours, as it happens |
 | anything → `parked` or `dropped` | the user's, with the reason written down |
 
-`doing` is the exception to the timing below: it is written as the work starts. A row marked at the end of a turn is
-already wrong, because by then the turn is over and nothing is running - and the tree is watching the file, so a row
-marked as you begin appears there while you work, which is the only time anyone can act on it.
+`doing` and `waiting` are exceptions to the timing below: write them when the work starts or becomes held up, not at the
+end of the turn. A row marked at the end of a turn is already wrong, because by then the turn is over - and the tree is
+watching the file, so a row marked as you begin appears there while you work, which is the only time anyone can act on
+it. After each batch of tool calls, a hook can remind the main thread to mark the row it is working on. It does so once
+per turn when the turn has changed at least two things besides the plan, the plan has not been written since the turn
+began, and no row is `doing`. It refuses nothing.
 
-**Everything else: do it before writing the last paragraph of the turn**, not after. Once the closing summary is written the turn feels
+**For other changes, do it before writing the last paragraph of the turn**, not after. Once the closing summary is written the turn feels
 finished and the plan is what gets left out; and the turn that most needed recording is the one that wandered furthest,
 which is exactly the turn with the longest summary to write.
+
+## The row command
+
+For a change of state, prefer the `plan-row.py` command shipped with the plugin. It is one short call. Changing state by
+hand means reading the clock first and rewriting the whole file. The block put in front of you each turn gives the full
+command line with both paths filled in. Its two forms are:
+
+```bash
+python3 <path>/plan-row.py <plan file> set <row> <state> [--note TEXT]
+python3 <path>/plan-row.py <plan file> add <state> <title> [--under <row>] [--note TEXT]
+```
+
+`<row>` is the number in front of a row, such as `3` or `2.1`; closed rows count. `--note ""` removes the note.
+The command reads the plan file immediately before writing, so it keeps edits the user made by hand. It takes `opened`,
+`since` and `closed` from the clock, writes the whole file, and renames it into place. `add` creates a plan file if one
+does not exist; `set` does not.
+
+The command refuses a row number that does not exist, a state outside the seven fixed keywords, a file that does not
+parse, a file that is not a plan, and plans switched off. It leaves the file untouched in each case.
+
+Change a title or description, or move a row, by editing the file directly under the two rules below: read the file
+before writing it, and never delete a node. The row command satisfies both rules by itself.
 
 ## Two rules that do not bend
 
