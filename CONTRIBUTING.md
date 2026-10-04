@@ -47,8 +47,7 @@ Keep the early exit in the injected script's React fiber tree loop. It runs for 
   ```
 
 - On Node 22.11, vsce needs `NODE_OPTIONS=--experimental-require-module`.
-- Raise `version` once for each package that will be uploaded, counting from the last version published. Neither the Visual Studio Marketplace nor Open VSX accepts a version that was already published, even after it was removed.
-- Between uploads, rebuild and reinstall without changing `version`: `code --install-extension <file> --force`. A window still running the earlier build of that version stops writing shared files once its install has been replaced, so reload each open window to run the new one.
+- Raise `version` before every upload. Neither the Visual Studio Marketplace nor Open VSX accepts a version that was already published, even after it was removed.
 - Upload the same `.vsix` to both. For Open VSX: `npx ovsx publish <file> -p <token>`.
 
 ## Watching for upstream changes
