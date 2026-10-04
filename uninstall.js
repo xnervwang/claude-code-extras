@@ -4,7 +4,11 @@
 
 'use strict';
 /*
- * Uninstall hook (package.json "vscode:uninstall"). VS Code runs this with plain Node after the editor restarts.
+ * Uninstall hook (package.json "vscode:uninstall"). VS Code runs this with plain Node when it deletes the extension's
+ * folder, which in remote development is when the remote server next starts - possibly hours after the uninstall. The
+ * extension's own deactivate therefore restores Claude Code as soon as the editor restarts its extensions, and starts
+ * this script in a process of its own for the rest (src/removal.js). So this usually runs twice, and every step in it is
+ * safe to repeat: a restore finds nothing left to restore, and unregistering a plugin that is gone changes nothing.
  *
  * Without it, uninstalling this extension would leave every patched Claude Code file behind — still carrying our
  * marker, still running our script, with nothing left installed that knows how to undo it. So this restores every
@@ -21,32 +25,13 @@
  * The staged copy of the plugin in this extension's global storage is left where it is: that is the editor's own space
  * to reclaim, and nothing reads it once the marketplace entry is gone.
  */
-const os = require('os');
 const path = require('path');
-const adapters = require('./src/adapters');
 const pluginInstall = require('./src/plugin-install');
+const removal = require('./src/removal');
 
-const home = os.homedir();
-const roots = [
-  path.dirname(__dirname),                        // the folder this extension itself was installed in
-  process.env.VSCODE_EXTENSIONS,
-  path.join(home, '.vscode', 'extensions'),
-  path.join(home, '.vscode-insiders', 'extensions'),
-  path.join(home, '.vscode-server', 'extensions'),
-].filter(Boolean);
+// Leave anything that could not be restored; Claude Code's next update replaces the files anyway.
+const found = Array.from(new Set(removal.restoreAll(removal.roots(path.dirname(__dirname))).map((r) => r.dir)));
 
-const found = [];
-for (const root of Array.from(new Set(roots))) {
-  for (const adapter of adapters) {
-    for (const dir of adapter.findInstalls(root)) {
-      found.push(dir);
-      try { adapter.restore(dir); } catch (_) { /* leave it; Claude Code's next update replaces the files anyway */ }
-    }
-  }
-}
-
-/* The command line that unregisters the plugin lives inside Claude Code, so this only works while Claude Code is still
-   installed. If it is already gone, so is the binary - and so is anything that would load the plugin. */
 /* No binary means Claude Code is already gone, and with it anything that would load the plugin or delete its data. Then
    there is nothing to unregister and nothing at risk, so the plans are left exactly where they are. */
 const claudeBin = pluginInstall.findClaude(found);

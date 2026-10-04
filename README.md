@@ -17,7 +17,7 @@ Extras for Claude Code edits files inside the installed Claude Code extension. T
 by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
 alone with a warning.
 
-Verified against Claude Code 2.1.287; compatibility with other builds unknown.
+Verified against Claude Code 2.1.288; compatibility with other builds unknown.
 
 ## Work plan
 
@@ -92,6 +92,8 @@ plugin's skill description still loads in Claude Code; use
   mark at the panel's top right.
 - Uninstallation unregisters the plugin: Claude Code deletes its data directory; plans copied
   beforehand to `~/.claude/agent-work-plan-plans-<timestamp>/`.
+- Disabling the extension, as opposed to uninstalling it, leaves the patch in place. Run
+  `Extras for Claude Code: Remove from Claude Code (restore original files)` first.
 
 ## Contributing
 

@@ -11,6 +11,7 @@
 - `src/workplan.js` reads plan files. Its header defines the contract between the two halves.
 - `src/workplan-view.js` holds the work plan tree view.
 - `src/plugin-install.js` registers the companion Claude Code plugin and unregisters it on uninstall.
+- `src/removal.js` notices an uninstall when VS Code restarts its extensions, and restores Claude Code then rather than when VS Code deletes the folder.
 - `src/openlatency.js` pairs panel-opening times from the official extension's log.
 - `src/background.js` finds the `claude --bg` sessions a conversation started, in its transcript, and reads their state for the agent map.
 - `claude-plugin/` holds the companion plugin: the skill that maintains a plan and the hooks that keep it honest.

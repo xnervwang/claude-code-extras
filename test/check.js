@@ -2383,6 +2383,123 @@ console.log('\nhow a row being worked on, or waiting, is drawn');
   fs.rmSync(stub, { force: true });
 }
 
+/* ── 21. an uninstall puts Claude Code back at once ──
+   The editor runs the uninstall hook only when it deletes this extension's folder, which in remote development once
+   came eight hours after the uninstall. deactivate runs at the restart that follows an uninstall - and at every reload
+   and every window closing too, so what decides everything is the test for "this copy is being uninstalled". Most of
+   the cases below are the ones that must not count as one. */
+console.log('\nan uninstall puts Claude Code back at once');
+{
+  const removal = require('../src/removal');
+  const ID = 'xnervwang.claude-code-extras';
+  const me = ID + '-1.0.5';
+  const stage = (folders, marked, body) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-uninst-'));
+    for (const f of folders) fs.mkdirSync(path.join(dir, f));
+    if (body !== undefined) fs.writeFileSync(path.join(dir, '.obsolete'), body);
+    else if (marked) fs.writeFileSync(path.join(dir, '.obsolete'), JSON.stringify(Object.fromEntries(marked.map((m) => [m, true]))));
+    return dir;
+  };
+  const cases = [
+    ['this copy marked for deletion and nothing else left: an uninstall', [me], [me], true],
+    ['this copy marked while a newer version is not: an update, not an uninstall', [me, ID + '-1.0.6'], [me], false],
+    ['this copy not marked: an ordinary reload or a window closing', [me], [], false],
+    ['every version marked: an uninstall', [me, ID + '-1.0.4'], [me, ID + '-1.0.4'], true],
+    ['an extension whose name merely starts with ours is not a version of it', [me, ID + '-helper-1.0.0'], [me], true],
+  ];
+  for (const [what, folders, marked, want] of cases) {
+    const dir = stage(folders, marked);
+    const got = removal.beingUninstalled(path.join(dir, me), ID);
+    if (got === want) ok(what);
+    else bad(`${what}: said ${got}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  {
+    const none = stage([me]);
+    const junk = stage([me], null, '{not json');
+    if (!removal.beingUninstalled(path.join(none, me), ID) && !removal.beingUninstalled(path.join(junk, me), ID)) {
+      ok('no record at all, or one that does not parse, is never read as an uninstall');
+    } else bad('a missing or broken .obsolete was read as an uninstall');
+    fs.rmSync(none, { recursive: true, force: true });
+    fs.rmSync(junk, { recursive: true, force: true });
+  }
+
+  /* The restore itself, on a copy of a real Claude Code install: patched by the same code that patches it in use, then
+     put back by the code deactivate calls. Only the files we patch are copied. */
+  const source = (() => {
+    for (const d of Array.from(new Set(extensionsDirs()))) {
+      for (const install of webview.findInstalls(d)) {
+        const files = ADAPTERS.map((a) => pristine(a.targetFile(install), a));
+        if (files.every((f) => f && !f.foreign)) return { install, files };
+      }
+    }
+    return null;
+  })();
+  if (!source) note('no pristine Claude Code install here to try a restore on');
+  else {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-restore-'));
+    const copy = path.join(root, 'anthropic.claude-code-9.9.9-linux-x64');
+    ADAPTERS.forEach((a, i) => {
+      const f = a.targetFile(copy);
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, source.files[i].src);
+    });
+    const applied = ADAPTERS.map((a) => a.apply(copy, { enabled: true }));
+    const patched = ADAPTERS.every((a) => a.status(copy) === 'patched');
+    const done = removal.restoreAll([root]);
+    const same = ADAPTERS.every((a, i) => fs.readFileSync(a.targetFile(copy), 'utf8') === source.files[i].src);
+    const left = [];
+    for (const a of ADAPTERS) {
+      const b = a.targetFile(copy) + a.BACKUP_SUFFIX;
+      if (fs.existsSync(b)) left.push(path.basename(b));
+    }
+    for (const n of fs.readdirSync(path.join(copy, 'webview'))) if (n.startsWith('claude-code-extras')) left.push(n);
+    if (patched && done.filter((r) => r.changed).length === ADAPTERS.length && same && !left.length) {
+      ok(`a patched copy of ${path.basename(source.install)} comes back byte for byte, with no backup or stylesheet left`);
+    } else {
+      bad(`patched ${patched}, restored ${JSON.stringify(done.map((r) => r.message))}, identical ${same}, `
+        + `left ${JSON.stringify(left)}, applied ${JSON.stringify(applied.map((r) => r.message))}`);
+    }
+    const again = removal.restoreAll([root]);
+    if (again.every((r) => !r.changed)) ok('a second restore changes nothing, so the editor running the hook later is harmless');
+    else bad(`a second restore changed something: ${JSON.stringify(again)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  /* The rest goes to a process that outlives the host: the same uninstall.js, run as plain Node, detached. */
+  {
+    const calls = [];
+    const fake = (cmd, args, opts) => { calls.push({ cmd, args, opts }); return { unref() { calls.push('unref'); } }; };
+    const where = path.join(os.tmpdir(), me);
+    removal.finishLater(where, fake);
+    const c = calls[0] || {};
+    if (c.cmd === process.execPath && c.args && c.args[0] === path.join(where, 'uninstall.js') && c.opts.detached === true
+      && c.opts.stdio === 'ignore' && c.opts.env.ELECTRON_RUN_AS_NODE === '1' && calls[1] === 'unref') {
+      ok('the plugin is unregistered by uninstall.js in a detached process, run as plain Node');
+    } else bad(`finishLater spawned ${JSON.stringify(calls)}`);
+  }
+
+  /* The wiring, read from the source, since it is what makes any of the above happen in the editor. */
+  {
+    const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+    const un = fs.readFileSync(path.join(__dirname, '..', 'uninstall.js'), 'utf8');
+    const deact = (/function deactivate\(\) \{([\s\S]*?)\n\}/.exec(ext) || [])[1] || '';
+    const checks = [
+      ['deactivate restores and hands the rest on, and only for an uninstall',
+        /beingUninstalled\(selfPath, ID\)/.test(deact) && /restoreAll/.test(deact) && /finishLater/.test(deact)],
+      ['a window that has not restarted yet restores rather than patching again', /if \(removed\(\) \|\| leaving\)/.test(ext)],
+      ['and writes no stylesheet back',
+        /const writeLiveNow = \(\) => \{\s*if \(uninstalling\(\)\) return;/.test(ext)
+        && /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\)\) return;/.test(ext)],
+      ['the uninstall hook restores through the same code', /removal\.restoreAll\(removal\.roots\(/.test(un) && !/adapter\.restore\(/.test(un)],
+    ];
+    for (const [what, pass] of checks) {
+      if (pass) ok(what);
+      else bad(what);
+    }
+  }
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

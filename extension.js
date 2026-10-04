@@ -27,6 +27,14 @@ const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
 const ADAPTERS = require('./src/adapters');
+const removal = require('./src/removal');
+const PACKAGE = require('./package.json');
+
+/* <publisher>.<name>, which is also how the editor names this extension's folders. Read from the manifest rather than
+   from the editor's API because deactivate needs it, and by then that API is gone. */
+const ID = PACKAGE.publisher + '.' + PACKAGE.name;
+/* Where this copy is installed, kept for deactivate for the same reason. */
+let selfPath = '';
 
 const SETTING = 'claudeCodeExtras.enabled';
 const COLOR_SETTING = 'claudeCodeExtras.userMessageColor';
@@ -81,6 +89,11 @@ function activate(context) {
    */
   const startedAt = Date.now();
   const removed = () => context.globalState.get(REMOVED_KEY, false) === true;
+  selfPath = context.extensionPath;
+  /* True once the editor has marked this copy for deletion with no other version staying - an uninstall that is waiting
+     for this window to restart its extensions. Until then this window must not patch what another window restored on
+     its way out (see src/removal.js). */
+  const uninstalling = () => removal.beingUninstalled(context.extensionPath, ID);
 
   /*
    * Which project directories to look for scheduled prompts in - remembered across windows, not taken from this one.
@@ -128,6 +141,7 @@ function activate(context) {
     };
   };
   const writeLiveNow = () => {
+    if (uninstalling()) return;
     try {
       const opts = options();
       for (const dir of installs(webview)) webview.writeLive(dir, opts);
@@ -151,13 +165,14 @@ function activate(context) {
      asks for a reload; on and off and the color are picked up by an open panel within a couple of seconds. */
   async function sync({ interactive = false } = {}) {
     const patched = [], restored = [], problems = [];
+    const leaving = uninstalling();
     let found = 0;
     for (const adapter of ADAPTERS) {
       for (const dir of installs(adapter)) {
         found++;
         const label = `${adapter.name} (${path.basename(dir)})`;
         try {
-          if (removed()) {
+          if (removed() || leaving) {
             const r = adapter.restore(dir);
             log.appendLine(`${label}: ${r.message}`);
             if (r.changed && !restored.includes(adapter.name)) restored.push(adapter.name);
@@ -196,7 +211,8 @@ function activate(context) {
     // A shape mismatch after a Claude Code update would otherwise be silent, so it is said out loud.
     if (problems.length) vscode.window.showWarningMessage('Extras for Claude Code: ' + problems.join(' | '));
     if (patched.length) offerReload(`Extras for Claude Code is installed in ${patched.join(' and ')}. Reload the window once to start; after that, On/Off and colors change live.`);
-    if (restored.length) offerReload(`Extras for Claude Code was removed from ${restored.join(' and ')}. Reload the window to finish.`);
+    // An uninstall already has the editor asking for a restart of its extensions; a second prompt would only compete.
+    if (restored.length && !leaving) offerReload(`Extras for Claude Code was removed from ${restored.join(' and ')}. Reload the window to finish.`);
   }
 
   // Status bar toggle: shows the current state and flips it on click.
@@ -289,7 +305,7 @@ function activate(context) {
      so a quiet machine costs one small read per folder and nothing else. */
   const REFRESH_MS = 30000;
   const refresh = setInterval(() => {
-    if (removed() || !enabled()) return;
+    if (removed() || !enabled() || uninstalling()) return;
     scanBackground();
     writeLiveNow();
     sampleLatency();
@@ -625,6 +641,18 @@ function activate(context) {
   return sync();
 }
 
-function deactivate() {}
+/*
+ * Runs on every reload and every window that closes, and acts only on an uninstall: then it puts Claude Code back at
+ * once, rather than leaving the patched files in place until the editor deletes this folder (see src/removal.js).
+ *
+ * Synchronous and without the editor's API, both for the same reason: the host is shutting down. It gives deactivate five
+ * seconds, and restoring takes well under one; unregistering the companion plugin can take longer, so that part is
+ * handed to a process that outlives the host.
+ */
+function deactivate() {
+  if (!selfPath || !removal.beingUninstalled(selfPath, ID)) return;
+  try { removal.restoreAll(removal.roots(path.dirname(selfPath))); } catch (_) { /* the editor's own hook runs later */ }
+  try { removal.finishLater(selfPath); } catch (_) { /* likewise */ }
+}
 
 module.exports = { activate, deactivate };
