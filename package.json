@@ -2,7 +2,7 @@
   "name": "claude-code-extras",
   "displayName": "Extras for Claude Code",
   "description": "Work plan: a tree of what the conversation still has to do, kept current by Claude itself; also adds timestamps, reply figures, navigation, context details, and chimes to the Claude Code chat panel. Patches the installed Claude Code extension's files. Not affiliated with Anthropic.",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "publisher": "xnervwang",
   "license": "BSD-3-Clause",
   "icon": "images/icon.png",
@@ -231,7 +231,7 @@
         "claudeCodeExtras.show.footerPlainView": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "The footer button that leaves only the conversation. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+          "markdownDescription": "The footer button that leaves only the conversation, and, while it is folded and a turn runs, the latest tool call at the end of the working indicator's line. Turning it off stops the work, not only the drawing, and takes effect without a reload."
         },
         "claudeCodeExtras.show.footerViewFilter": {
           "type": "boolean",

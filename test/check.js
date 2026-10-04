@@ -2582,6 +2582,81 @@ console.log('\nevery call on the work plan view is one it has');
   fs.rmSync(stub, { force: true });
 }
 
+console.log('\nthe latest tool call, on the working line of a folded conversation');
+{
+  const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '87-plain-view.js'), 'utf8');
+  let searches = 0, busy = false, prompts = 0;
+  const box = {
+    out: {},
+    isOff: () => false,
+    fmt: (ms) => 'T' + ms,
+    dur: (ms) => (ms > 0 ? Math.round(ms / 1000) + 's' : ''),
+    setStyle() {}, setLabel() {}, SEND: 'z',
+    sigOn: (name) => name === 'visiblyBusy' && busy,
+    sigLen: (name) => (name === 'permissionRequests' ? prompts : 0),
+    window: { innerHeight: 800, localStorage: { getItem: () => '1', setItem() {} } },
+    document: { querySelector: () => null, querySelectorAll: () => { searches++; return []; } },
+  };
+  new vm.Script(`(function(){${fragment}\n;out.begin = beginToolSweep; out.note = noteTool; out.end = endToolSweep;` +
+    ` out.text = toolClockText; out.paint = paintToolClock; out.now = function(){ return toolNow; };})()`,
+    { filename: '87-plain-view.js' }).runInNewContext(box);
+  const o = box.out, T = 1000000;
+  const call = (at, name, doneAt, type = 'tool_use') => ({ message: { timestamp: at }, block: { content: { type, name }, cceResultAt: doneAt } });
+  const sweep = (turnAt, calls) => { o.begin(turnAt); for (const c of calls) o.note(c, c.block.content.type); o.end(); };
+  const expect = (got, want, label) => (got === want ? ok(label) : bad(`${label}: got "${got}", expected "${want}"`));
+
+  sweep(T, [call(T + 1000, 'Read', T + 2000), call(T + 3000, 'Bash')]);
+  expect(o.text(o.now(), T + 8000, false), `Bash running for 5s (since T${T + 3000})`, 'a call with no result yet reads as running, with its start');
+  expect(o.text(o.now(), T + 8000, true), 'Bash 5s', 'and has a short form for a narrow panel');
+  sweep(T, [call(T + 1000, 'Read', T + 2000), call(T + 3000, 'Bash', T + 9000)]);
+  expect(o.text(o.now(), T + 12000, false), `last tool Bash finished 3s ago (T${T + 9000})`, 'once it is back, how long ago it finished');
+  sweep(T, []);
+  expect(o.now().at, T + 3000, 'a sweep that meets no tool call in the same turn keeps the figures it had');
+  sweep(T + 20000, [call(T + 3000, 'Bash', T + 9000)]);
+  expect(o.text(o.now(), T + 25000, false), 'no tool call yet this turn (5s since your message)', 'a new turn with no call says so, timed from your message');
+  sweep(T + 20000, [call(T + 3000, 'Bash')]);
+  expect(o.now().open, 0, 'a call from an earlier turn that never came back is not running');
+  sweep(T, [call(T + 1000, 'Read'), call(T + 2000, 'Grep')]);
+  expect(o.text(o.now(), T + 6000, false), `2 tools running for 5s (since T${T + 1000})`, 'two open calls are counted, timed from the first');
+  sweep(T, [call(T + 1000, 'web_search', undefined, 'server_tool_use')]);
+  expect(o.now().open, 0, 'a server tool, whose result time is not recorded, is never counted as running');
+  box.isOff = () => true;
+  sweep(T, [call(T + 5000, 'Edit')]);
+  expect(o.now().name, 'web_search', 'switched off, nothing is gathered');
+  box.isOff = () => false;
+
+  o.paint(); o.paint();
+  expect(searches, 0, 'not busy: the page is not searched at all');
+  busy = true; prompts = 1; o.paint();
+  expect(searches, 0, 'busy but waiting on a permission prompt, which hides the indicator: not searched either');
+  prompts = 0; o.paint(); o.paint(); o.paint();
+  expect(searches, 1, 'busy with no indicator found: searched once, then not again within a few seconds');
+
+
+  // Where the indicator is drawn: two rows the panel can draw it in, found by the words a screen reader hears.
+  let clock = 1e6, pageRows = [];
+  const span = (box) => ({ textContent: 'Claude is working', parentElement: box });
+  const row = (getSpans) => ({ isConnected: true, querySelectorAll: () => getSpans(), contains: (x) => getSpans().some((s) => s.parentElement === x) });
+  let boxB = { isConnected: true }, spansB = [span(boxB)];
+  const rowA = row(() => []), rowB = row(() => spansB);
+  const box2 = { out: {}, isOff: () => false, fmt: String, dur: String, setStyle() {}, setLabel() {}, SEND: 'z',
+    sigOn: () => true, sigLen: () => 0, Date: { now: () => clock },
+    window: { innerHeight: 800, localStorage: { getItem: () => '1', setItem() {} } },
+    document: { querySelector: () => null, querySelectorAll: () => { searches++; return pageRows; } } };
+  searches = 0;
+  new vm.Script(`(function(){${fragment}\n;out.find = findWorking;})()`, { filename: '87-plain-view.js' }).runInNewContext(box2);
+  const find = box2.out.find;
+  pageRows = [rowA];
+  expect(find(), null, 'an indicator not yet drawn is not found');
+  pageRows = [rowA, rowB]; clock += 1000;
+  expect(find() === null && searches === 1, true, 'and the page is not searched again within a few seconds');
+  clock += 3000;
+  expect(find(), rowB, 'after that it is found in whichever row it is drawn');
+  expect(find() === rowB && searches === 2, true, 'and kept: finding it again searches nothing');
+  boxB.isConnected = false; boxB = { isConnected: true }; spansB = [span(boxB)];
+  expect(find() === rowB && searches === 2, true, 'a new turn draws a new indicator in the same row, found without searching the page');
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

@@ -87,6 +87,7 @@
        The check stays because the binary search in turnStartFor depends on the order: an assumption that quietly stopped
        holding would hand every reply the wrong turn start, with nothing to show it had. */
     if (!ordered) promptTs.sort(function(a, b){ return a - b; });
+    try { beginToolSweep(promptTs.length ? promptTs[promptTs.length - 1] : 0); } catch (e) {}
     var tC = clock();
     var msgs = document.querySelectorAll(ASSIST);
     // Both are already in hand, so aiming the text observer costs one walk up to the scrolling ancestor and a compare.
@@ -134,6 +135,7 @@
           // Label the block with its kind while its type is in hand. The plain-conversation filter reads the label off a
           // stylesheet rule, so this is the only place that has to touch the block for it.
           applyKind(row, t);
+          if (t === 'tool_use' || t === 'server_tool_use') noteTool(cx, t);
           if (agentView && own === VIEW && (t === 'tool_use' || t === 'server_tool_use')) {
             acts.push({ node: row, ts: cx.message.timestamp, text: toolLabel(cx.block.content) });
           }
@@ -151,6 +153,7 @@
         set(row, v);
       }
     }
+    try { endToolSweep(); } catch (e) {}
     // Compaction blocks belong to the main thread, so a sub-agent view hides them too.
     var cps = document.querySelectorAll(COMPACT);
     for (var cq = 0; cq < cps.length; cq++) applyOwner(cps[cq], 'main');
@@ -423,7 +426,7 @@
     setInterval(probe, POLL_MS);
     // The chime and the low-context outline must not depend on DOM churn: a turn can end without
     // any further mutation, which would leave the last sweep observing a still-busy state.
-    setInterval(function(){ try { watchIdle(); } catch (e) {} try { fillWindow(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensurePlainControl(); } catch (e) {} try { orderControls(); } catch (e) {} }, 700);
+    setInterval(function(){ try { watchIdle(); } catch (e) {} try { fillWindow(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensurePlainControl(); } catch (e) {} try { paintToolClock(); } catch (e) {} try { orderControls(); } catch (e) {} }, 700);
     run();
     report();
   };

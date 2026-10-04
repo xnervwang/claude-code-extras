@@ -48,6 +48,7 @@ The same conversation with one footer button pressed, leaving your messages and 
 | **Reply figures:** `2m10s · ctx 33% · cost $0.42 · opus-5 high`; turn duration, context-window use, running spend, model | Each reply, including closed turns |
 | **Sub-agent tags and filters:** spawn descriptions, such as `#look up tomorrow's weather`; `All`, `Main`, and individual sub-agent filters; table of contents follows filter | Tags on rows; filters in footer |
 | **Conversation navigation:** message times, opening words, compaction points; filter box; click-to-scroll; message stepping with arrows, `,`, and `.`; top and bottom jumps | Right-edge table of contents; buttons |
+| **Conversation only:** thinking and tool calls folded away; while a turn runs, the latest tool call at the end of the working indicator's line, such as `Bash running for 2m55s (since 11:11:18)` or `last tool Bash finished 35s ago (11:14:13)` | Footer button; the working indicator's line |
 | **Context meter:** visible even with over half the window free; outline at 15% remaining; category, memory-file, and custom-agent breakdown | Chat panel meter; hover tooltip |
 | **Session dates:** `11d · 09/05→09/16`; Claude Code relative last-active time, followed by date span | Sessions |
 | **Chimes:** two rising notes, three knocks, two falling notes; synthesized sound; no shipped audio files; footer mute button | Finished turn, permission request, question; local panel, including Remote SSH; footer |
