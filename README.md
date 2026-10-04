@@ -17,7 +17,7 @@ Extras for Claude Code edits files inside the installed Claude Code extension. T
 by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
 alone with a warning.
 
-Verified against Claude Code 2.1.288; compatibility with other builds unknown.
+Verified against Claude Code 2.1.288 and 2.1.289; compatibility with other builds unknown.
 
 ## Work plan
 

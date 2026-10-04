@@ -2,7 +2,7 @@
   "name": "claude-code-extras",
   "displayName": "Extras for Claude Code",
   "description": "Work plan: a tree of what the conversation still has to do, kept current by Claude itself; also adds timestamps, reply figures, navigation, context details, and chimes to the Claude Code chat panel. Patches the installed Claude Code extension's files. Not affiliated with Anthropic.",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "publisher": "xnervwang",
   "license": "BSD-3-Clause",
   "icon": "images/icon.png",
