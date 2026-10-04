@@ -22,7 +22,7 @@ const webview = require('./src/webview');
 const { safeColor } = webview;
 const { readTasks } = require('./src/tasks');
 const background = require('./src/background');
-const { countOpen, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
+const { countOpen, sweepOrphans, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
 const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
@@ -480,7 +480,7 @@ function activate(context) {
     const day = new Date().toISOString().slice(0, 10);
     if (context.globalState.get(SWEEP_KEY, '') === day) return;
     await context.globalState.update(SWEEP_KEY, day);
-    const r = workplan.sweepOrphans();
+    const r = sweepOrphans();
     if (r.why) log.appendLine('orphan work plans: ' + r.why);
     else if (r.deleted) log.appendLine(`orphan work plans: deleted ${r.deleted}, kept ${r.kept}`);
   };
@@ -538,8 +538,18 @@ function activate(context) {
        cut, so a plugin file that changed without one was staged once and never again, and the registered plugin kept
        running the older file. Nothing said so, because the state recorded agreed with itself. */
     const stamp = pluginInstall.digest(from);
-    const registered = state.registered === true;
-    if (!retry && registered && state.stamp === stamp) return;
+    const to = path.join(context.globalStorageUri.fsPath, 'claude-plugin');
+    /* The memory of having registered is kept by the editor and outlives an uninstall of this extension, while the
+       uninstall unregisters the plugin and its marketplace together. Both missing from Claude Code's own records is
+       that, and then the plugin is registered again; the plugin alone missing is somebody's deliberate removal, and is
+       left alone (see registrationGone). */
+    const undone = state.registered === true && pluginInstall.registrationGone();
+    const registered = state.registered === true && !undone;
+    /* The registration points at the copy in this extension's global storage, and the editor deletes that folder along
+       with an uninstalled extension - so the registration can outlive the files it names. */
+    const staged = fs.existsSync(path.join(to, pluginInstall.PLUGIN));
+    if (!retry && registered && state.stamp === stamp && staged) return;
+    if (undone) log.appendLine('work plan plugin: registering again - Claude Code lists neither it nor its marketplace, which is what uninstalling this extension leaves');
     // A registered plugin on a new version of this extension needs its files refreshed, not registering again: the
     // path stays where it is, and re-running the install is what would undo a deliberate uninstall.
     const refreshOnly = !retry && registered;
@@ -552,12 +562,7 @@ function activate(context) {
       log.appendLine('work plan plugin: ' + problem.step + ': ' + problem.said);
       return;
     }
-    const result = await pluginInstall.install({
-      claudeBin,
-      from,
-      to: path.join(context.globalStorageUri.fsPath, 'claude-plugin'),
-      refreshOnly,
-    });
+    const result = await pluginInstall.install({ claudeBin, from, to, refreshOnly });
     log.appendLine('work plan plugin: ' + (result.ok ? result.said : result.step + ' failed: ' + result.said));
     if (result.ok) {
       await context.globalState.update(PLUGIN_KEY, { registered: true, stamp, error: '' });

@@ -47,6 +47,26 @@ const BINARY = path.join('resources', 'native-binary', 'claude');
    and a timeout here would be reported as a failure that is really only a wait. */
 const TIMEOUT_MS = 60000;
 
+/**
+ * Whether Claude Code's own records have lost both the plugin and the marketplace it came from - which is exactly what
+ * uninstalling this extension leaves, since the uninstall removes the two together.
+ *
+ * Asked because this extension's memory of having registered the plugin is kept by the editor and survives an uninstall
+ * of this extension, so after a reinstall it says "registered" about a plugin that no longer is. Only the plugin gone,
+ * with its marketplace still known, is what removing the plugin on purpose leaves, and that is not this. False whenever
+ * the records cannot be read: not knowing is no reason to register anything.
+ */
+function registrationGone(home = os.homedir()) {
+  const read = (name) => {
+    try { return JSON.parse(fs.readFileSync(path.join(home, '.claude', 'plugins', name), 'utf8')); } catch (_) { return null; }
+  };
+  const plugins = read('installed_plugins.json');
+  const markets = read('known_marketplaces.json');
+  if (!plugins || typeof plugins !== 'object' || !markets || typeof markets !== 'object') return false;
+  const listed = plugins.plugins && typeof plugins.plugins === 'object' ? plugins.plugins : {};
+  return !Object.prototype.hasOwnProperty.call(listed, REF) && !Object.prototype.hasOwnProperty.call(markets, MARKETPLACE);
+}
+
 /** The first Claude Code install that carries a runnable binary. */
 function findClaude(dirs) {
   for (const dir of dirs || []) {
@@ -203,5 +223,6 @@ async function disable() {
 
 
 module.exports = {
-  install, disable, removeSync, rescuePlans, findClaude, digest, MARKETPLACE, PLUGIN, REF, BINARY, DATA_DIR,
+  install, disable, removeSync, rescuePlans, findClaude, digest, registrationGone, MARKETPLACE, PLUGIN, REF, BINARY,
+  DATA_DIR,
 };

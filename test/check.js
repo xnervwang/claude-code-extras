@@ -2500,6 +2500,88 @@ console.log('\nan uninstall puts Claude Code back at once');
   }
 }
 
+/* ── 22. the work plan plugin after an uninstall and a reinstall ──
+   The memory of having registered the plugin is kept by the editor and outlives an uninstall of this extension, which
+   unregisters the plugin; a reinstall then read "registered" and never registered it again. The cases that must NOT
+   bring it back matter as much: removing the plugin on purpose leaves its marketplace known, and that has to stick. */
+console.log('\nthe work plan plugin after an uninstall and a reinstall');
+{
+  const pi = require('../src/plugin-install');
+  const home = (plugins, markets) => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-reg-'));
+    fs.mkdirSync(path.join(h, '.claude', 'plugins'), { recursive: true });
+    if (plugins !== undefined) fs.writeFileSync(path.join(h, '.claude', 'plugins', 'installed_plugins.json'), plugins);
+    if (markets !== undefined) fs.writeFileSync(path.join(h, '.claude', 'plugins', 'known_marketplaces.json'), markets);
+    return h;
+  };
+  const listed = JSON.stringify({ version: 2, plugins: { [pi.REF]: [{ scope: 'user' }] } });
+  const none = JSON.stringify({ version: 2, plugins: { 'other@elsewhere': [] } });
+  const market = JSON.stringify({ [pi.MARKETPLACE]: { source: { source: 'directory' } } });
+  const noMarket = JSON.stringify({ elsewhere: {} });
+  const cases = [
+    ['plugin and marketplace both gone, as an uninstall of this extension leaves them: register again', none, noMarket, true],
+    ['the plugin gone while its marketplace is still known, as removing it on purpose leaves it: leave it', none, market, false],
+    ['the plugin still listed: nothing to do', listed, market, false],
+    ['records that cannot be read: do nothing', '{oops', noMarket, false],
+    ['no records at all: do nothing', undefined, undefined, false],
+  ];
+  for (const [what, plugins, markets, want] of cases) {
+    const h = home(plugins, markets);
+    const got = pi.registrationGone(h);
+    if (got === want) ok(what);
+    else bad(`${what}: said ${got}`);
+    fs.rmSync(h, { recursive: true, force: true });
+  }
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const body = (/const syncPlugin = async \(retry\) => \{([\s\S]*?)\n  \};/.exec(ext) || [])[1] || '';
+  if (/registrationGone\(\)/.test(body) && /!undone/.test(body) && /&& staged\) return;/.test(body)) {
+    ok('registering consults Claude Code\'s records and the staged copy, not only its own memory');
+  } else bad('syncPlugin still trusts only its remembered state');
+}
+
+/* ── 23. every call on the work plan view is one it has ──
+   extension.js holds the view in a variable named like the module it reads plans with, and once called a module
+   function on the view instead: the daily sweep of abandoned plans threw "is not a function" every time it ran, and
+   nothing showed it but one line in the output channel. Uses the same stub of the editor's API as sections 15 and 20. */
+console.log('\nevery call on the work plan view is one it has');
+{
+  const Module = require('module');
+  const realResolve = Module._resolveFilename;
+  const stub = path.join(os.tmpdir(), 'cce-vscode-stub-23.js');
+  fs.writeFileSync(stub, `
+    class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
+    module.exports = {
+      TreeItem,
+      TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+      ThemeIcon: class { constructor(id, color) { this.id = id; this.color = color; } },
+      ThemeColor: class { constructor(id) { this.id = id; } },
+      MarkdownString: class { constructor(v) { this.value = v; } },
+      Uri: { file: (p) => ({ fsPath: p }) },
+      EventEmitter: class { constructor() { this.event = () => ({ dispose() {} }); } fire() {} },
+    };
+  `);
+  Module._resolveFilename = function (request, ...rest) {
+    return request === 'vscode' ? stub : realResolve.call(this, request, ...rest);
+  };
+  let Provider;
+  try {
+    delete require.cache[require.resolve('../src/workplan-view')];
+    ({ WorkPlanProvider: Provider } = require('../src/workplan-view'));
+  } finally {
+    Module._resolveFilename = realResolve;
+  }
+  const view = new Provider();
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const called = Array.from(new Set((ext.match(/\bworkplan\.(\w+)\(/g) || []).map((m) => m.slice(9, -1))));
+  const missing = called.filter((name) => typeof view[name] !== 'function');
+  if (called.length && !missing.length) ok(`all ${called.length} methods extension.js calls on the view exist: ${called.join(', ')}`);
+  else bad(`extension.js calls ${missing.join(', ')} on the view, which has no such method`);
+  if (/\bsweepOrphans\b[^\n]*require\('\.\/src\/workplan'\)/.test(ext) && /const r = sweepOrphans\(\);/.test(ext)) {
+    ok('the sweep of abandoned plans is the module\'s function, imported as such');
+  } else bad('the sweep of abandoned plans is not called through the module');
+  fs.rmSync(stub, { force: true });
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);
