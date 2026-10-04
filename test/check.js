@@ -2326,10 +2326,16 @@ console.log('\nhow a row being worked on, or waiting, is drawn');
 
   {
     const icons = plan.STATES.map((s) => viewMod.LOOK[s] && viewMod.LOOK[s].icon);
-    const w = viewMod.LOOK.waiting;
-    if (icons.every(Boolean) && new Set(icons).size === icons.length && w && w.icon === 'watch' && w.color === 'charts.yellow') {
-      ok('every state has its own shape, and waiting is a yellow watch');
-    } else bad(`icons per state: ${JSON.stringify(icons)}`);
+    const w = viewMod.LOOK.waiting, talk = viewMod.LOOK.discussing;
+    if (icons.every(Boolean) && new Set(icons).size === icons.length && w && w.color === 'charts.orange' && w.color !== talk.color) {
+      ok('every state has its own shape, and waiting is orange, apart from discussing in colour as well');
+    } else bad(`icons per state: ${JSON.stringify(icons)}, waiting colour ${w && w.color}`);
+    const pick = (v) => viewMod.waitingIcon(v);
+    const want = [['1.140.0', 'clockface'], ['1.111.0', 'clockface'], ['2.0.0', 'clockface'], ['1.140.0-insider', 'clockface'],
+      ['1.110.0', 'watch'], ['1.94.0', 'watch'], [undefined, 'watch'], ['', 'watch'], ['x.y', 'watch']];
+    const wrong = want.filter(([v, icon]) => pick(v) !== icon);
+    if (!wrong.length) ok('a clock face from VS Code 1.111, where the icon font has one, and the watch before it or when unknown');
+    else bad(`waitingIcon gave ${wrong.map(([v]) => `${v}: ${pick(v)}`).join(', ')}`);
   }
   {
     const now = Date.now();

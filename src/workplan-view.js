@@ -18,26 +18,39 @@ const vscode = require('vscode');
 const { readPlan, countOpen, openFirst } = require('./workplan');
 
 /*
+ * `clockface` is in the editor's icon font from VS Code 1.111 on. An older editor, or a fork built on one, draws nothing
+ * at all for a name it does not have, so there the watch stands in: a weaker shape, but a shape. A version that cannot
+ * be read gets the watch too.
+ */
+function waitingIcon(version) {
+  const have = String(version || '').split(/[.-]/).slice(0, 2).map(Number);
+  if (have.length < 2 || have.some((n) => !Number.isFinite(n))) return 'watch';
+  return have[0] > 1 || (have[0] === 1 && have[1] >= 111) ? 'clockface' : 'watch';
+}
+
+/*
  * Icons say the state, and they are told apart by shape rather than by colour: colour alone disappears for a reader who
  * cannot separate these hues, and the panel is read in both light and dark themes.
  */
 const LOOK = {
   discussing: { icon: 'comment-discussion', color: 'charts.yellow', word: 'discussing' },
   /* Purple, which is the slot left once every other meaning is taken. Blue is the row being worked on, green is finished,
-     yellow is a row waiting on somebody, and grey is the two that are not going to happen - and an agreed row that has
-     simply not started belongs to none of those. Orange was tried and is a warning in this palette and most others: a
-     queue is not a problem, and `todo` is usually the state with the most rows in it, so the tree would light up in the
-     colour meant for trouble and drown the yellow that actually wants attention. */
+     yellow is a row still being talked over, orange is a row held up by somebody, and grey is the two that are not going
+     to happen - and an agreed row that has simply not started belongs to none of those. Orange would be wrong here: it
+     is a warning in this palette and most others, a queue is not a problem, and `todo` is usually the state with the
+     most rows in it, so the tree would light up in the colour meant for trouble and drown the rows that want attention. */
   todo: { icon: 'circle-large-outline', color: 'charts.purple', word: 'to do' },
   /* A filled triangle in blue. Nothing else here is a triangle, so it reads as its own thing at sixteen pixels, and it
      is the shape everything else uses for running. */
   doing: { icon: 'debug-start', color: 'charts.blue', word: 'doing' },
   /* Started, and now held up by someone outside the conversation - the user, another team, a job running elsewhere.
-     Yellow, like `discussing`, because both are rows waiting on somebody, and most often on the reader; the shapes keep
-     them apart. It is its own state because `doing` was being used for it: four of the six rows `doing` on the machine
-     this was written on said in their notes that they were waiting, and a tree that shows those as being worked on gets
-     wrong the one thing it is watched for. */
-  waiting: { icon: 'watch', color: 'charts.yellow', word: 'waiting' },
+     A clock face in orange. The shape says time is passing, which is the whole of what this state means; the watch it
+     replaced was a rounded box at sixteen pixels and said nothing. Orange because there are few of these rows and each
+     one wants a look, and because sharing yellow with `discussing` left the colour unable to tell them apart. It is its
+     own state because `doing` was being used for it: four of the six rows `doing` on the machine this was written on
+     said in their notes that they were waiting, and a tree that shows those as being worked on gets wrong the one thing
+     it is watched for. */
+  waiting: { icon: waitingIcon(vscode.version), color: 'charts.orange', word: 'waiting' },
   parked: { icon: 'debug-pause', color: 'descriptionForeground', word: 'parked' },
   done: { icon: 'pass-filled', color: 'charts.green', word: 'done' },
   dropped: { icon: 'circle-slash', color: 'descriptionForeground', word: 'dropped' },
@@ -305,4 +318,4 @@ class WorkPlanProvider {
   }
 }
 
-module.exports = { WorkPlanProvider, summary, hasOpen, stamp, held, heldAll, LOOK, OPEN, TIMED };
+module.exports = { WorkPlanProvider, summary, hasOpen, stamp, held, heldAll, LOOK, OPEN, TIMED, waitingIcon };
