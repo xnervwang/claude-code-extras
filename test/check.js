@@ -2495,8 +2495,8 @@ console.log('\nan uninstall puts Claude Code back at once');
         /beingUninstalled\(selfPath, ID\)/.test(deact) && /restoreAll/.test(deact) && /finishLater/.test(deact)],
       ['a window that has not restarted yet restores rather than patching again', /if \(removed\(\) \|\| leaving\)/.test(ext)],
       ['and writes no stylesheet back',
-        /const writeLiveNow = \(\) => \{\s*if \(uninstalling\(\)\) return;/.test(ext)
-        && /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\)\) return;/.test(ext)],
+        /const writeLiveNow = \(\) => \{\s*if \(uninstalling\(\)( \|\| replaced\(\))?\) return;/.test(ext)
+        && /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\)( \|\| replaced\(\))?\) return;/.test(ext)],
       ['the uninstall hook restores through the same code', /removal\.restoreAll\(removal\.roots\(/.test(un) && !/adapter\.restore\(/.test(un)],
     ];
     for (const [what, pass] of checks) {
@@ -2661,6 +2661,34 @@ console.log('\nthe latest tool call, on the working line of a folded conversatio
   expect(find() === rowB && searches === 2, true, 'and kept: finding it again searches nothing');
   boxB.isConnected = false; boxB = { isConnected: true }; spansB = [span(boxB)];
   expect(find() === rowB && searches === 2, true, 'a new turn draws a new indicator in the same row, found without searching the page');
+}
+
+console.log('\na window whose install was replaced by a rebuild of the same version');
+{
+  const removal = require('../src/removal');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-replaced-'));
+  const write = (meta) => fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.8', ...(meta ? { __metadata: meta } : {}) }));
+  write({ installedTimestamp: 1000 });
+  const loaded = removal.installStamp(dir);
+  const cases = [
+    [loaded === 1000 && removal.replacedSince(dir, loaded) === false, 'the same install: not replaced'],
+    [(write({ installedTimestamp: 2000 }), removal.replacedSince(dir, loaded) === true), 'installed again over itself: replaced'],
+    [removal.replacedSince(dir, 0) === false, 'no stamp read at start: never counted as replaced'],
+    [(write(null), removal.replacedSince(dir, loaded) === false), 'a manifest without install metadata: not replaced'],
+    [removal.replacedSince(path.join(dir, 'gone'), loaded) === false && removal.installStamp(path.join(dir, 'gone')) === 0,
+      'a manifest that cannot be read: not replaced, and no stamp'],
+  ];
+  for (const [good, label] of cases) (good ? ok : bad)(label);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const guarded = [
+    ['writing the live stylesheet', /const writeLiveNow = \(\) => \{\s*if \(uninstalling\(\) \|\| replaced\(\)\) return;/],
+    ['patching or restoring', /async function sync\([^)]*\) \{\s*if \(replaced\(\)\) \{/],
+    ['the timed refresh', /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;\s*scanBackground\(\);/],
+  ];
+  const missing = guarded.filter(([, re]) => !re.test(ext)).map(([what]) => what);
+  if (!missing.length) ok('a replaced window writes nothing shared: ' + guarded.map(([what]) => what).join(', '));
+  else bad('not guarded against a replaced install: ' + missing.join(', '));
 }
 
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');

@@ -106,4 +106,35 @@ function finishLater(extensionPath, spawn = cp.spawn) {
   return child;
 }
 
-module.exports = { roots, obsolete, beingUninstalled, restoreAll, finishLater };
+/**
+ * Whether this copy was replaced on disk after it was loaded: the same version installed again, which leaves a window that
+ * has not reloaded running the earlier build.
+ *
+ * Version numbers cannot order two builds of one version, and between releases the version is left alone, so the rule
+ * that keeps an older build from writing over a newer one's files does not separate them. VS Code stamps every install
+ * into the manifest it writes, `__metadata.installedTimestamp`, so a stamp on disk that differs from the one read when this
+ * copy started means newer code is installed. Until this window reloads it must not patch or write what that build owns.
+ *
+ * False when either stamp is missing: nothing to compare is no reason to stand down.
+ */
+function replacedSince(extensionPath, loadedStamp) {
+  if (!extensionPath || !loadedStamp) return false;
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(extensionPath, 'package.json'), 'utf8')).__metadata;
+    return !!(meta && meta.installedTimestamp && meta.installedTimestamp !== loadedStamp);
+  } catch (_) {
+    return false;
+  }
+}
+
+/** The install stamp of the copy at extensionPath as it is on disk now, or 0 when it cannot be read. */
+function installStamp(extensionPath) {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(extensionPath, 'package.json'), 'utf8')).__metadata;
+    return (meta && meta.installedTimestamp) || 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+module.exports = { roots, obsolete, beingUninstalled, restoreAll, finishLater, replacedSince, installStamp };

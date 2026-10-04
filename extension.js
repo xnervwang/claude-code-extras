@@ -94,6 +94,10 @@ function activate(context) {
      for this window to restart its extensions. Until then this window must not patch what another window restored on
      its way out (see src/removal.js). */
   const uninstalling = () => removal.beingUninstalled(context.extensionPath, ID);
+  /* True once this copy has been installed again over itself while this window kept running the earlier build. That
+     window then leaves every shared file alone; the windows that reload run the new build and keep them current. */
+  const loadedStamp = removal.installStamp(context.extensionPath);
+  const replaced = () => removal.replacedSince(context.extensionPath, loadedStamp);
 
   /*
    * Which project directories to look for scheduled prompts in - remembered across windows, not taken from this one.
@@ -141,7 +145,7 @@ function activate(context) {
     };
   };
   const writeLiveNow = () => {
-    if (uninstalling()) return;
+    if (uninstalling() || replaced()) return;
     try {
       const opts = options();
       for (const dir of installs(webview)) webview.writeLive(dir, opts);
@@ -164,6 +168,11 @@ function activate(context) {
   /* Bring every install in line with the current settings. Only installing, upgrading or removing the patch itself
      asks for a reload; on and off and the color are picked up by an open panel within a couple of seconds. */
   async function sync({ interactive = false } = {}) {
+    if (replaced()) {
+      log.appendLine('sync: this window runs a build that has since been installed again; leaving the files to the windows running it');
+      if (interactive) offerReload('This window is running an earlier build of Extras for Claude Code than the one now installed. Reload the window to run it.');
+      return;
+    }
     const patched = [], restored = [], problems = [];
     const leaving = uninstalling();
     let found = 0;
@@ -305,7 +314,7 @@ function activate(context) {
      so a quiet machine costs one small read per folder and nothing else. */
   const REFRESH_MS = 30000;
   const refresh = setInterval(() => {
-    if (removed() || !enabled() || uninstalling()) return;
+    if (removed() || !enabled() || uninstalling() || replaced()) return;
     scanBackground();
     writeLiveNow();
     sampleLatency();
