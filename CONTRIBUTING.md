@@ -23,7 +23,7 @@
 
 ## Working on it
 
-Run `node test/check.js` for the full suite. No npm install or dependencies are needed. Run `bash build/pack.sh` to produce the `.vsix`.
+Run `node test/check.js` for the full suite. No npm install or dependencies are needed. Run `bash build/pack.sh` to produce a `.vsix` for installing locally; the package the marketplaces get is described under Publishing.
 
 The in-page script stays in ordinary `.js` files rather than one large template literal. In a literal, every backslash needed doubling. A missed backslash failed only at runtime: `/\s+/` became `/s+/` and replaced the letter *s* in every label it passed through.
 
@@ -34,6 +34,21 @@ The panel patch needs no manual version bump. Its marker includes a digest of th
 Two rules the in-page script keeps, each adopted after the failure it prevents. Never put a node of your own inside one the panel owns - read positions, add siblings, set attributes and inline styles, but nothing goes inside. When the panel's own rendering collided with such a node it threw, and from then on the page stopped handling clicks and keys at all: a dead stop button and a dead Escape, with nothing visible to say why. And never do anything before the panel has painted - the script is appended to the panel's own bundle, so whatever it does there is work the panel must finish before it can show anything. Everything that reads or watches the page waits for the browser to report itself idle.
 
 Keep the early exit in the injected script's React fiber tree loop. It runs for every visible row on every refresh. Searching for more than one thing at a time measured 8–10× slower. `test/check.js` checks that the early exit remains.
+
+## Publishing
+
+- Package for the marketplaces with vsce, not `build/pack.sh`. `pack.sh` copies `images/` whole, so the README screenshots (about 1.2 MB) ship too, and it leaves the README's relative links as they are. Nothing reports either difference.
+- Commit and push first, then package against that commit so the README's images resolve:
+
+  ```sh
+  SHA=$(git rev-parse HEAD)
+  npx --yes @vscode/vsce@latest package --out xnervwang.claude-code-extras-<version>.vsix \
+    --baseImagesUrl "https://github.com/xnervwang/claude-code-extras/raw/$SHA/"
+  ```
+
+- On Node 22.11, vsce needs `NODE_OPTIONS=--experimental-require-module`.
+- Raise `version` before every upload. Neither the Visual Studio Marketplace nor Open VSX accepts a version that was already published, even after it was removed.
+- Upload the same `.vsix` to both. For Open VSX: `npx ovsx publish <file> -p <token>`.
 
 ## Watching for upstream changes
 
