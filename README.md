@@ -3,6 +3,8 @@
 This VS Code extension edits the installed Claude Code extension to add a Claude-maintained work plan to its chat panel. The plan keeps unfinished work on screen and puts it back in front of Claude after older turns are compacted. It also adds timestamps; reply duration, context use, running spend, and model; a filterable table of contents with message stepping; a context meter with a hover breakdown; sub-agent tags and filters; a fold for thinking and tool calls; chimes; and session details.
 Not affiliated with Anthropic. Requires Anthropic's Claude Code extension, which it adds nothing without, and VS Code 1.94 or later. 24 settings, 11 commands.
 
+Discuss tasks in parallel threads: you can raise a new topic before finishing another, without starting a separate conversation for each task. Keep several tasks open and discuss them by row number, in any order: `122: try another icon`, `101.1: not now`. One message can settle several rows, and you can return to a row hours later. The plan is a tree of remaining work. Numbers mark positions in its file and stay fixed when finished rows leave gaps. They appear in the activity-bar tree and the open rows shown to Claude every turn, even after compaction. Claude records decisions on each row: approval makes it `todo`, rejection `dropped`, and deferral `parked`.
+
 ## Install
 
 Search for **Extras for Claude Code** in the Extensions view, or run
