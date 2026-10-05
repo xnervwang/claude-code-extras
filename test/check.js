@@ -136,6 +136,32 @@ else bad(`the injected script calls ${undeclared.length} name(s) it never declar
 if (webview.SCRIPT.includes('!out.message; f = f.return')) ok('hot loop keeps its early exit');
 else bad('hot loop lost its early exit — the fiber walk will run to full depth on every element');
 
+/* What the page writes on every sweep or every tick has to be skipped when it would not change. Writing text is a
+   mutation, the page's own observer answers a mutation with a sweep, and the sweep reaches these writes again - so one
+   unconditional write keeps the page sweeping four times a second with nothing happening on it. Measured with the real
+   script on an idle page: 19 sweeps in five seconds with the plain view on, 3 with it off. */
+{
+  const page = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', f), 'utf8');
+  const plain = page('87-plain-view.js'), view = page('85-view-filter.js');
+  if (plain.includes('if (plainStyle.textContent !== rule) plainStyle.textContent = rule;')
+      && plain.includes("if (plainStyle.textContent) plainStyle.textContent = '';")
+      && !/\n\s*plainStyle\.textContent = sel\.join/.test(plain)) {
+    ok('the plain view writes its rule only when the rule changes');
+  } else bad('the plain view rewrites its rule unconditionally, which keeps an idle page sweeping');
+  if (view.includes('if (VIEWBTN.textContent !== label) VIEWBTN.textContent = label;')) {
+    ok('the view button writes its label only when the label changes');
+  } else bad('the view button rewrites its label on every sweep, which keeps an idle page sweeping');
+  /* Ordering two siblings costs the browser a walk along the siblings between them, and every message is a sibling of
+     every other, so placing the compaction rules against each prompt on every sweep took tens of milliseconds a sweep
+     on a long conversation. */
+  const toc = page('45-toc.js');
+  const sync = toc.slice(toc.indexOf('var syncMap = function'));
+  const settled = sync.indexOf('if (sig === SIG) return;'), compared = sync.indexOf('compareDocumentPosition');
+  if (settled > 0 && compared > settled && sync.includes('while (lo < hi)')) {
+    ok('compaction rules are placed only when the contents list is rebuilt, by halving');
+  } else bad('compaction rules are placed before the signature check, or by walking every prompt');
+}
+
 /* Every mutation observer has to go through the callback that labels a new block before the browser paints it. There are
    two of them watching different roots, and wiring only one leaves half the blocks appearing at full height and then
    collapsing - the symptom this was written to remove, at half the rate, which reads as the fix not having worked rather
@@ -696,17 +722,32 @@ console.log('\nbackground sessions');
     } else bad(`after the line was finished: ${JSON.stringify(whole)}`);
   }
 
-  // No file for a conversation that started nothing - one per conversation looked at would be clutter.
+  // No file for a conversation that started nothing - one per conversation looked at would be clutter. How far it was
+  // read is still kept by the host, so the next pass starts there: the part already read is rewritten below to hold a
+  // launch, which only a pass starting again from the first byte would find.
   {
     const SID2 = 'bbbbbbbb-1111-2222-3333-444444444444';
     const t2 = path.join(proj, SID2 + '.jsonl');
-    fs.writeFileSync(t2, prose('nothing launched here') + ran('ls -la', 'total 0'));
-    const script = `require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))})
-      .scan(${JSON.stringify(SID2)}, ${JSON.stringify({ dir: plans, jobs, transcript: t2 })})
-      .then((r) => process.stdout.write(JSON.stringify(r)));`;
-    cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    const before = prose('nothing launched here') + ran('ls -la', 'total 0')
+      + [1, 2, 3, 4, 5, 6].map((n) => prose('still nothing, line ' + n)).join('');
+    const rewritten = ran('claude --bg "late"', launched('1a2b3c4d')) + before;
+    fs.writeFileSync(t2, before);
+    const script = `
+      const bg = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))});
+      const fs = require('fs');
+      const opts = ${JSON.stringify({ dir: plans, jobs, transcript: t2 })};
+      (async () => {
+        const first = await bg.scan(${JSON.stringify(SID2)}, opts);
+        fs.writeFileSync(opts.transcript, ${JSON.stringify(rewritten)});
+        const second = await bg.scan(${JSON.stringify(SID2)}, opts);
+        process.stdout.write(JSON.stringify({ first, second }));
+      })().catch((e) => { process.stdout.write(JSON.stringify({ error: e.message })); });`;
+    const r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' }));
     if (!fs.existsSync(path.join(plans, SID2 + '.background'))) ok('a conversation that started nothing gets no file');
     else bad('a file was written for a conversation that started nothing');
+    if (!r.error && r.first.added === 0 && r.second.added === 0 && r.second.scannedTo > r.first.scannedTo) {
+      ok('and the next pass over it reads on from where the last one stopped, not from the first byte');
+    } else bad(`two passes over a conversation that started nothing gave ${JSON.stringify(r)}`);
   }
 
   // What the stylesheet carries.

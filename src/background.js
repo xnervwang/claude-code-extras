@@ -126,6 +126,11 @@ function writeLink(file, link) {
 const known = new Map();
 const commands = new Map();
 const busy = new Map();
+/* How far this host has read each transcript. The file beside the plan carries the position across windows and
+   restarts, but it is written only for a conversation that started something - so without this, a conversation that
+   never did was read from its first byte on every pass, which on a transcript of a few hundred megabytes is most of a
+   second every half minute. */
+const readTo = new Map();
 
 /**
  * Read what one conversation's transcript has added since last time. Resolves to how many sessions were new.
@@ -150,7 +155,8 @@ async function scanOnce(session, opts) {
   let size;
   try { size = (await fs.promises.stat(transcript)).size; } catch (_) { return { added: 0, scannedTo: 0 }; }
   // A position past the end means the transcript was replaced rather than appended to, so it is read again in full.
-  const from = link.scannedTo <= size ? link.scannedTo : 0;
+  const start = Math.max(link.scannedTo, readTo.get(session) || 0);
+  const from = start <= size ? start : 0;
   const seen = new Set(link.ids);
   for (const id of known.get(session) || []) seen.add(id);
   if (!commands.has(session)) commands.set(session, new Set());
@@ -191,6 +197,7 @@ async function scanOnce(session, opts) {
   }
   const ids = [...seen];
   known.set(session, ids);
+  readTo.set(session, consumed);
   const added = ids.filter((id) => !link.ids.includes(id)).length;
   /* No file is made for a conversation that started nothing: one per conversation looked at would be clutter, and the
      price of not having one is a single read of its transcript when a window next starts. */

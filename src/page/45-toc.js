@@ -393,26 +393,32 @@
       if (PANEL) PANEL.style.display = 'none';
       return;
     }
-    // Compaction points are timeline landmarks, so they get a rule in the list. Their position is
-    // resolved by document order against the prompt nodes already gathered.
     // Compaction rules belong to the conversation timeline, not to a single agent's tool trace.
-    var marks = [];
     var comps = (VIEW === 'all' || VIEW === 'main') ? (compEls || []) : [];
-    for (var q = 0; q < comps.length; q++) {
-      var ce = comps[q], after = 0;
-      for (var w = 0; w < nodes.length; w++) {
-        if (nodes[w].compareDocumentPosition(ce) & 4) after = w + 1; else break;
-      }
-      var head = ce.querySelector('summary') || ce;
-      marks.push({ after: after, label: ((head.textContent || 'Compacted').replace(/\s+/g, ' ').trim()) });
-    }
-    var sig = VIEW + '|' + texts.length + '|' + marks.length + '|' + texts.map(function(t, k){ return whens[k] + t.slice(0, 12); }).join('\x1f');
+    var sig = VIEW + '|' + texts.length + '|' + comps.length + '|' + texts.map(function(t, k){ return whens[k] + t.slice(0, 12); }).join('\x1f');
     ensureUI();
     RAILBOX.style.display = 'flex';
     if (panelOpen()) fitPanel();
     PROMPT_EL = nodes;
     if (sig === SIG) return;
     SIG = sig;
+    /*
+     * Compaction points are timeline landmarks, so they get a rule in the list, placed by document order against the
+     * prompts. Placed here, after the signature has said the list must be rebuilt, and by halving rather than walking:
+     * ordering two siblings costs the browser a walk along the siblings between them, every message is a sibling of
+     * every other, and doing it for each prompt on every sweep took tens of milliseconds a sweep on a long conversation.
+     * The prompts are in document order, so "comes before this point" holds up to one index and not after it.
+     */
+    var marks = [];
+    for (var q = 0; q < comps.length; q++) {
+      var ce = comps[q], lo = 0, hi = nodes.length;
+      while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        if (nodes[mid].compareDocumentPosition(ce) & 4) lo = mid + 1; else hi = mid;
+      }
+      var head = ce.querySelector('summary') || ce;
+      marks.push({ after: lo, label: ((head.textContent || 'Compacted').replace(/\s+/g, ' ').trim()) });
+    }
     PLIST.textContent = '';
     ROWS = [];
     var rule = function(label){

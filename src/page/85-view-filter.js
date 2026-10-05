@@ -124,7 +124,8 @@
   };
   var ensureViewControl = function(){
     if (!SEEN.length && !KNOWN.length && !VIEWBTN) return;   // nothing to switch between yet
-    if (VIEWBTN && VIEWBTN.isConnected) { VIEWBTN.textContent = viewLabel(); return; }
+    // Only a changed label is written: every sweep reaches this, and writing text is a mutation that starts the next one.
+    if (VIEWBTN && VIEWBTN.isConnected) { var label = viewLabel(); if (VIEWBTN.textContent !== label) VIEWBTN.textContent = label; return; }
     var send = document.querySelector(SEND);
     if (!send) return;
     var mode = send.previousElementSibling;

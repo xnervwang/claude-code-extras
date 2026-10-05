@@ -59,14 +59,18 @@
       plainStyle.setAttribute('data-cce-plain', '1');
       (document.head || document.documentElement).appendChild(plainStyle);
     }
-    if (!plainOn()) { plainStyle.textContent = ''; return; }
+    /* Written only when it differs. Replacing the text is a mutation, the page's own observer answers it with a sweep,
+       and the sweep comes back here - so an unconditional write kept sweeps running four times a second on a page where
+       nothing happened, each one also making the browser match the :has() rule against the whole page again. */
+    if (!plainOn()) { if (plainStyle.textContent) plainStyle.textContent = ''; return; }
     var sel = [], keep = ':not(:has([' + KIND_ATTR + '="text"]))';
     for (var i = 0; i < NOT_PLAIN.length; i++) {
       var k = '[' + KIND_ATTR + '="' + NOT_PLAIN[i] + '"]';
       sel.push(k);
       sel.push(RAIL + ':has(' + k + ')' + keep);
     }
-    plainStyle.textContent = sel.join(',') + '{display:none !important}';
+    var rule = sel.join(',') + '{display:none !important}';
+    if (plainStyle.textContent !== rule) plainStyle.textContent = rule;
   };
 
   /*
