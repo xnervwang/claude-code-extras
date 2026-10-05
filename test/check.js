@@ -1845,7 +1845,7 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
     encoding: 'utf8', input: JSON.stringify(payload),
   }).stdout || '').trim();
 
-  /* Two changes in one batch, which is what the reminder at the start of the work needs before it says anything. */
+  /* Two changes in one batch, which is enough for the reminder at the start of the work to say something. */
   const working = { session_id: session, prompt_id: 'p-switch', hook_event_name: 'PostToolBatch',
     tool_calls: [{ tool_name: 'Edit', tool_input: {} }, { tool_name: 'Write', tool_input: {} }] };
   for (const [what, enabled] of [['on by default', undefined], ['on', true]]) {
@@ -2103,8 +2103,8 @@ console.log('\nthe reminder when a turn starts working');
     const t = stage(todo);
     begin(t, 'p1');
     const said = [batch(t, 'p1', [R]), batch(t, 'p1', [E]), batch(t, 'p1', [E]), batch(t, 'p1', [E])].map(spoke);
-    if (said.join() === 'false,false,true,false') ok('silent through reading and one change, speaks at the second, and only once');
-    else bad(`reading, then three changes, spoke ${JSON.stringify(said)}`);
+    if (said.join() === 'false,false,true,false') ok('silent for two calls, speaks at the third, and only once');
+    else bad(`a read, then three changes, spoke ${JSON.stringify(said)}`);
     begin(t, 'p2');
     if (spoke(batch(t, 'p2', [E, E]))) ok('the next turn can be told again, and two changes in one batch are enough');
     else bad('a new turn with two changes in one batch said nothing');
@@ -2129,13 +2129,22 @@ console.log('\nthe reminder when a turn starts working');
     done(t);
   }
   {
-    /* A turn that has already been to the plan has settled it, whatever it wrote there. */
+    /* Looking into something is work to mark, so a turn that only reads is told like one that edits. */
+    const t = stage(todo);
+    begin(t, 'p1');
+    const said = [batch(t, 'p1', [R]), batch(t, 'p1', [R]), batch(t, 'p1', [R])].map(spoke);
+    if (said.join() === 'false,false,true') ok('a turn that only reads is told at its third call');
+    else bad(`three reads spoke ${JSON.stringify(said)}`);
+    done(t);
+  }
+  {
+    /* Closing the last row and starting on the next writes the plan and still leaves nothing `doing`. */
     const t = stage(todo);
     begin(t, 'p1');
     const now = Date.now() / 1000 + 1;
     fs.utimesSync(t.plan, now, now);
-    if (!batch(t, 'p1', [E, E])) ok('a turn that has written to the plan is left alone');
-    else bad('a turn that had written to the plan was still told');
+    if (spoke(batch(t, 'p1', [E, E]))) ok('a turn that has written to the plan with nothing `doing` is still told');
+    else bad('a turn that had written to the plan, with no row doing, was left alone');
     done(t);
   }
   {
@@ -2161,6 +2170,15 @@ console.log('\nthe reminder when a turn starts working');
     begin(t, 'p1');
     if (spoke(batch(t, 'p1', [E]))) ok('how many changes it waits for is read from the settings file');
     else bad('with the threshold at one, the first change said nothing');
+    done(t);
+  }
+  {
+    const t = stage(todo, { remindMinCalls: 5 });
+    begin(t, 'p1');
+    const four = batch(t, 'p1', [R, R, R, R]);
+    const fifth = batch(t, 'p1', [R]);
+    if (!four && spoke(fifth)) ok('how many calls it waits for is read from the settings file');
+    else bad(`with the threshold at five, four calls said ${JSON.stringify(four.slice(0, 60))} and the fifth ${JSON.stringify(fifth.slice(0, 60))}`);
     done(t);
   }
   {

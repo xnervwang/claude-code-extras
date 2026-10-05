@@ -59,6 +59,12 @@ DEFAULTS = {
     # times between them, and never saw one reminder - what maintains a plan is having it in front of the model every
     # turn, not this.
     "nudgeMinChanges": 2,
+    # How many tool calls a turn makes, besides the plan's own, before the reminder that work has started with nothing
+    # marked `doing` speaks, whether or not those calls changed anything. That reminder asks a different question from
+    # the one at the end of a turn: not whether the plan is owed an entry, but whether the tree shows what is being worked
+    # on right now, and the injection counts looking into something as work to mark. So reading and searching count
+    # here, and nudgeMinChanges still lets two changes in a turn's first batch be enough on their own.
+    "remindMinCalls": 3,
     # What a turn has to cost before a conversation with no plan at all is told it could keep one. The upper quartile of
     # turns begins at 25 tool calls, measured over 691 of them.
     "offerMinToolCalls": 25,

@@ -3,7 +3,7 @@
 # Copyright (c) 2026, Xnerv Wang
 # All rights reserved.
 
-"""Say so, once, when a turn starts changing things and no row of the work plan is `doing`.
+"""Say so, once, when a turn starts working and no row of the work plan is `doing`.
 
 The injection asks for `doing` at the start of every turn, and that was not enough. Measured over the conversations on
 the machine this was written on, 177 turns began with nothing marked `doing` and went on to edit a file or commit; 55 of
@@ -13,25 +13,28 @@ the conversation showed nothing being worked on, which is the one thing the stat
 bookkeeping done before the closing summary, which is how every other instruction about it reads.
 
 So this speaks at the moment the work starts rather than at either end of the turn. The turn's own tool calls are what
-say it has started, and this runs after each batch of them; a batch counts when it changes something, judged the way the
-end-of-turn reminder judges it (changes.py). Measured over the same turns, the first such change comes after two other
-tool calls at the median and after seven at the ninetieth percentile, so waiting for it costs little of the turn - and a
-turn that never changes anything rarely runs past two calls.
+say it has started, and this runs after each batch of them. Every call counts, reading included: the injection counts
+looking into something as work to mark, so a turn that only reads and searches needs a `doing` row as much as one that
+edits. Changes - judged the way the end-of-turn reminder judges them (changes.py) - are counted as well, so that two in a
+turn's first batch are enough without waiting for a third call.
 
 It speaks only when all of these hold:
   - this is the main thread. A sub-agent shares the session id, and its work is recorded by the thread that sent it;
-  - the turn has changed at least nudgeMinChanges things, not counting the plan itself;
-  - the plan has not been written since the turn began. A turn that has already been to the plan has settled it, and
-    this is for the turns that start working without going there at all;
+  - the turn has made at least remindMinCalls calls or changed at least nudgeMinChanges things, not counting the
+    plan's own;
   - no row is `doing`;
   - it has not already spoken in this turn.
+
+Having written to the plan does not excuse a turn. Closing the previous row and then starting on the next is a write,
+and it leaves the tree showing nothing being worked on - the state this exists for. Only a row that is `doing` settles
+the turn.
 
 What it does not do is refuse the call, or work out which row is being worked on. The first would change how a
 conversation runs, which this plugin does not do; the second is a judgement about what the work is, which a script
 cannot make. So it can only ask, and it asks once: a reminder that repeats when it has been read and set aside is one
 that teaches the reader to skip it.
 
-The turn's facts - when it began, how much it has changed - come from the mark the injection hook leaves when the turn
+The turn's facts - when it began, how much it has done - come from the mark the injection hook leaves when the turn
 begins (see plan_path.py). Without that mark there is nothing to go on, and this stays silent.
 """
 import json
@@ -54,6 +57,10 @@ def any_doing(nodes):
                for n in nodes or [])
 
 
+def count(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -69,10 +76,9 @@ def main():
         return 0
     name = os.path.basename(path)
     # A call that names the plan is the plan being kept, not the work it describes.
-    changed = sum(1 for c in calls
-                  if isinstance(c, dict) and changes(c.get("tool_name"), c.get("tool_input"))
-                  and name not in json.dumps(c.get("tool_input"), ensure_ascii=False, default=str))
-    if not changed:
+    work = [c for c in calls if isinstance(c, dict)
+            and name not in json.dumps(c.get("tool_input"), ensure_ascii=False, default=str)]
+    if not work:
         return 0
     prompt = payload.get("prompt_id")
     if not isinstance(prompt, str) or not prompt:
@@ -83,18 +89,10 @@ def main():
     limits = settings()
     if not limits["enabled"]:
         return 0
-    so_far = turn.get("changes")
-    turn["changes"] = (so_far if isinstance(so_far, int) and not isinstance(so_far, bool) else 0) + changed
-    began = turn.get("began")
-    try:
-        touched = os.stat(path).st_mtime
-    except Exception:
-        return 0
-    if not isinstance(began, (int, float)) or touched >= began:
-        turn["settled"] = True
-        write_turn(path, turn)
-        return 0
-    if turn["changes"] < limits["nudgeMinChanges"]:
+    turn["calls"] = count(turn.get("calls")) + len(work)
+    turn["changes"] = count(turn.get("changes")) + sum(
+        1 for c in work if changes(c.get("tool_name"), c.get("tool_input")))
+    if turn["calls"] < limits["remindMinCalls"] and turn["changes"] < limits["nudgeMinChanges"]:
         write_turn(path, turn)
         return 0
     try:
@@ -117,8 +115,9 @@ def main():
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": payload.get("hook_event_name", "PostToolBatch"),
         "additionalContext": (
-            "This turn has started changing things, and no row of the work plan is `doing`. Mark the one you are "
-            "working on before going on - or, if this is new work the user asked for, add it as `doing`:\n"
+            "This turn has started working, and no row of the work plan is `doing`. Mark the one you are working on "
+            "before going on - or, if this is new work the user asked for or something they asked you to look into, "
+            "add it as `doing`:\n"
             "  %s set <row> doing\n"
             "  %s add doing TITLE [--under <row>]\n"
             "The tree beside this conversation shows `doing` while the work runs, which is the only time it is any "

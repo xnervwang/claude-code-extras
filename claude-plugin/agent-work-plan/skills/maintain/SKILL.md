@@ -183,8 +183,9 @@ word `todo` needs, so it does not need a separate `todo` step.
 end of the turn. A row marked at the end of a turn is already wrong, because by then the turn is over - and the tree is
 watching the file, so a row marked as you begin appears there while you work, which is the only time anyone can act on
 it. After each batch of tool calls, a hook can remind the main thread to mark the row it is working on. It does so once
-per turn when the turn has changed at least two things besides the plan, the plan has not been written since the turn
-began, and no row is `doing`. It refuses nothing.
+per turn when the turn has made at least three tool calls or changed at least two things besides the plan, and no row is
+`doing`. Reading counts, because looking into something is work to mark; writing the plan does not excuse a turn that
+still has nothing `doing`. It refuses nothing.
 
 **For other changes, do it before writing the last paragraph of the turn**, not after. Once the closing summary is written the turn feels
 finished and the plan is what gets left out; and the turn that most needed recording is the one that wandered furthest,
