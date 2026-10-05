@@ -19,7 +19,7 @@
    * bring the old fault back: the effort that reply used is the one thing not yet known.
    */
   var EFFORT_RUNS = {}, EFFORT_LASTS = {};
-  var effortFor = '', effortRev = -1, effortLink = null, effortCarrier = null;
+  var effortFor = '', effortRev = -1, effortLink = null, effortCarrier = null, effortRaw = null;
   // The uuids of a reply's rows, kept when it is worked out in full, so a settled reply can still move its owner's run.
   var UUIDS_OF = new WeakMap();
   // Replies labelled while their effort was unknown, worked out again once it arrives. Weak, so a reply the panel has
@@ -50,6 +50,10 @@
     }
     var raw = '';
     try { raw = String(getComputedStyle(effortCarrier).getPropertyValue('--cce-effort') || '').trim(); } catch (e) {}
+    /* The revision moves when any conversation's efforts change, so most loads bring back exactly what this page
+       already has. Then there is nothing to relabel, and a sweep would be work for its own sake. */
+    if (raw === effortRaw) return;
+    effortRaw = raw;
     var got = parseEfforts(raw.replace(/^["']|["']$/g, ''));
     EFFORT_RUNS = got.runs; EFFORT_LASTS = got.lasts;
     // A settled reply is never labelled again, so the ones labelled without an effort are unsettled for one more pass.
@@ -65,7 +69,7 @@
   var loadEfforts = function(rev){
     var sid = sigValue('sessionId');
     if (!base || typeof sid !== 'string' || !/^[0-9a-f-]{36}$/i.test(sid)) return false;
-    if (sid !== effortFor) { EFFORT_RUNS = {}; EFFORT_LASTS = {}; }
+    if (sid !== effortFor) { EFFORT_RUNS = {}; EFFORT_LASTS = {}; effortRaw = null; }
     effortFor = sid;
     var l = document.createElement('link');
     l.rel = 'stylesheet';

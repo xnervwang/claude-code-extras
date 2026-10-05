@@ -160,6 +160,16 @@ const PHASES = String.raw`
   };
   var idle = function(){
     a = snap(); mut.on = true;
+    /* Stylesheets coming and going in the head while the page is otherwise idle, as reloading one does. */
+    if (CFG.headChurn) {
+      for (var c = 0; c < 6; c++) later(200 + c * 400, function(){
+        var l = document.createElement('link');
+        l.rel = 'stylesheet';
+        l.href = 'data:text/css,';
+        document.head.appendChild(l);
+        later(100, function(){ if (l.parentNode) l.parentNode.removeChild(l); });
+      });
+    }
     later(CFG.idleMs, function(){
       b = snap(); mut.on = false;
       R.idleSweeps = b.n - a.n;

@@ -159,11 +159,11 @@ function activate(context) {
      than at the next refresh, so it appears in the agent map while the launch is still on screen. */
   /* Where each reply's effort changed, for the conversation in front of the reader, written beside the panel for it to
      read (src/efforts.js). Not read at all when the model is switched off, since the effort is shown with it. */
-  const scanEffort = () => {
+  const scanEffort = (opts) => {
     if (removed() || !enabled() || uninstalling() || replaced() || switchedOff().includes('modelName')) return;
     const id = activeChat();
     if (!id) return;
-    efforts.scan(id)
+    efforts.scan(id, opts || {})
       .then((r) => { if (r && r.css) for (const dir of installs(webview)) webview.writeEffort(dir, id, r.css); })
       .catch((e) => log.appendLine('reply efforts: ' + e.message));
   };
@@ -328,6 +328,7 @@ function activate(context) {
     if (removed() || !enabled() || uninstalling() || replaced()) return;
     scanBackground();
     scanEffort();
+    watchEffort();
     writeLiveNow();
     sampleLatency();
   }, REFRESH_MS);
@@ -521,6 +522,51 @@ function activate(context) {
    * The fast tick beside it reads one property and nothing else. It is there because the callback depends on the host
    * patch being in, and a build whose shape did not match would otherwise leave the view frozen with no sign why.
    */
+  /*
+   * The transcripts of the conversation in front of the reader are watched, so a reply's effort is read within a second
+   * of the reply being written rather than at the next thirty-second refresh - which is when the reader is looking at
+   * it. A turn appends a row per block in a burst, so a change is scanned after a short pause and one pass reads the
+   * burst. Nothing runs while nothing is written. The refresh still scans, and re-establishes a watch that has failed
+   * or a sub-agents folder that did not exist yet.
+   */
+  const EFFORT_SETTLE_MS = 700;
+  let effortWatch = { id: '', main: null, sub: null, timer: 0, subs: false };
+  const unwatchEffort = () => {
+    for (const w of [effortWatch.main, effortWatch.sub]) { if (w) { try { w.close(); } catch (_) { /* closed */ } } }
+    if (effortWatch.timer) clearTimeout(effortWatch.timer);
+    effortWatch = { id: '', main: null, sub: null, timer: 0, subs: false };
+  };
+  const watchEffort = () => {
+    const id = activeChat();
+    if (id !== effortWatch.id) unwatchEffort();
+    if (!id || removed() || !enabled() || replaced() || switchedOff().includes('modelName')) { unwatchEffort(); return; }
+    const transcript = background.transcriptOf(id);
+    if (!transcript) return;
+    effortWatch.id = id;
+    /* Only the side that changed is read: the sub-agents are looked at when their folder changed, not on every row the
+       conversation itself appends. */
+    const soon = (slot) => () => {
+      if (slot === 'sub') effortWatch.subs = true;
+      if (effortWatch.timer) return;
+      effortWatch.timer = setTimeout(() => {
+        const subs = effortWatch.subs;
+        effortWatch.timer = 0;
+        effortWatch.subs = false;
+        scanEffort({ subagents: subs });
+      }, EFFORT_SETTLE_MS);
+    };
+    const open = (target, slot) => {
+      if (effortWatch[slot]) return;
+      try {
+        const w = fs.watch(target, { persistent: false }, soon(slot));
+        w.on('error', () => { try { w.close(); } catch (_) { /* closed */ } if (effortWatch[slot] === w) effortWatch[slot] = null; });
+        effortWatch[slot] = w;
+      } catch (_) { /* not there yet: the refresh tries again */ }
+    };
+    open(transcript, 'main');
+    open(path.join(transcript.replace(/\.jsonl$/, ''), 'subagents'), 'sub');
+  };
+  context.subscriptions.push({ dispose: unwatchEffort });
   const followChat = () => {
     const id = activeChat();
     if (!workplan.setFocus(id)) return;
@@ -529,6 +575,7 @@ function activate(context) {
     paintBadge();
     scanBackground();
     scanEffort();
+    watchEffort();
   };
   let chatPoll = 0;
   const stopPolling = () => { if (chatPoll) { clearInterval(chatPoll); chatPoll = 0; } };
@@ -546,6 +593,7 @@ function activate(context) {
   });
   refreshPlans();
   paintBadge();
+  watchEffort();
 
   /*
    * The plugin that writes the plans travels inside this extension, so the only thing left is to register it with

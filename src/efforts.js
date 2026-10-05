@@ -163,6 +163,10 @@ const busy = new Map();
 /**
  * Read what one conversation's transcripts have added since last time. Resolves to { changed, css }, `css` empty for a
  * conversation with no transcript. Only one pass per conversation runs at a time.
+ *
+ * `subagents: false` leaves the sub-agents' transcripts out of this pass, for a pass started by a change to the
+ * conversation's own: a conversation can hold hundreds of them, and looking at each costs more than reading what the
+ * conversation added.
  */
 function scan(session, opts = {}) {
   if (!SESSION.test(String(session || ''))) return Promise.resolve({ changed: false, css: '' });
@@ -181,7 +185,9 @@ async function scanOnce(session, opts) {
   known.set(session, state);
   const sub = path.join(transcript.replace(/\.jsonl$/, ''), 'subagents');
   let subs = [];
-  try { subs = (await fs.promises.readdir(sub)).filter((n) => n.endsWith('.jsonl')).sort(); } catch (_) { /* none */ }
+  if (opts.subagents !== false) {
+    try { subs = (await fs.promises.readdir(sub)).filter((n) => n.endsWith('.jsonl')).sort(); } catch (_) { /* none */ }
+  }
   let changed = false;
   for (const [name, f, sidechains] of [[MAIN, transcript, false]].concat(subs.map((n) => [n, path.join(sub, n), true]))) {
     const st = state.files[name] || (state.files[name] = { pos: 0, runs: [], last: '', eff: '' });

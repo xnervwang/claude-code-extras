@@ -361,7 +361,13 @@
         }
       }
     } catch (e) {}
-    schedule();
+    /* Changes inside the document's head are stylesheets coming and going - this script's own reloads among them - and
+       none of them can change a message. A panel that mounts something there changes the body as well, which is what
+       gets swept. Without this, every reload of a stylesheet was a sweep of its own. */
+    for (var r = 0; r < records.length; r++) {
+      var t = records[r].target;
+      if (t !== head && !(t && t.parentNode === head)) { schedule(); return; }
+    }
   };
 
   var aimed = null, aimer = null;

@@ -198,6 +198,12 @@ console.log('\nwhat the page costs, in a browser');
       if (!restless.length) ok('an idle page stops sweeping once it has booted, and changes nothing while it waits');
       else bad('an idle page kept itself busy: ' + restless.map(([what, r]) =>
         `${what}: ${r.idleSweeps} sweeps and ${r.idleChild + r.idleAttr + r.idleChars} changes in ${harness.DEFAULTS.idleMs}ms`).join('; '));
+      /* Reloading a stylesheet puts a link into the head and takes the old one out. A page that answered that with a
+         sweep would sweep every time any conversation's efforts changed, in every panel open. */
+      const churn = harness.run(browser, { turns: SHORT, plain: true, headChurn: true });
+      if (!churn.error && churn.idleSweeps === 0 && churn.idleChild > 0) {
+        ok(`stylesheets coming and going in the head start no sweep (${churn.idleChild} changes, 0 sweeps)`);
+      } else bad(`with stylesheets coming and going in the head: ${churn.error || churn.idleSweeps + ' sweeps for ' + churn.idleChild + ' changes'}`);
       /* A reply growing is what drives sweeps in use. Ordering two messages costs the browser a walk along every message
          between them, so a sweep that compares at all costs in proportion to the conversation squared. */
       const busy = runs.filter(([, r]) => !(r.growSweeps >= 4 && r.growCdp === 0 && r.growText === 0));
@@ -760,6 +766,19 @@ console.log('\nreply efforts');
     + 'out.set = function(raw){ var g = parseEfforts(raw); EFFORT_RUNS = g.runs; EFFORT_LASTS = g.lasts; };})()',
   { filename: '76-effort.js' }).runInNewContext(box);
   box.out.set(`${H(1)}=max,${H(3)}=high!${H(4)};${H(11)}=low!${H(12)}`);
+  {
+    /* Most loads bring back what the page already has, since the revision moves for any conversation. */
+    let sweeps = 0, raw = '"a=max!a"';
+    const stub = { out: {}, schedule: () => { sweeps++; }, ASSIST: 'x', OWNER_ATTR: 'o', SETTLED_ATTR: 's',
+      getComputedStyle: () => ({ getPropertyValue: () => raw }),
+      document: { createElement: () => ({ style: {}, isConnected: true }), body: { appendChild() {} }, querySelectorAll: () => [] } };
+    new vm.Script(`(function(){${fragment}\n;out.read = readEfforts;})()`, { filename: '76-effort.js' }).runInNewContext(stub);
+    stub.out.read(); stub.out.read();
+    raw = '"a=max,b=high!b"';
+    stub.out.read();
+    if (sweeps === 2) ok('a table that comes back unchanged starts no sweep, and a changed one does');
+    else bad(`three reads, the middle one unchanged, scheduled ${sweeps} sweeps`);
+  }
   const state = {};
   const walk = [['main', 1], ['sub', 11], ['main', 2], ['main', 3], ['sub', 12], ['main', 4], ['sub', 13], ['main', 5]]
     .map(([owner, n]) => box.out.effortAt(state, owner, U(n)));
@@ -804,7 +823,8 @@ console.log('\nreply efforts');
         for (const step of ${JSON.stringify(steps)}) {
           if (step.append) fs.appendFileSync(${JSON.stringify(transcript)}, step.append);
           if (step.write) fs.writeFileSync(${JSON.stringify(transcript)}, step.write);
-          out.push(await e.scan(${JSON.stringify(sid)}, ${JSON.stringify({ dir: plans, transcript })}));
+          if (step.appendSub) fs.appendFileSync(${JSON.stringify(path.join(root, sid, 'subagents', 'agent-a1.jsonl'))}, step.appendSub);
+          out.push(await e.scan(${JSON.stringify(sid)}, Object.assign(${JSON.stringify({ dir: plans, transcript })}, step.opts || {})));
         }
         process.stdout.write(JSON.stringify(out));
       })().catch((err) => process.stdout.write(JSON.stringify([{ error: err.message }])));`], { encoding: 'utf8' }));
@@ -828,6 +848,11 @@ console.log('\nreply efforts');
     const [e] = run([{ write: reply(7, 'medium') }]);
     if (e.css === rule(`${H(7)}=medium!${H(7)}`, sub)) ok('a transcript replaced by a shorter one is read again from the start');
     else bad(`after the transcript was replaced: ${JSON.stringify(e)}`);
+    /* A pass started by the conversation's own transcript leaves the sub-agents' alone; a full one reads them. */
+    const [f, g] = run([{ appendSub: reply(13, 'high', { isSidechain: true }), opts: { subagents: false } }, {}]);
+    if (f.css === rule(`${H(7)}=medium!${H(7)}`, sub) && g.css === rule(`${H(7)}=medium!${H(7)}`, `${H(11)}=low,${H(13)}=high!${H(13)}`)) {
+      ok('a pass for the conversation alone leaves the sub-agents unread, and a full pass reads what they added');
+    } else bad(`for the conversation alone: ${JSON.stringify(f)}; then in full: ${JSON.stringify(g)}`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
