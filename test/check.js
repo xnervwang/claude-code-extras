@@ -255,6 +255,7 @@ console.log('\nwhat the periodic work reads');
   const script = counting + `
     const bg = require(${JSON.stringify(path.join(src, 'background.js'))});
     const L = require(${JSON.stringify(path.join(src, 'openlatency.js'))});
+    const E = require(${JSON.stringify(path.join(src, 'efforts.js'))});
     (async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-reads-'));
       try {
@@ -269,10 +270,13 @@ console.log('\nwhat the periodic work reads');
         const before = fs.statSync(transcript).size;
         const opts = { dir: plans, jobs, transcript };
         const scan1 = await measure(() => bg.scan(SID, opts));
+        const eff1 = await measure(() => E.scan(SID, { dir: plans, transcript }));
         const more = row.repeat(20);
         fs.appendFileSync(transcript, more);
         const scan2 = await measure(() => bg.scan(SID, opts));
         const scan3 = await measure(() => bg.scan(SID, opts));
+        const eff2 = await measure(() => E.scan(SID, { dir: plans, transcript }));
+        const eff3 = await measure(() => E.scan(SID, { dir: plans, transcript }));
         fs.writeFileSync(path.join(plans, 'dddddddd-1111-2222-3333-444444444444.background'),
           JSON.stringify({ ids: ['1a2b3c4d'], scannedTo: 10 }));
         const collect = await measure(() => bg.collect({ dir: plans, jobs }));
@@ -289,7 +293,7 @@ console.log('\nwhat the periodic work reads');
         const log3 = await measure(sample);
         process.stdout.write(JSON.stringify({
           transcript: before, appended: Buffer.byteLength(more),
-          scan: [scan1.bytes, scan2.bytes, scan3.bytes], collectFiles: collect.files,
+          scan: [scan1.bytes, scan2.bytes, scan3.bytes], efforts: [eff1.bytes, eff2.bytes, eff3.bytes], collectFiles: collect.files,
           log: logBefore, logAppended: Buffer.byteLength(logMore), logReads: [log1.bytes, log2.bytes, log3.bytes] }));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -304,6 +308,11 @@ console.log('\nwhat the periodic work reads');
     if (s1 >= r.transcript && s2 <= r.appended && s3 === 0) {
       ok(`the background-session scan reads a transcript once, then only what was added: ${s1}, ${s2}, ${s3} bytes`);
     } else bad(`the background-session scan read ${s1}, ${s2} and ${s3} bytes of a ${r.transcript}-byte transcript `
+      + `with ${r.appended} appended between the first two passes`);
+    const [e1, e2, e3] = r.efforts;
+    if (e1 >= r.transcript && e2 <= r.appended && e3 === 0) {
+      ok(`the reply-effort scan reads a transcript once, then only what was added: ${e1}, ${e2}, ${e3} bytes`);
+    } else bad(`the reply-effort scan read ${e1}, ${e2} and ${e3} bytes of a ${r.transcript}-byte transcript `
       + `with ${r.appended} appended between the first two passes`);
     if (r.collectFiles.length && !r.collectFiles.some((f) => f.endsWith('.jsonl'))) {
       ok('collecting what the background sessions are doing opens no transcript');
@@ -702,23 +711,186 @@ console.log('\na reopened conversation');
   if (offWin === 0) ok('with the extension switched off the panel is not touched');
   else bad('fillWindow wrote into the panel with the extension switched off');
 
-  // The history: the newest reply shows the current share, an older one first seen afterwards shows only the model.
+  // The history: the newest reply shows the current share, an older one first seen afterwards shows only its model and
+  // effort. Messages carry the model that served them, as the panel's do.
   box.sessionRef = session({ totalTokens: 957707, totalCost: 3.2 }, 'global.anthropic.claude-opus-5-5[1m]');
   box.out.fillWindow();
-  const older = { id: 'older' }, newest = { id: 'newest' };
-  const nowLine = box.out.statAt(newest, true), oldLine = box.out.statAt(older, false);
-  if (/ctx 96%/.test(nowLine) && /cost \$3\.20/.test(nowLine)) ok(`the newest reply shows the current figures (${nowLine})`);
-  else bad(`the newest reply showed "${nowLine}"`);
-  if (!/ctx|cost/.test(oldLine) && /opus-5-5/.test(oldLine)) ok(`a reply from before the page loaded shows the model only (${oldLine})`);
+  const older = { id: 'older', model: 'claude-opus-5-5' }, newest = { id: 'newest', model: 'claude-opus-5-5' };
+  const nowLine = box.out.statAt(newest, true, 'xhigh'), oldLine = box.out.statAt(older, false, 'max');
+  if (/ctx 96%/.test(nowLine) && /cost \$3\.20/.test(nowLine) && / opus-5-5\[1m\] xhigh$/.test(nowLine)) {
+    ok(`the newest reply shows the current figures, its model and its effort (${nowLine})`);
+  } else bad(`the newest reply showed "${nowLine}"`);
+  if (!/ctx|cost/.test(oldLine) && oldLine === 'opus-5-5[1m] max') ok(`a reply from before the page loaded shows its model and effort only (${oldLine})`);
   else bad(`a reply from before the page loaded showed "${oldLine}", taking figures that are not its own`);
 
+  /* The model and effort are the reply's own. The session's values describe the next request - what the menu says, or
+     what served the latest reply - and putting them under every reply is the fault this replaced. */
+  box.sessionRef.lastServedModel = { value: 'claude-haiku-4-5' };
+  box.sessionRef.currentMainLoopModel = { value: 'claude-haiku-4-5' };
+  box.sessionRef.effortLevel = { value: 'low' };
+  const own = box.out.statAt({ id: 'own', model: 'claude-opus-5' }, false, 'high');
+  const unknown = box.out.statAt({ id: 'unknown', model: 'claude-opus-5' }, false, '');
+  const synthetic = box.out.statAt({ id: 'synthetic' }, false, 'high');
+  if (own === 'opus-5 high' && unknown === 'opus-5' && synthetic === '') {
+    ok('a reply shows the model that served it and the effort it was sent with, never the session\'s current ones');
+  } else bad(`with the session saying haiku and low: a reply showed "${own}", one of unknown effort "${unknown}", `
+    + `one with no model "${synthetic}"`);
+
   // A reply that was the newest once keeps what it showed then, after a later one takes over.
-  const first = { id: 'first' };
+  const first = { id: 'first', model: 'claude-opus-5-5' };
   box.out.statAt(first, true);
   box.sessionRef.usageData.value = Object.assign({}, box.sessionRef.usageData.value, { totalTokens: 980000 });
   const kept = box.out.statAt(first, false);
   if (/ctx 96%/.test(kept)) ok('a reply that was once the newest keeps its own figures afterwards');
   else bad(`a reply that was once the newest later showed "${kept}"`);
+}
+
+/* ── the effort each reply was sent with ──
+   Read by the extension from the transcripts (src/efforts.js) as the replies where it changed, handed to the page in a
+   stylesheet per conversation, and carried forward by the page through its replies in order (76-effort.js). */
+console.log('\nreply efforts');
+{
+  const U = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
+  const H = (n) => U(n).replace(/-/g, '');
+
+  /* The page's half: runs carried through the replies in order, owner by owner, and nothing past the last one read. */
+  const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '76-effort.js'), 'utf8');
+  const box = { out: {} };
+  new vm.Script(`(function(){${fragment}\n;out.effortAt = effortAt;`
+    + 'out.set = function(raw){ var g = parseEfforts(raw); EFFORT_RUNS = g.runs; EFFORT_LASTS = g.lasts; };})()',
+  { filename: '76-effort.js' }).runInNewContext(box);
+  box.out.set(`${H(1)}=max,${H(3)}=high!${H(4)};${H(11)}=low!${H(12)}`);
+  const state = {};
+  const walk = [['main', 1], ['sub', 11], ['main', 2], ['main', 3], ['sub', 12], ['main', 4], ['sub', 13], ['main', 5]]
+    .map(([owner, n]) => box.out.effortAt(state, owner, U(n)));
+  if (walk.join() === 'max,low,max,high,low,high,,') {
+    ok('each owner carries its own runs through interleaved replies, and nothing is given past the last one read');
+  } else bad(`walking the replies gave ${JSON.stringify(walk)}`);
+
+  /* The extension's half, against a transcript holding every shape a row comes in. Run in a child process because the
+     reads are asynchronous, and twice more after it to check what a restart keeps. */
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-efforts-'));
+  try {
+    const sid = 'aaaaaaaa-2222-4333-8444-555555555555';
+    const transcript = path.join(root, sid + '.jsonl');
+    const reply = (n, effort, extra = {}) => JSON.stringify(Object.assign({ parentUuid: null, isSidechain: false,
+      message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'reply ' + n }] }, requestId: 'r' + n,
+      type: 'assistant', uuid: U(n), timestamp: '2026-10-05T00:00:0' + (n % 10) + '.000Z', effort, perTurnEffort: null,
+      cwd: '/work' }, extra)) + '\n';
+    const rows = [
+      reply(1, 'max'),
+      // A row that quotes a reply, as a tool result printing a transcript does.
+      JSON.stringify({ parentUuid: null, isSidechain: false, type: 'user', message: { content: [{ type: 'tool_result',
+        content: reply(90, 'low') }] }, uuid: U(91), timestamp: '2026-10-05T00:00:01.000Z' }) + '\n',
+      reply(2, 'max'),
+      // A synthetic reply: its fields in another order, and no effort.
+      JSON.stringify({ parentUuid: null, isSidechain: false, type: 'assistant', uuid: U(92), timestamp: 'x',
+        message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error' }] } }) + '\n',
+      // A sub-agent's row in the conversation's own transcript, as an older client wrote them.
+      reply(93, 'low', { isSidechain: true }),
+      reply(3, 'max', { perTurnEffort: 'high' }),
+      reply(4, 'xhigh', { cwd: '/work/[draft]' }),
+    ];
+    fs.writeFileSync(transcript, rows.join(''));
+    fs.mkdirSync(path.join(root, sid, 'subagents'), { recursive: true });
+    fs.writeFileSync(path.join(root, sid, 'subagents', 'agent-a1.jsonl'),
+      reply(11, 'low', { isSidechain: true }) + reply(12, 'low', { isSidechain: true }));
+    const plans = path.join(root, 'plans');
+    const run = (steps) => JSON.parse(cp.execFileSync(process.execPath, ['-e', `
+      const e = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'efforts.js'))});
+      const fs = require('fs');
+      (async () => {
+        const out = [];
+        for (const step of ${JSON.stringify(steps)}) {
+          if (step.append) fs.appendFileSync(${JSON.stringify(transcript)}, step.append);
+          if (step.write) fs.writeFileSync(${JSON.stringify(transcript)}, step.write);
+          out.push(await e.scan(${JSON.stringify(sid)}, ${JSON.stringify({ dir: plans, transcript })}));
+        }
+        process.stdout.write(JSON.stringify(out));
+      })().catch((err) => process.stdout.write(JSON.stringify([{ error: err.message }])));`], { encoding: 'utf8' }));
+    const rule = (main, sub) => `#cce-effort{--cce-effort:"${main};${sub}"}\n`;
+    const sub = `${H(11)}=low!${H(12)}`;
+    const [a, b, c] = run([{}, { append: reply(5, 'xhigh') }, {}]);
+    if (a.css === rule(`${H(1)}=max,${H(3)}=high,${H(4)}=xhigh!${H(4)}`, sub)) {
+      ok('read from a transcript: run starts and the last reply, with quoted, synthetic and sub-agent rows kept out');
+    } else bad(`the first read gave ${JSON.stringify(a)}`);
+    if (b.changed && b.css === rule(`${H(1)}=max,${H(3)}=high,${H(4)}=xhigh!${H(5)}`, sub) && !c.changed) {
+      ok('an appended reply moves the last one read without starting a run, and an unchanged transcript changes nothing');
+    } else bad(`after an append: ${JSON.stringify(b)}, then ${JSON.stringify(c)}`);
+    // A restart carries on from what was kept: the part already read is rewritten, which only a pass from the first byte
+    // would see.
+    const size = fs.statSync(transcript).size, text = fs.readFileSync(transcript, 'utf8');
+    fs.writeFileSync(transcript, text.replace('"effort":"max"', '"effort":"low"'));
+    const [d] = run([{ append: reply(6, 'low') }]);
+    if (fs.statSync(transcript).size > size && d.css === rule(`${H(1)}=max,${H(3)}=high,${H(4)}=xhigh,${H(6)}=low!${H(6)}`, sub)) {
+      ok('a restart reads on from where the last process stopped');
+    } else bad(`after a restart: ${JSON.stringify(d)}`);
+    const [e] = run([{ write: reply(7, 'medium') }]);
+    if (e.css === rule(`${H(7)}=medium!${H(7)}`, sub)) ok('a transcript replaced by a shorter one is read again from the start');
+    else bad(`after the transcript was replaced: ${JSON.stringify(e)}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  /* Where it is written: beside the panel, one file per conversation, its change carried by the revision image's height
+     while the width stays the live stylesheet's. */
+  const inst = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-effort-install-'));
+  try {
+    fs.mkdirSync(path.join(inst, 'webview'));
+    const rev = () => {
+      const t = fs.readFileSync(path.join(inst, 'webview', 'claude-code-extras.rev.svg'), 'utf8');
+      return [Number(/width="(\d+)"/.exec(t)[1]), Number(/height="(\d+)"/.exec(t)[1])];
+    };
+    const sid = 'bbbbbbbb-2222-4333-8444-555555555555', other = 'cccccccc-2222-4333-8444-555555555555';
+    webview.writeLive(inst, { enabled: true });
+    const r0 = rev();
+    const wrote = webview.writeEffort(inst, sid, '#cce-effort{--cce-effort:"x"}\n');
+    const r1 = rev();
+    const again = webview.writeEffort(inst, sid, '#cce-effort{--cce-effort:"x"}\n');
+    const r2 = rev();
+    webview.writeLive(inst, { enabled: true, userColor: '#90EE90' });
+    const r3 = rev();
+    if (wrote && !again && r1[0] === r0[0] && r1[1] === r0[1] + 1 && r2.join() === r1.join() && r3[0] === r1[0] + 1 && r3[1] === r1[1]) {
+      ok('the efforts move the revision image\'s height, the live stylesheet its width, and neither undoes the other');
+    } else bad(`revisions went ${JSON.stringify([r0, r1, r2, r3])}, wrote ${wrote}, rewrote unchanged ${again}`);
+    webview.writeEffort(inst, other, '#cce-effort{--cce-effort:"y"}\n');
+    const kept = webview.pruneEfforts(inst, new Set([sid]));
+    const left = fs.readdirSync(path.join(inst, 'webview')).filter((n) => n.startsWith(webview.EFFORT_PREFIX));
+    webview.restore(inst);
+    const afterRestore = fs.readdirSync(path.join(inst, 'webview')).filter((n) => n.startsWith(webview.EFFORT_PREFIX));
+    if (kept === 1 && left.length === 1 && left[0].includes(sid) && afterRestore.length === 0) {
+      ok('a conversation that is gone loses its efforts, and restoring Claude Code removes them all');
+    } else bad(`pruning removed ${kept} and left ${JSON.stringify(left)}; after restoring: ${JSON.stringify(afterRestore)}`);
+  } finally {
+    fs.rmSync(inst, { recursive: true, force: true });
+  }
+
+  /* The whole way through, in a browser: the revision probe sees the height, the page loads its conversation's file,
+     and every reply shows the effort of the run it falls in - the ones settled before the file arrived included, and
+     none past the last reply read. */
+  const harness = require('./page-harness');
+  const browser = harness.findBrowser();
+  if (!browser) {
+    if (process.env.CCE_REQUIRE_BROWSER) bad('no Chrome or Chromium found, and this run requires one (CCE_REQUIRE_BROWSER)');
+    else note('skipped: no Chrome or Chromium here - set CCE_BROWSER to one to run the efforts in a page');
+  } else {
+    const sid = 'dddddddd-2222-4333-8444-555555555555';
+    const r = harness.run(browser, { turns: 30, plain: false, subagent: false,
+      efforts: { sid, css: `#cce-effort{--cce-effort:"${H(1)}=max,${H(40)}=high!${H(80)}"}\n` } });
+    const shown = (r.labels || []).map((l) => String(l || '').split('  ').pop().replace(/^\d+s · /, ''));
+    const want = shown.map((_, i) => (i + 1 < 40 ? 'opus-5-5 max' : i + 1 <= 80 ? 'opus-5-5 high' : 'opus-5-5'));
+    if (r.error) bad('the page with efforts did not run: ' + r.error);
+    else if (shown.length === 90 && shown.join('|') === want.join('|') && r.idleSweeps === 0) {
+      ok('in a page: 39 replies at max, 41 at high, the 10 past the last one read with no effort, and the page idle after');
+    } else bad(`in a page the replies showed ${JSON.stringify([...new Set(shown)])} over ${shown.length} replies, `
+      + `${r.idleSweeps} idle sweeps`);
+  }
+
+  /* The page learns of a change from the request it already makes: no timer and no image of its own. */
+  const setup = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '05-page-setup.js'), 'utf8');
+  if (!/setInterval|setTimeout|new Image/.test(fragment) && setup.includes('effortProbe(img.naturalHeight)')) {
+    ok('the efforts ride the revision probe the page already runs, with no request of their own');
+  } else bad('the effort code polls on its own, or the revision probe no longer hands it the height');
 }
 
 console.log('\nverified builds');

@@ -94,6 +94,8 @@
     aimText(bubbles[0] || msgs[0]);
     var seen = [], seenSet = {}, shownRows = 0, fullMsgs = 0, settledMsgs = 0, blocks = 0;
     var agentView = (VIEW !== 'all' && VIEW !== 'main'), acts = [];
+    // Each owner's effort run, carried through the replies in document order (76-effort.js).
+    var effState = {};
     for (var j = 0; j < msgs.length; j++) {
       // A reply well behind the newest one cannot change again: its time, duration and figures are fixed, and its
       // owner is already recorded on the element. Re-deriving all of that on every sweep is the one cost that would
@@ -102,6 +104,8 @@
       if (j < msgs.length - LIVE_TAIL) {
         var own0 = msgs[j].getAttribute(OWNER_ATTR);
         if (own0) {
+          var held0 = UUIDS_OF.get(msgs[j]);
+          if (held0) for (var hu = 0; hu < held0.length; hu++) effortAt(effState, own0, held0[hu]);
           applyOwner(msgs[j], own0);
           if (own0 !== 'main' && !seenSet[own0]) { seenSet[own0] = 1; seen.push(own0); }
           if (ownerVisible(own0)) shownRows++;
@@ -115,7 +119,7 @@
         }
       }
       fullMsgs++;
-      var rows = msgs[j].children, ownerDone = false, own = 'main';
+      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '';
       blocks += rows.length;
       for (var r = 0; r < rows.length; r++) {
         var row = rows[r], cx = ctxOf(row), v = '';
@@ -125,6 +129,11 @@
           if (own !== 'main' && !seenSet[own]) { seenSet[own] = 1; seen.push(own); }
           if (ownerVisible(own)) shownRows++;
           ownerDone = true;
+        }
+        if (cx.message && cx.message.uuid) {
+          var effRow = effortAt(effState, own, cx.message.uuid);
+          if (!uus.length) effHere = effRow;
+          uus.push(cx.message.uuid);
         }
         /* Whether this row gets an annotation at all, which used to be read off `v` being non-empty. With the time
            itself switchable that test would have made one switch turn four things off, so it is now asked directly. */
@@ -146,12 +155,14 @@
           var bits = [];
           var t0 = turnStartFor(promptTs, cx.message.timestamp);
           if (t0 !== null && !isOff('replyDuration')) { var d = dur(cx.message.timestamp - t0); if (d) bits.push(d); }
-          var st = statAt(cx.message, j === msgs.length - 1);
+          var st = statAt(cx.message, j === msgs.length - 1, effHere);
           if (st) bits.push(st);
+          if (!effHere && cx.message.model) effortPending.add(msgs[j]);
           if (bits.length) v += '  ' + bits.join(' ' + String.fromCharCode(183) + ' ');
         }
         set(row, v);
       }
+      if (uus.length) UUIDS_OF.set(msgs[j], uus);
     }
     try { endToolSweep(); } catch (e) {}
     // Compaction blocks belong to the main thread, so a sub-agent view hides them too.

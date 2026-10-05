@@ -27,61 +27,59 @@
   // Context share and estimated spend as they stood when a reply settled. Keyed by the message object
   // in a WeakMap, so entries disappear when the message itself is collected - no growing table.
   var atMsg = new WeakMap();
-  var snapNow = function(figures){
+  var figuresNow = function(){
     var u = sessionRef && sessionRef.usageData && sessionRef.usageData.value;
     if (!u) return '';
     var out = '';
-    if (figures) {
-      /*
-       * Share of the WHOLE context window, which is what /context reports - deliberately not the panel meter's figure.
-       *
-       * The meter divides by the room left before an auto-compact (the window less the reserved output less a fixed
-       * margin), and it already shows that on hover, so repeating it here would spend characters on a number the reader
-       * can already see. What is not on screen anywhere is plain occupancy, and the label says "ctx", which reads as
-       * occupancy. Matching /context also means two figures the reader compares cannot disagree.
-       *
-       * A side effect worth having: neither the reserved-output figure nor that fixed margin enters this any more, so an
-       * upstream change to either cannot quietly skew it. And the share of a full window cannot exceed 100, so the
-       * clamp that used to hide how far past the compaction point a conversation had gone is gone with it.
-       */
-      var win = u.contextWindow || 0;
-      // Short labels on purpose: this string is prepended to every reply's first line, so each extra
-      // character comes out of the body width. Spell them out here if you prefer the long form.
-      if (win > 0 && !isOff('contextShare')) out += 'ctx ' + Math.round(u.totalTokens / win * 100) + '%';
-      if (typeof u.totalCost === 'number' && u.totalCost > 0 && !isOff('cost')) {
-        var c = u.totalCost < 1 ? u.totalCost.toFixed(3) : u.totalCost.toFixed(2);
-        out += (out ? ' ' + String.fromCharCode(183) + ' ' : '') + 'cost $' + c;
-      }
+    /*
+     * Share of the WHOLE context window, which is what /context reports - deliberately not the panel meter's figure.
+     *
+     * The meter divides by the room left before an auto-compact (the window less the reserved output less a fixed
+     * margin), and it already shows that on hover, so repeating it here would spend characters on a number the reader
+     * can already see. What is not on screen anywhere is plain occupancy, and the label says "ctx", which reads as
+     * occupancy. Matching /context also means two figures the reader compares cannot disagree.
+     *
+     * A side effect worth having: neither the reserved-output figure nor that fixed margin enters this any more, so an
+     * upstream change to either cannot quietly skew it. And the share of a full window cannot exceed 100, so the
+     * clamp that used to hide how far past the compaction point a conversation had gone is gone with it.
+     */
+    var win = u.contextWindow || 0;
+    // Short labels on purpose: this string is prepended to every reply's first line, so each extra
+    // character comes out of the body width. Spell them out here if you prefer the long form.
+    if (win > 0 && !isOff('contextShare')) out += 'ctx ' + Math.round(u.totalTokens / win * 100) + '%';
+    if (typeof u.totalCost === 'number' && u.totalCost > 0 && !isOff('cost')) {
+      var c = u.totalCost < 1 ? u.totalCost.toFixed(3) : u.totalCost.toFixed(2);
+      out += (out ? ' ' + String.fromCharCode(183) + ' ' : '') + 'cost $' + c;
     }
-    var who = [];
-    if (isOff('modelName')) who.length = 0; else {
-    var mdl = sessionRef.lastServedModel && sessionRef.lastServedModel.value;
-    if (!mdl) mdl = sessionRef.currentMainLoopModel && sessionRef.currentMainLoopModel.value;
-    if (typeof mdl === 'string' && mdl) who.push(withOneMillion(mdl, sessionRef).replace(/^claude-/, ''));
-    var eff = sessionRef.effortLevel && sessionRef.effortLevel.value;
-    if (typeof eff === 'string' && eff) who.push(eff);
-    var fast = sessionRef.fastModeState && sessionRef.fastModeState.value;
-    if (typeof fast === 'string' && fast !== 'off') who.push('fast');
-    }
-    if (who.length) out += (out ? ' ' + String.fromCharCode(183) + ' ' : '') + who.join(' ');
     return out;
   };
-  // The newest reply keeps refreshing; older ones stay frozen at the value they last showed, which
-  // is the figure right after that turn closed.
+  /*
+   * Which model answered and with what effort, taken from the reply itself: the model the panel recorded on the
+   * message, and the effort the extension read from the transcript (76-effort.js), which the sweep hands in. Neither
+   * comes from the session's current values, which describe the next request rather than any reply already made -
+   * that is what put whatever the menu said at the moment of looking under every reply of a conversation, history
+   * included. Fast mode is still the session's own value; nothing records it per reply.
+   */
+  var whoFor = function(m, effort){
+    if (isOff('modelName') || typeof m.model !== 'string' || !m.model) return '';
+    var who = [withOneMillion(m.model, sessionRef).replace(/^claude-/, '')];
+    if (effort) who.push(effort);
+    var fast = sessionRef && sessionRef.fastModeState && sessionRef.fastModeState.value;
+    if (typeof fast === 'string' && fast !== 'off') who.push('fast');
+    return who.join(' ');
+  };
+  // The newest reply keeps refreshing its figures; older ones stay frozen at what they last showed, which is the figure
+  // right after that turn closed.
   //
   // A reply this page never saw as the newest closed its turn before the page was loaded - the history of a reopened
-  // conversation. Its own share and spend were never seen, and the current ones are not its, so it gets the model and
-  // nothing else. Handing it the current figures would put the same total under every reply in the history.
-  var statAt = function(m, live){
+  // conversation. Its own share and spend were never seen, and the current ones are not its, so it gets its model and
+  // effort and no figures. Handing it the current figures would put the same total under every reply in the history.
+  var statAt = function(m, live, effort){
     if (!m) return '';
-    if (live) {
-      var s = snapNow(true);
-      if (s) atMsg.set(m, s);
-      return s;
-    }
-    var v = atMsg.get(m);
-    if (v === undefined) { v = snapNow(false); if (v) atMsg.set(m, v); }
-    return v || '';
+    var fig = atMsg.get(m);
+    if (live) { fig = figuresNow(); if (fig) atMsg.set(m, fig); }
+    var who = whoFor(m, effort);
+    return fig && who ? fig + ' ' + String.fromCharCode(183) + ' ' + who : (fig || who || '');
   };
   var dur = function(ms){
     if (!(ms > 0)) return '';

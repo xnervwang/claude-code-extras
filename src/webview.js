@@ -78,6 +78,9 @@ const BACKUP_SUFFIX = '.claude-code-extras-webview.bak';
 const ATTR = 'data-cce-ts';
 const LIVE_CSS = 'claude-code-extras.css';
 const LIVE_REV = 'claude-code-extras.rev.svg';
+/* One per conversation: where each reply's effort changed, written by src/efforts.js and read by the page. */
+const EFFORT_PREFIX = 'claude-code-extras.effort.';
+const EFFORT_FILE = /^claude-code-extras\.effort\.([0-9a-f-]{36})\.css$/i;
 /*
  * How often the page re-checks that revision number. Every check is a file request, and on a remote host that is a
  * round trip over the remote channel - once per open panel, whether or not anyone is looking at it. So this trades how
@@ -235,6 +238,7 @@ function configBlock() {
     `  var EDGE_CSS = ${JSON.stringify(EDGE_CSS)};`,
     `  var LIVE_CSS = ${JSON.stringify(LIVE_CSS)};`,
     `  var LIVE_REV = ${JSON.stringify(LIVE_REV)};`,
+    `  var EFFORT_PREFIX = ${JSON.stringify(EFFORT_PREFIX)};`,
     `  var POLL_MS = ${POLL_MS};`,
   ].join('\n');
 }
@@ -420,6 +424,21 @@ function writeAtomic(file, text) {
   fs.renameSync(tmp, file);
 }
 
+/*
+ * The revision image carries two counters: its width for the live stylesheet, its height for the efforts. They are
+ * written by different code at different times, so each writer keeps the other's number - and one image means the page
+ * learns of both from the single request it already makes every few seconds.
+ */
+function readRev(rev) {
+  let text = '';
+  try { text = fs.readFileSync(rev, 'utf8'); } catch (_) {}
+  const num = (re) => Number((text.match(re) || [])[1]) || 0;
+  return { w: num(/width="(\d+)"/), h: num(/height="(\d+)"/) };
+}
+function writeRev(rev, w, h) {
+  writeAtomic(rev, `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"></svg>`);
+}
+
 /** Write the live settings. Bumps the revision only when the stylesheet actually changed. Returns true if changed. */
 function writeLive(claudeExtensionPath, opts = {}) {
   const { css, rev } = liveFiles(claudeExtensionPath);
@@ -443,13 +462,41 @@ function writeLive(claudeExtensionPath, opts = {}) {
    */
   const there = (VERSION_LINE.exec(current || '') || [])[1];
   if (there && OURS && older(OURS, there)) return false;
-  let n = 0;
-  try { n = Number((fs.readFileSync(rev, 'utf8').match(/width="(\d+)"/) || [])[1]) || 0; } catch (_) {}
-  n = (n % 60000) + 1;
+  const r = readRev(rev);
   writeAtomic(css, next);
-  // The width carries the revision: the page polls this one-pixel image and reloads the stylesheet when it changes.
-  writeAtomic(rev, `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="1"></svg>`);
+  // The width carries the revision: the page polls this image and reloads the stylesheet when it changes.
+  writeRev(rev, (r.w % 60000) + 1, r.h || 1);
   return true;
+}
+
+/** Write one conversation's efforts, and move the height of the revision image when they changed. Returns true then. */
+function writeEffort(claudeExtensionPath, session, text) {
+  if (!/^[0-9a-f-]{36}$/i.test(String(session || '')) || typeof text !== 'string') return false;
+  const dir = path.join(claudeExtensionPath, 'webview');
+  if (!fs.existsSync(dir)) return false;
+  const file = path.join(dir, EFFORT_PREFIX + session + '.css');
+  let current = null;
+  try { current = fs.readFileSync(file, 'utf8'); } catch (_) {}
+  if (current === text) return false;
+  writeAtomic(file, text);
+  const { rev } = liveFiles(claudeExtensionPath);
+  const r = readRev(rev);
+  writeRev(rev, r.w || 1, (r.h % 60000) + 1);
+  return true;
+}
+
+/** Remove the efforts of every conversation `keep` does not name. Returns how many went. */
+function pruneEfforts(claudeExtensionPath, keep) {
+  const dir = path.join(claudeExtensionPath, 'webview');
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch (_) { return 0; }
+  let gone = 0;
+  for (const n of names) {
+    const m = EFFORT_FILE.exec(n);
+    if (!m || (keep && keep.has(m[1]))) continue;
+    try { fs.unlinkSync(path.join(dir, n)); gone++; } catch (_) { /* gone meanwhile */ }
+  }
+  return gone;
 }
 
 /** Apply (or upgrade) the patch and write the live settings. Returns { changed, liveChanged, message }. */
@@ -483,6 +530,7 @@ function restore(claudeExtensionPath) {
   const backup = file + BACKUP_SUFFIX;
   const { css, rev } = liveFiles(claudeExtensionPath);
   for (const f of [css, rev]) { try { fs.unlinkSync(f); } catch (_) {} }
+  pruneEfforts(claudeExtensionPath, null);
   if (!fs.existsSync(backup)) return { changed: false, message: 'nothing to restore' };
   const original = fs.readFileSync(backup, 'utf8');
   if (original.includes(ANY_MARK)) return { changed: false, message: 'backup is itself patched; not restored' };
@@ -503,4 +551,5 @@ module.exports = {
   id: 'anthropic.claude-code', name: 'Claude Code panel',
   VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, SCRIPT,
   safeColor, patchSource, status, apply, restore, findInstalls, webviewFile, targetFile: webviewFile, writeLive, liveCss,
+  writeEffort, pruneEfforts, EFFORT_PREFIX,
 };

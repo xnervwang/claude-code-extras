@@ -14,6 +14,7 @@
 - `src/removal.js` notices an uninstall when VS Code restarts its extensions, and restores Claude Code then rather than when VS Code deletes the folder.
 - `src/openlatency.js` pairs panel-opening times from the official extension's log.
 - `src/background.js` finds the `claude --bg` sessions a conversation started, in its transcript, and reads their state for the agent map.
+- `src/efforts.js` reads, from a conversation's transcripts, where the effort its replies were sent with changed, for the reply figures.
 - `claude-plugin/` holds the companion plugin: the skill that maintains a plan and the hooks that keep it honest.
 - `test/check.js` is the whole suite. It parses everything and checks every edit against an unpatched bundle. How
   many checks it runs depends on how many Claude Code builds are installed, so the count is not quoted here.

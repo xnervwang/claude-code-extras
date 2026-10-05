@@ -135,7 +135,12 @@
   var probe = function(){
     if (!base) return;
     var img = new Image();
-    img.onload = function(){ var w = img.naturalWidth; if (w !== lastRev) { var first = lastRev === -1; lastRev = w; if (!first) reloadCss(); } };
+    img.onload = function(){
+      var w = img.naturalWidth;
+      if (w !== lastRev) { var first = lastRev === -1; lastRev = w; if (!first) reloadCss(); }
+      // The height is the efforts' own revision (76-effort.js), carried by the same request.
+      try { effortProbe(img.naturalHeight); } catch (e) {}
+    };
     img.src = base + LIVE_REV + '?t=' + Date.now();
   };
   /*

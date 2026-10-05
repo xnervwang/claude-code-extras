@@ -22,7 +22,8 @@ const webview = require('./src/webview');
 const { safeColor } = webview;
 const { readTasks } = require('./src/tasks');
 const background = require('./src/background');
-const { countOpen, sweepOrphans, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
+const efforts = require('./src/efforts');
+const { countOpen, sweepOrphans, liveSessions, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
 const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
@@ -156,6 +157,16 @@ function activate(context) {
   /* Reads what the conversation in front of the reader has added to its transcript since last time - the only one, since
      that is the one being looked at; the others were read when they were. A new session is written out at once rather
      than at the next refresh, so it appears in the agent map while the launch is still on screen. */
+  /* Where each reply's effort changed, for the conversation in front of the reader, written beside the panel for it to
+     read (src/efforts.js). Not read at all when the model is switched off, since the effort is shown with it. */
+  const scanEffort = () => {
+    if (removed() || !enabled() || uninstalling() || replaced() || switchedOff().includes('modelName')) return;
+    const id = activeChat();
+    if (!id) return;
+    efforts.scan(id)
+      .then((r) => { if (r && r.css) for (const dir of installs(webview)) webview.writeEffort(dir, id, r.css); })
+      .catch((e) => log.appendLine('reply efforts: ' + e.message));
+  };
   const scanBackground = () => {
     if (removed() || !enabled() || switchedOff().includes('backgroundSessions')) return;
     const id = activeChat();
@@ -316,6 +327,7 @@ function activate(context) {
   const refresh = setInterval(() => {
     if (removed() || !enabled() || uninstalling() || replaced()) return;
     scanBackground();
+    scanEffort();
     writeLiveNow();
     sampleLatency();
   }, REFRESH_MS);
@@ -492,6 +504,9 @@ function activate(context) {
     const r = sweepOrphans();
     if (r.why) log.appendLine('orphan work plans: ' + r.why);
     else if (r.deleted) log.appendLine(`orphan work plans: deleted ${r.deleted}, kept ${r.kept}`);
+    // The efforts written beside the panel go with the conversation; an unreadable list of them removes nothing.
+    const live = liveSessions();
+    if (live) for (const dir of installs(webview)) webview.pruneEfforts(dir, live);
   };
   const refreshPlans = () => {
     sweepPlans().catch((e) => log.appendLine('orphan work plans: ' + e.message));
@@ -513,6 +528,7 @@ function activate(context) {
     workplan.refresh();
     paintBadge();
     scanBackground();
+    scanEffort();
   };
   let chatPoll = 0;
   const stopPolling = () => { if (chatPoll) { clearInterval(chatPoll); chatPoll = 0; } };

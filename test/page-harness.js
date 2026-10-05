@@ -75,11 +75,15 @@ const SETUP = String.raw`
   var session = {
     agentMapAgents: { value: new Map(CFG.subagent ? [[SUB, { toolUseId: SUB, description: 'Survey the hooks' }]] : []) },
     subagentTasks: { value: new Map() },
+    sessionId: { value: CFG.efforts ? CFG.efforts.sid : '' },
   };
-  var top = { memoizedProps: { session: session }, return: null };
-  var list = document.getElementById('list'), uuid = 0, lastRow = null, compactions = 0;
+  // Not 'top': that is the window's own read-only property, and a global of that name is silently left as the window.
+  var sessionFiber = { memoizedProps: { session: session }, return: null };
+  var list = document.getElementById('list'), uuid = 0, replies = 0, lastRow = null, compactions = 0;
+  // Replies get uuids of the real shape, numbered from 1, so a run can name one.
+  var replyId = function(n){ var d = String(n); while (d.length < 12) d = '0' + d; return '00000000-0000-4000-8000-' + d; };
   var hang = function(el, block, message){
-    el[FIBER] = { memoizedProps: { content: block }, return: { memoizedProps: { message: message }, return: top } };
+    el[FIBER] = { memoizedProps: { content: block }, return: { memoizedProps: { message: message }, return: sessionFiber } };
   };
   var user = function(i, ts){
     var u = document.createElement('div');
@@ -92,7 +96,7 @@ const SETUP = String.raw`
   var reply = function(ts, owner){
     var m = document.createElement('div');
     m.setAttribute('data-testid', 'assistant-message');
-    var message = { uuid: 'a' + (++uuid), timestamp: ts };
+    var message = { uuid: replyId(++replies), timestamp: ts, model: 'claude-opus-5-5' };
     if (owner) message.parentToolUseId = owner;
     for (var r = 0; r < KINDS.length; r++) {
       var row = document.createElement('div');
@@ -164,6 +168,20 @@ const PHASES = String.raw`
       R.plainButton = !!document.querySelector('[data-cce-plain-btn]');
       var rule = document.querySelector('style[data-cce-plain]');
       R.plainRule = rule ? rule.textContent.length : -1;
+      if (CFG.efforts) {
+        var effLinks = document.querySelectorAll('link[href*="effort"]'), carrier = document.getElementById('cce-effort');
+        R.effortLinks = effLinks.length;
+        R.effortHref = effLinks.length ? effLinks[0].getAttribute('href') : '';
+        R.carrierValue = carrier ? String(getComputedStyle(carrier).getPropertyValue('--cce-effort')).length : -1;
+        R.base = (document.querySelector('link[href*="index.css"]') || {}).href || '';
+        if (window.__cceDebug) R.debug = window.__cceDebug;
+        R.labels = [];
+        var all = document.querySelectorAll('[data-testid="assistant-message"]');
+        for (var q = 0; q < all.length; q++) {
+          var marked = all[q].querySelector('[data-cce-ts]');
+          R.labels.push(marked ? marked.getAttribute('data-cce-ts') : null);
+        }
+      }
       a = snap();
       grow(0);
     });
@@ -197,7 +215,9 @@ const PHASES = String.raw`
 `;
 
 function page(cfg, script) {
-  return '<!doctype html><html><head></head><body><pre id="out"></pre>'
+  // With efforts, the page is pointed at its own folder as the panel's, which is where they are read from.
+  return '<!doctype html><html><head>' + (cfg.efforts ? '<link rel="stylesheet" href="index.css">' : '')
+    + '</head><body><pre id="out"></pre>'
     + '<div id="list" style="overflow-y:auto;height:600px"></div>'
     + '<form><div class="inputRow_r1">'
     + '<button type="button" class="menuButton_x1">m</button>'
@@ -222,6 +242,13 @@ function run(browser, cfg, script) {
   try {
     const file = path.join(dir, 'panel.html');
     fs.writeFileSync(file, page(full, script || require('../src/webview').SCRIPT));
+    if (full.efforts) {
+      const wv = require('../src/webview');
+      fs.writeFileSync(path.join(dir, 'index.css'), '');
+      fs.writeFileSync(path.join(dir, 'claude-code-extras.rev.svg'),
+        `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${full.efforts.height || 7}"></svg>`);
+      fs.writeFileSync(path.join(dir, wv.EFFORT_PREFIX + full.efforts.sid + '.css'), full.efforts.css);
+    }
     const budget = full.settleCapMs + full.idleMs + full.grows * 300 + 3000;
     /* No --user-data-dir. Headless already starts from a temporary profile of its own, which is what keeps it apart
        from a browser the person is using; naming a directory instead makes it set that up as a lasting profile, and
