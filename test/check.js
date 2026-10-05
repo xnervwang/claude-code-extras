@@ -1133,6 +1133,10 @@ console.log('\nbackground sessions');
   job('deadbea7');
   job('0ddba115');
   job('77777777', { state: 'done', lastTerminalAt: '2026-10-02T11:00:00.000Z', output: { result: 'all 11 ids kept' } });
+  job('0a0b0c0d');
+  job('0e0f0a0b');
+  job('13579bdf');   // only echoed by a script, never with the hint's words
+  job('2468ace0');   // its hints printed back by a command that launched nothing
   fs.writeFileSync(transcript,
     prose('the output looks like backgrounded · 0badc0de, for example') +           // a mention, not a launch
     ran('claude --bg "task one"', launched('1a2b3c4d') + 'note: backgrounded · cafef00d is older\n') + // and one in passing
@@ -1188,6 +1192,38 @@ console.log('\nbackground sessions');
     if (whole.r.added === 1 && whole.link.ids.includes('77777777') && whole.link.scannedTo === size1 + Buffer.byteLength(half)) {
       ok('once the line is whole it is read, from where the last pass stopped');
     } else bad(`after the line was finished: ${JSON.stringify(whole)}`);
+  }
+
+  // A launch whose output kept only the hints: `| tail -3` drops the first line, and that is how a live one went unseen.
+  // Its own folder of link files, so that what it finds does not join the list the checks further down count.
+  {
+    const SID3 = 'cccccccc-1111-2222-3333-444444444444';
+    const t3 = path.join(proj, SID3 + '.jsonl');
+    const plans3 = path.join(root, 'plans3');
+    fs.writeFileSync(t3,
+      ran('claude --bg "task seven" 2>&1 | tail -3', '  claude attach 0a0b0c0d    open in this terminal\n'
+        + '  claude logs 0a0b0c0d      show recent output\n  claude stop 0a0b0c0d      stop this session') +
+      ran('claude --bg "task eight" | tail -1', '\x1b[2m  claude stop 0e0f0a0b      stop this session\x1b[22m') + // dimmed
+      // Echoed beside a real hint, so that only the missing words keep it out.
+      ran('claude --bg "task nine" | tail -1; echo claude stop 13579bdf',
+        '  claude stop 0e0f0a0b      stop this session\nclaude stop 13579bdf\n') +
+      ran('cat launch.log', '  claude attach 2468ace0    open in this terminal\n'));                      // printed back
+    const script = `
+      const bg = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))});
+      const fs = require('fs');
+      const opts = ${JSON.stringify({ dir: plans3, jobs, transcript: t3 })};
+      bg.scan(${JSON.stringify(SID3)}, opts).then(() => {
+        let ids = [];
+        try { ids = JSON.parse(fs.readFileSync(opts.dir + '/' + ${JSON.stringify(SID3)} + '.background', 'utf8')).ids; } catch (_) {}
+        process.stdout.write(JSON.stringify(ids));
+      }).catch((e) => { process.stdout.write(JSON.stringify({ error: e.message })); });`;
+    const ids = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' }));
+    if (Array.isArray(ids) && ids.join() === '0a0b0c0d,0e0f0a0b') {
+      ok('a launch is found from its hints alone, plain or dimmed, when the line above them was cut off');
+    } else bad(`from the hints alone the scan recorded ${JSON.stringify(ids)}`);
+    if (Array.isArray(ids) && !ids.includes('13579bdf') && !ids.includes('2468ace0')) {
+      ok('a stop command echoed without the hint\'s words, and hints printed back by a command that launched nothing, are left out');
+    } else bad(`a hint that was not a launch was recorded: ${JSON.stringify(ids)}`);
   }
 
   // No file for a conversation that started nothing - one per conversation looked at would be clutter. How far it was

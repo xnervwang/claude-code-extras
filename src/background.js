@@ -8,8 +8,9 @@
  *
  * A detached session's own record names nobody but itself, so who launched it is read from the other side: the Bash call
  * that started it printed `backgrounded · <id>` into the launching conversation's transcript - a fixed template in the
- * CLI, followed by the attach, logs and stop hints. This host reads that from the transcript of the conversation in front
- * of the reader, and writes what it found to a small file beside that conversation's plan.
+ * CLI, followed by the attach, logs and stop hints, each of which names the id again. This host reads those from the
+ * transcript of the conversation in front of the reader, and writes what it found to a small file beside that
+ * conversation's plan.
  *
  * Those files are the shared state, not each host's memory. Every window builds the stylesheet from all of them, so two
  * windows looking at different conversations still write the same bytes; building it from what one window had scanned
@@ -37,6 +38,13 @@ const SHORT_ID = /^[0-9a-f]{8}$/;
    in colour codes. */
 const MARK = Buffer.from('backgrounded · ', 'utf8');
 const ID_AFTER = /^[ \t]*backgrounded · (?:\x1b\[[0-9;]*m)*([0-9a-f]{8})(?![0-9a-f])/gm;
+/* The hints the CLI prints under that line, the command padded and followed by what it does. A launch piped through
+   `tail` keeps only these, so each one is a launch in its own right. When the output went to a terminal the whole
+   line is dimmed. */
+const HINTS = ['open in this terminal', 'show recent output', 'stop this session'];
+const HINT_NEEDLES = HINTS.map((h) => Buffer.from(h, 'utf8'));
+const ID_IN_HINT = new RegExp('^(?:\\x1b\\[[0-9;]*m)*[ \\t]*claude (?:attach|logs|stop) ([0-9a-f]{8})[ \\t]+(?:'
+  + HINTS.join('|') + ')', 'gm');
 /* The flag that starts one, found in the command a tool result answers. */
 const BG_FLAG = Buffer.from('--bg', 'utf8');
 const CHUNK = 8 << 20;
@@ -62,8 +70,10 @@ const textOf = (b) => (typeof b.content === 'string' ? b.content
  * record, so nothing in the text could tell the two apart. The words have to open a line - indentation allowed, since a
  * command that indents its own output is common and was how the first live launch here went unseen - which keeps out
  * a launch quoted in passing; be followed by exactly eight hex digits, which keeps out a document describing the format; and
- * name a session that has a record. The CLI's hints after the id are not required: a launch whose output was cut short
- * has none, and that is an ordinary launch.
+ * name a session that has a record. Either end of the CLI's output is enough: a launch whose output lost its hints is an
+ * ordinary launch, and so is one whose output kept only the hints - `| tail -3` keeps the last three, and that is how a
+ * live launch went unseen. A hint counts only with the words after it, so a command that echoes `claude stop <id>` is
+ * not one.
  *
  * `ran` carries the commands across lines and passes, since a call and its result are separate rows.
  */
@@ -80,10 +90,12 @@ function readLine(line, ran, jobs, seen) {
     }
     if (b.type !== 'tool_result' || !ran.has(b.tool_use_id)) continue;
     const text = textOf(b);
-    ID_AFTER.lastIndex = 0;
-    let m;
-    while ((m = ID_AFTER.exec(text))) {
-      if (!seen.has(m[1]) && fs.existsSync(path.join(jobs, m[1], 'state.json'))) seen.add(m[1]);
+    for (const re of [ID_AFTER, ID_IN_HINT]) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text))) {
+        if (!seen.has(m[1]) && fs.existsSync(path.join(jobs, m[1], 'state.json'))) seen.add(m[1]);
+      }
     }
   }
 }
@@ -175,10 +187,10 @@ async function scanOnce(session, opts) {
         const data = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : buf.subarray(0, bytesRead);
         const last = data.lastIndexOf(0x0a);
         if (last === -1) { carry = Buffer.from(data); continue; }
-        // Only the lines that hold one of the two needles are parsed, in file order, so that a call is seen before
-        // the result that answers it.
+        // Only the lines that hold one of the needles are parsed, in file order, so that a call is seen before the
+        // result that answers it.
         const starts = new Set();
-        for (const needle of [BG_FLAG, MARK]) {
+        for (const needle of [BG_FLAG, MARK, ...HINT_NEEDLES]) {
           let at = 0;
           while ((at = data.indexOf(needle, at)) !== -1 && at < last) {
             starts.add(data.lastIndexOf(0x0a, at) + 1);
