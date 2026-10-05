@@ -7,6 +7,9 @@
 # has, so around thirty checks do not happen here. They report themselves as skipped rather than passing, the summary line
 # carries the count, and this job puts that line where it can be read - a green run that verified less than the last green
 # run is the one result nobody would otherwise notice.
+#
+# The checks on what the page costs need a browser. The runner image ships Google Chrome, and this job requires it: a
+# runner without one would skip those checks and report green, letting through exactly the regressions they exist for.
 name: tests
 
 on:
@@ -33,6 +36,8 @@ jobs:
 
       - name: Run the checks
         shell: bash
+        env:
+          CCE_REQUIRE_BROWSER: '1'
         run: |
           set -o pipefail
           node test/check.js 2>&1 | tee result.txt

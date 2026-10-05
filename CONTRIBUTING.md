@@ -18,12 +18,13 @@
 - `test/check.js` is the whole suite. It parses everything and checks every edit against an unpatched bundle. How
   many checks it runs depends on how many Claude Code builds are installed, so the count is not quoted here.
 - `test/against-latest.js` checks the same edits against the current marketplace build.
+- `test/page-harness.js` runs the injected script in a headless browser against a stand-in panel, for the checks on what the page costs.
 - `build/pack.sh` produces the `.vsix` without npm.
 - `build/supported.js`, `build/update-versions.js`, and `supported-versions.json` maintain the record of verified Claude Code builds.
 
 ## Working on it
 
-Run `node test/check.js` for the full suite. No npm install or dependencies are needed. Run `bash build/pack.sh` to produce a `.vsix` for installing locally; the package the marketplaces get is described under Publishing.
+Run `node test/check.js` for the full suite. No npm install or dependencies are needed. The checks on what the page costs also need Chrome or Chromium; without one they report themselves as skipped, except in CI, which requires one. Run `bash build/pack.sh` to produce a `.vsix` for installing locally; the package the marketplaces get is described under Publishing.
 
 The in-page script stays in ordinary `.js` files rather than one large template literal. In a literal, every backslash needed doubling. A missed backslash failed only at runtime: `/\s+/` became `/s+/` and replaced the letter *s* in every label it passed through.
 

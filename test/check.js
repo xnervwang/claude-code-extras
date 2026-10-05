@@ -162,6 +162,277 @@ else bad('hot loop lost its early exit — the fiber walk will run to full depth
   } else bad('compaction rules are placed before the signature check, or by walking every prompt');
 }
 
+/* ── 2b. what the page costs, run in a browser ──
+   The real injected script against a stand-in panel (test/page-harness.js), counted rather than timed, so a threshold
+   can be exact without depending on the machine. The same conversation at two lengths, so that work growing with the
+   conversation shows up as a ratio. A runner with no browser would let every regression here through while reporting
+   green, so CI sets CCE_REQUIRE_BROWSER and a missing browser fails there; elsewhere it is reported as skipped. */
+console.log('\nwhat the page costs, in a browser');
+{
+  const harness = require('./page-harness');
+  const browser = harness.findBrowser();
+  if (!browser) {
+    if (process.env.CCE_REQUIRE_BROWSER) bad('no Chrome or Chromium found, and this run requires one (CCE_REQUIRE_BROWSER)');
+    else note('skipped: no Chrome or Chromium here - set CCE_BROWSER to one to run these');
+  } else {
+    const SHORT = 100, LONG = 400;
+    const runs = [
+      ['plain view on', harness.run(browser, { turns: SHORT, plain: true })],
+      ['plain view on, four times as long', harness.run(browser, { turns: LONG, plain: true })],
+      ['plain view off', harness.run(browser, { turns: SHORT, plain: false })],
+    ];
+    const [short, long, off] = runs.map(([, r]) => r);
+    const failed = runs.filter(([, r]) => r.error || !r.script);
+    if (failed.length) {
+      bad('the stand-in panel did not run: ' + failed.map(([what, r]) => `${what}: ${r.error || 'the script did not load'}`).join('; '));
+    } else {
+      /* What follows is only evidence if the stand-in reached the code those costs were found in. */
+      if (runs.every(([, r]) => r.viewButton && r.plainButton) && short.plainRule > 0 && off.plainRule === 0) {
+        ok('the stand-in panel brings up the view button, the plain-view button and its rule');
+      } else bad('the stand-in panel did not reach the code under test: '
+        + JSON.stringify(runs.map(([what, r]) => [what, r.viewButton, r.plainButton, r.plainRule])));
+      /* A write the page answers with a sweep that makes the write again keeps an idle page sweeping four times a second.
+         Such a page never holds still long enough to count as settled, and changes things while idle. */
+      const restless = runs.filter(([, r]) => !(r.settledAfter < harness.DEFAULTS.settleCapMs && r.idleSweeps === 0
+        && r.idleChild + r.idleAttr + r.idleChars === 0));
+      if (!restless.length) ok('an idle page stops sweeping once it has booted, and changes nothing while it waits');
+      else bad('an idle page kept itself busy: ' + restless.map(([what, r]) =>
+        `${what}: ${r.idleSweeps} sweeps and ${r.idleChild + r.idleAttr + r.idleChars} changes in ${harness.DEFAULTS.idleMs}ms`).join('; '));
+      /* A reply growing is what drives sweeps in use. Ordering two messages costs the browser a walk along every message
+         between them, so a sweep that compares at all costs in proportion to the conversation squared. */
+      const busy = runs.filter(([, r]) => !(r.growSweeps >= 4 && r.growCdp === 0 && r.growText === 0));
+      if (!busy.length) ok('while a reply grows, a sweep compares no positions and writes no text');
+      else bad('while a reply grew: ' + busy.map(([what, r]) =>
+        `${what}: ${r.growSweeps} sweeps, ${r.growCdp} order comparisons, ${r.growText} text writes`).join('; '));
+      /* Four times the conversation may cost up to four times the walking, no more; the queries and the messages worked
+         out in full do not grow at all. */
+      const ratio = LONG / SHORT;
+      const perSweep = (r) => r.growQsa / Math.max(1, r.growSweeps);
+      if (long.fiber <= short.fiber * ratio * 1.5 && perSweep(long) <= perSweep(short) * 1.25 && long.full <= 64 && short.full <= 64) {
+        ok(`four times the conversation: ${(long.fiber / short.fiber).toFixed(1)}x the walking, the same queries, at most 64 replies worked out`);
+      } else bad(`four times the conversation: walking ${short.fiber} -> ${long.fiber}, queries per sweep ${perSweep(short)} -> `
+        + `${perSweep(long)}, replies worked out ${short.full} -> ${long.full}`);
+      /* A new prompt rebuilds the contents list, and placing each compaction rule may take one halving of the prompts. */
+      const bound = (r) => r.compactions * (Math.ceil(Math.log2(r.prompts + 1)) + 1);
+      if (short.rebuildCdp > 0 && short.rebuildCdp <= bound(short) && long.rebuildCdp <= bound(long)) {
+        ok(`rebuilding the contents list places compaction rules by halving: ${long.rebuildCdp} comparisons for `
+          + `${long.compactions} rules among ${long.prompts} prompts`);
+      } else bad(`rebuilding the contents list took ${short.rebuildCdp} and ${long.rebuildCdp} comparisons, against bounds of `
+        + `${bound(short)} and ${bound(long)}`);
+    }
+  }
+}
+
+/* ── 2c. what the periodic work reads ──
+   Each of these runs on a timer for as long as a window is open, against files that only grow. Counted in bytes, in a
+   child process with the file functions wrapped, so what is measured is the module's own reads. A pass over a file that
+   has not changed reads nothing, and a pass after an append reads the append. */
+console.log('\nwhat the periodic work reads');
+{
+  const src = path.join(__dirname, '..', 'src');
+  const counting = `
+    const fs = require('fs'), os = require('os'), path = require('path');
+    const seen = { bytes: 0, files: [] };
+    const orig = { readFileSync: fs.readFileSync, readSync: fs.readSync, open: fs.promises.open };
+    fs.readFileSync = function (file, ...rest) {
+      const out = orig.readFileSync.call(fs, file, ...rest);
+      seen.bytes += typeof out === 'string' ? Buffer.byteLength(out) : out.length;
+      seen.files.push(String(file));
+      return out;
+    };
+    fs.readSync = function (fd, ...rest) { const n = orig.readSync.call(fs, fd, ...rest); seen.bytes += n; return n; };
+    fs.promises.open = async function (file, ...rest) {
+      const fh = await orig.open.call(fs.promises, file, ...rest), read = fh.read.bind(fh);
+      fh.read = async (...a) => { const r = await read(...a); seen.bytes += r.bytesRead; return r; };
+      seen.files.push(String(file));
+      return fh;
+    };
+    const measure = async (f) => {
+      const b = seen.bytes, n = seen.files.length;
+      await f();
+      return { bytes: seen.bytes - b, files: seen.files.slice(n) };
+    };`;
+  const script = counting + `
+    const bg = require(${JSON.stringify(path.join(src, 'background.js'))});
+    const L = require(${JSON.stringify(path.join(src, 'openlatency.js'))});
+    (async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-reads-'));
+      try {
+        const jobs = path.join(root, 'jobs'), plans = path.join(root, 'plans');
+        fs.mkdirSync(path.join(jobs, '1a2b3c4d'), { recursive: true });
+        fs.mkdirSync(plans);
+        fs.writeFileSync(path.join(jobs, '1a2b3c4d', 'state.json'), JSON.stringify({ state: 'working', name: 'x' }));
+        const SID = 'cccccccc-1111-2222-3333-444444444444';
+        const transcript = path.join(root, SID + '.jsonl');
+        const row = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'x'.repeat(900) }] } }) + '\\n';
+        fs.writeFileSync(transcript, row.repeat(4096));
+        const before = fs.statSync(transcript).size;
+        const opts = { dir: plans, jobs, transcript };
+        const scan1 = await measure(() => bg.scan(SID, opts));
+        const more = row.repeat(20);
+        fs.appendFileSync(transcript, more);
+        const scan2 = await measure(() => bg.scan(SID, opts));
+        const scan3 = await measure(() => bg.scan(SID, opts));
+        fs.writeFileSync(path.join(plans, 'dddddddd-1111-2222-3333-444444444444.background'),
+          JSON.stringify({ ids: ['1a2b3c4d'], scannedTo: 10 }));
+        const collect = await measure(() => bg.collect({ dir: plans, jobs }));
+        const log = path.join(root, 'Anthropic.claude-code.log');
+        const line = '2026-10-05 00:00:00.000 [info] nothing to pair here ' + 'y'.repeat(80) + '\\n';
+        fs.writeFileSync(log, line.repeat(16384));
+        const logBefore = fs.statSync(log).size;
+        let state = {};
+        const sample = () => { state = L.sample({ log, dir: root, state, version: 'v', pid: 7 }).state; };
+        const log1 = await measure(sample);
+        const logMore = line.repeat(10);
+        fs.appendFileSync(log, logMore);
+        const log2 = await measure(sample);
+        const log3 = await measure(sample);
+        process.stdout.write(JSON.stringify({
+          transcript: before, appended: Buffer.byteLength(more),
+          scan: [scan1.bytes, scan2.bytes, scan3.bytes], collectFiles: collect.files,
+          log: logBefore, logAppended: Buffer.byteLength(logMore), logReads: [log1.bytes, log2.bytes, log3.bytes] }));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
+  let r;
+  try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); }
+  catch (e) { r = { error: e.message }; }
+  if (r.error) bad('measuring the periodic reads failed: ' + r.error);
+  else {
+    const [s1, s2, s3] = r.scan;
+    if (s1 >= r.transcript && s2 <= r.appended && s3 === 0) {
+      ok(`the background-session scan reads a transcript once, then only what was added: ${s1}, ${s2}, ${s3} bytes`);
+    } else bad(`the background-session scan read ${s1}, ${s2} and ${s3} bytes of a ${r.transcript}-byte transcript `
+      + `with ${r.appended} appended between the first two passes`);
+    if (r.collectFiles.length && !r.collectFiles.some((f) => f.endsWith('.jsonl'))) {
+      ok('collecting what the background sessions are doing opens no transcript');
+    } else bad('collecting the background sessions read: ' + JSON.stringify(r.collectFiles));
+    const [l1, l2, l3] = r.logReads;
+    // One byte before the offset comes too: it says whether the offset sat on a line boundary.
+    if (l1 >= r.log && l2 <= r.logAppended + 1 && l3 === 0) {
+      ok(`the open-latency sampler reads the log once, then only what was added: ${l1}, ${l2}, ${l3} bytes`);
+    } else bad(`the open-latency sampler read ${l1}, ${l2} and ${l3} bytes of a ${r.log}-byte log with ${r.logAppended} appended`);
+  }
+
+  /* The view reads the plan of the conversation in front of the reader and no other. Reading the whole directory was
+     once what put every conversation's plan in every window; it is also the read that would grow with the machine. */
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-home-'));
+  try {
+    const stub = path.join(home, 'vscode-stub.js');
+    fs.writeFileSync(stub, `module.exports = { EventEmitter: class { constructor() { this.event = () => ({ dispose() {} }); } fire() {} } };`);
+    const view = counting + `
+      const Module = require('module'), realResolve = Module._resolveFilename;
+      Module._resolveFilename = function (request, ...rest) {
+        return request === 'vscode' ? ${JSON.stringify(stub)} : realResolve.call(this, request, ...rest);
+      };
+      const { WorkPlanProvider } = require(${JSON.stringify(path.join(src, 'workplan-view.js'))});
+      const { planDir } = require(${JSON.stringify(path.join(src, 'workplan.js'))});
+      (async () => {
+        const dir = planDir();
+        fs.mkdirSync(dir, { recursive: true });
+        const body = JSON.stringify({ nodes: Array.from({ length: 200 }, (_, i) => ({ title: 'row ' + i, state: 'done', detail: 'z'.repeat(400) })) });
+        const ids = Array.from({ length: 20 }, (_, i) => 'eeeeeeee-1111-2222-3333-' + String(i).padStart(12, '0'));
+        for (const id of ids) fs.writeFileSync(path.join(dir, id + '.json'), body);
+        const p = new WorkPlanProvider();
+        p.setFocus(ids[3]);
+        const focused = await measure(() => p.refresh());
+        p.setFocus('');
+        const none = await measure(() => p.refresh());
+        process.stdout.write(JSON.stringify({ size: Buffer.byteLength(body), focused, none, focus: ids[3] }));
+      })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
+    let v;
+    try {
+      v = JSON.parse(cp.execFileSync(process.execPath, ['-e', view], { encoding: 'utf8', env: Object.assign({}, process.env, { HOME: home }) }));
+    } catch (e) { v = { error: e.message }; }
+    if (v.error) bad('measuring the work plan view failed: ' + v.error);
+    else if (v.focused.files.length === 1 && v.focused.files[0].includes(v.focus) && v.focused.bytes === v.size && v.none.bytes === 0) {
+      ok('a refresh of the work plan view reads the one plan in front of the reader, out of twenty, and none without one');
+    } else bad(`a refresh of the work plan view read ${JSON.stringify(v.focused.files)} (${v.focused.bytes} bytes), `
+      + `and ${v.none.bytes} bytes with no conversation in front of it`);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+/* ── 2d. what the hooks read of a transcript ──
+   Every hook is handed the transcript's path, and a transcript runs to hundreds of megabytes. A hook that reads it
+   whole is a hook that costs seconds on every turn, so each one is run against a small transcript and a 48 MB one and
+   the difference in what it read is the part of the transcript it took. The count is the kernel's, from /proc/self/io
+   as the process exits, so it is exact and there is no timing in it. The control - a script that does read the whole
+   transcript - is what shows the count can see a read at all. */
+console.log('\nwhat the hooks read of a transcript');
+{
+  if (!fs.existsSync('/proc/self/io')) note('skipped: no /proc/self/io here, which is how a process says how much it read');
+  else {
+    const hooksDir = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-hook-reads-'));
+    try {
+      const SID = '46000000-0000-0000-0000-000000000000';
+      const data = path.join(dir, 'data');
+      fs.mkdirSync(data);
+      fs.writeFileSync(path.join(data, SID + '.json'), JSON.stringify({ nodes: [{ title: 'a', state: 'todo' }] }));
+      const prompt = JSON.stringify({ type: 'user', message: { content: 'go on' }, timestamp: '2026-10-05T00:00:00.000Z' }) + '\n';
+      const row = JSON.stringify({ type: 'assistant', timestamp: '2026-10-05T00:00:01.000Z',
+        message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls ' + 'q'.repeat(900) } }] } }) + '\n';
+      const tiny = path.join(dir, 'tiny.jsonl'), big = path.join(dir, 'big.jsonl');
+      fs.writeFileSync(tiny, prompt + row);
+      const fd = fs.openSync(big, 'w');
+      try {
+        const chunk = row.repeat(1024);
+        for (let written = 0; written < 48 << 20; written += Buffer.byteLength(chunk)) fs.writeSync(fd, chunk);
+        fs.writeSync(fd, prompt + row);
+      } finally { fs.closeSync(fd); }
+      const wrapper = path.join(dir, 'reads.py');
+      fs.writeFileSync(wrapper, [
+        'import atexit, os, runpy, sys',
+        'def report():',
+        '    with open("/proc/self/io") as fh:',
+        '        for line in fh:',
+        '            if line.startswith("rchar:"):',
+        '                sys.stderr.write("CCE-RCHAR " + line.split()[1] + "\\n")',
+        'atexit.register(report)',
+        'script = sys.argv[1]',
+        'sys.argv = sys.argv[1:]',
+        'sys.path.insert(0, os.path.dirname(os.path.abspath(script)))',
+        'sys.dont_write_bytecode = True',
+        'runpy.run_path(script, run_name="__main__")',
+      ].join('\n') + '\n');
+      const control = path.join(dir, 'whole.py');
+      fs.writeFileSync(control, 'import json, sys\npath = json.load(sys.stdin)["transcript_path"]\nwith open(path, "rb") as fh:\n    fh.read()\n');
+      const readOf = (script, payload) => {
+        const r = cp.spawnSync('python3', [wrapper, script, data], { input: JSON.stringify(payload), encoding: 'utf8' });
+        const m = /CCE-RCHAR (\d+)/.exec(r.stderr || '');
+        return m ? Number(m[1]) : NaN;
+      };
+      const hooks = [
+        ['inject-work-plan.py', { hook_event_name: 'UserPromptSubmit', prompt_id: 'p1' }],
+        ['remind-work-plan.py', { hook_event_name: 'PostToolBatch', prompt_id: 'p1',
+          tool_calls: [{ tool_name: 'Read', tool_input: { file_path: '/elsewhere/a.js' } }] }],
+        ['guard-work-plan.py', { hook_event_name: 'PreToolUse', tool_name: 'Edit',
+          tool_input: { file_path: '/elsewhere/a.js', old_string: 'a', new_string: 'b' } }],
+        ['nudge-work-plan.py', { hook_event_name: 'Stop' }],
+      ];
+      const took = (script, extra) => {
+        const payload = (t) => Object.assign({ session_id: SID, transcript_path: t }, extra);
+        return readOf(script, payload(big)) - readOf(script, payload(tiny));
+      };
+      const whole = took(control, {});
+      const size = fs.statSync(big).size;
+      const results = hooks.map(([name, extra]) => [name, took(path.join(hooksDir, name), extra)]);
+      const LIMIT = 8 << 20;
+      if (!(whole >= size * 0.95)) bad(`the control read ${whole} more bytes of a ${size}-byte transcript, so the count cannot see a whole read`);
+      else if (results.every(([, n]) => Number.isFinite(n) && n <= LIMIT)) {
+        ok(`no hook reads a transcript whole: of ${size >> 20} MB, ` + results.map(([name, n]) =>
+          `${name.replace('-work-plan.py', '')} ${(n / 1048576).toFixed(1)} MB`).join(', '));
+      } else bad(`a hook read more than ${LIMIT >> 20} MB of a ${size >> 20} MB transcript: `
+        + results.map(([name, n]) => `${name} ${n}`).join(', '));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
 /* Every mutation observer has to go through the callback that labels a new block before the browser paints it. There are
    two of them watching different roots, and wiring only one leaves half the blocks appearing at full height and then
    collapsing - the symptom this was written to remove, at half the rate, which reads as the fix not having worked rather
