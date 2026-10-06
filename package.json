@@ -133,12 +133,7 @@
         "claudeCodeExtras.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Show what this extension adds to the panel: a timestamp on every message and content block, a line on each reply with its duration, context share, estimated cost and model, and a name tag on sub-agent messages. Off leaves those out and the panel reads as Claude Code renders it. The **Extras: On/Off** status bar item is the same setting. Changes apply live, without a reload."
-        },
-        "claudeCodeExtras.showStatusBar": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show the **Extras: On/Off** toggle in the status bar."
+          "markdownDescription": "Show what this extension adds to the panel: a timestamp on every message and content block, a line on each reply with its duration, context share, estimated cost and model, and a name tag on sub-agent messages. Off leaves those out and the panel reads as Claude Code renders it. Changes apply live, without a reload."
         },
         "claudeCodeExtras.userMessageColor": {
           "type": "string",

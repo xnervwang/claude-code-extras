@@ -40,7 +40,6 @@ let selfPath = '';
 const SETTING = 'claudeCodeExtras.enabled';
 const COLOR_SETTING = 'claudeCodeExtras.userMessageColor';
 const EDGE_SETTING = 'claudeCodeExtras.userMessageEdge';
-const STATUS_BAR_SETTING = 'claudeCodeExtras.showStatusBar';
 const REMOVED_KEY = 'claudeCodeExtras.removed';
 const PLUGIN_KEY = 'claudeCodeExtras.workPlanPlugin';
 const SWEEP_KEY = 'claudeCodeExtras.lastOrphanSweep';
@@ -235,21 +234,16 @@ function activate(context) {
     if (restored.length && !leaving) offerReload(`Extras for Claude Code was removed from ${restored.join(' and ')}. Reload the window to finish.`);
   }
 
-  // Status bar toggle: shows the current state and flips it on click.
-  const bar = vscode.window.createStatusBarItem('claudeCodeExtras.toggle', vscode.StatusBarAlignment.Left, 50);
-  bar.name = 'Extras for Claude Code';
-  bar.command = 'claudeCodeExtras.toggle';
-  const renderBar = () => {
-    const on = enabled() && !removed();
-    bar.text = on ? '$(clock) Extras: On' : '$(circle-slash) Extras: Off';
-    bar.tooltip = on ? 'Extras for Claude Code is ON — click to turn it off' : 'Extras for Claude Code is OFF — click to turn it on';
-    if (cfg().get(STATUS_BAR_SETTING, true)) bar.show(); else bar.hide();
-  };
-  context.subscriptions.push(bar);
-
+  /* No status bar item for on and off.
+   *
+   * There was one, reading "Extras: On". It promised more than the setting behind it does: off stops the additions being
+   * drawn, while the patch, the injected script, its poll and the hooks all stay - so a reader took it for a switch that
+   * turns this extension off, which is the Remove command. It also sat one click away in the left status bar, where
+   * hitting it by accident silently changed a global setting. The three commands remain for anyone who wants it.
+   */
   const setEnabled = async (value) => {
     if (value && removed()) await context.globalState.update(REMOVED_KEY, false);
-    if (enabled() === value) { renderBar(); await sync({ interactive: true }); return; }
+    if (enabled() === value) { await sync({ interactive: true }); return; }
     await cfg().update(SETTING, value, vscode.ConfigurationTarget.Global);
   };
 
@@ -259,7 +253,6 @@ function activate(context) {
     vscode.commands.registerCommand('claudeCodeExtras.toggle', () => setEnabled(!(enabled() && !removed()))),
     vscode.commands.registerCommand('claudeCodeExtras.remove', async () => {
       await context.globalState.update(REMOVED_KEY, true);
-      renderBar();
       await sync({ interactive: true });
     }),
     vscode.commands.registerCommand('claudeCodeExtras.status', () => {
@@ -305,7 +298,6 @@ function activate(context) {
       log.show(true);
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration(SETTING) || e.affectsConfiguration(STATUS_BAR_SETTING)) renderBar();
       if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();
       /* A switch has to reach the panel the moment it is flipped, which is what writing the stylesheet does. */
       const touched = [SETTING, COLOR_SETTING, EDGE_SETTING]
@@ -715,7 +707,6 @@ function activate(context) {
     }),
   );
 
-  renderBar();
   return sync();
 }
 
