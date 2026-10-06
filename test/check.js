@@ -218,6 +218,19 @@ console.log('\nwhat the page costs, in a browser');
         bad('a stalled poll piles up requests, each holding a service-worker permit: '
           + (stalled.error || `${stalled.probesMade} started, ${stalled.probesCancelled} given up on`));
       }
+      /* Nobody is reading a panel in a window that is not on screen, and several editor windows at once is the ordinary
+         case, so the poll drops to a crawl for a backgrounded window. Measured over the same 13 seconds. */
+      const probeRate = (opts) => harness.run(browser, Object.assign({ turns: SHORT, plain: true, grows: 1,
+        idleMs: 13000, efforts: { sid: '00000000-0000-4000-8000-00000000abcd', css: '#cce-effort{--cce-effort:""}\n' } },
+        opts));
+      const seen = probeRate({}), unseen = probeRate({ windowHidden: true });
+      if (!seen.error && !unseen.error && seen.probesMade >= 4 && unseen.probesMade <= 1) {
+        ok(`a window in the background is polled at a crawl (${seen.probesMade} requests on screen, `
+          + `${unseen.probesMade} off it, in 13s)`);
+      } else {
+        bad('the poll does not slow down for a window nobody is looking at: '
+          + (seen.error || unseen.error || `${seen.probesMade} on screen, ${unseen.probesMade} off it`));
+      }
       /* A reply growing is what drives sweeps in use. Ordering two messages costs the browser a walk along every message
          between them, so a sweep that compares at all costs in proportion to the conversation squared. */
       const busy = runs.filter(([, r]) => !(r.growSweeps >= 4 && r.growCdp === 0 && r.growText === 0));

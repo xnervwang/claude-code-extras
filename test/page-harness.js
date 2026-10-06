@@ -59,16 +59,29 @@ const SETUP = String.raw`
   window.requestAnimationFrame = function(cb){ return setTimeout(function(){ cb(performance.now()); }, 16); };
   try { localStorage.setItem('cce.plain', CFG.plain ? '1' : '0'); } catch (e) {}
   var COUNT = { cdp: 0, qsa: 0, text: 0 };
-  /* A revision probe whose request is never answered, which is what a stalled webview resource looks like to the page.
-     Counting the requests it starts, and the ones it gives up on, is how the poll's one-at-a-time rule is held to. */
+  /* Every request the revision poll starts, and every one it gives up on. With stallProbe the request is never answered,
+     which is what a stalled webview resource looks like to the page; without it the real load goes ahead and only the
+     count is taken, which is how the slower rate for a backgrounded window is measured. */
   var PROBES = { made: 0, cancelled: 0 };
-  if (CFG.stallProbe) {
+  (function(){
+    var Real = window.Image;
     window.Image = function(){
-      var el = { onload: null, onerror: null, naturalWidth: 0, naturalHeight: 0 }, src = '';
-      Object.defineProperty(el, 'src', { get: function(){ return src; },
-        set: function(v){ if (v === '') PROBES.cancelled++; else PROBES.made++; src = v; } });
-      return el;
+      if (CFG.stallProbe) {
+        var el = { onload: null, onerror: null, naturalWidth: 0, naturalHeight: 0 }, src = '';
+        Object.defineProperty(el, 'src', { get: function(){ return src; },
+          set: function(v){ if (v === '') PROBES.cancelled++; else PROBES.made++; src = v; } });
+        return el;
+      }
+      var img = new Real();
+      var d = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+      Object.defineProperty(img, 'src', { get: function(){ return d.get.call(img); },
+        set: function(v){ if (v === '') PROBES.cancelled++; else PROBES.made++; d.set.call(img, v); } });
+      return img;
     };
+  })();
+  // A window nobody is looking at. The page reads document.hidden, which in a webview follows the editor window.
+  if (CFG.windowHidden) {
+    Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get: function(){ return true; } });
   }
   (function(){
     var cdp = Node.prototype.compareDocumentPosition;

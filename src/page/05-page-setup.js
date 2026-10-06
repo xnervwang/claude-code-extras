@@ -170,10 +170,41 @@
     try { inFlight.src = ''; } catch (e) { /* nothing more to do than let it go */ }
     inFlight = null;
   };
+  /*
+   * How often to ask, which is not the same as how often this is called.
+   *
+   * Nobody is reading a panel in a window that is not on screen, so there is nothing for a new revision to be in time
+   * for: ten minutes of a backgrounded window cost 200 requests at the quick rate and 20 at the slow one. Several editor
+   * windows at once is the ordinary case here, and all but one of them are in the background.
+   *
+   * `document.hidden` in a webview follows the editor window, not the tab the panel sits in - an iframe that is not
+   * displayed still reports itself visible. So this slows down for a window nobody is looking at, and leaves a panel
+   * behind another tab of a window in use at the quick rate, which is the right way round: that panel is one click from
+   * being read.
+   *
+   * Focus is deliberately not part of it. A visible panel loses focus the moment someone types in the editor beside it,
+   * and a settings change taking half a minute to show up there would be a plain regression.
+   */
+  var SLOW_POLL_MS = 30000;
+  var windowHidden = function(){
+    try { return document.hidden === true; } catch (e) { return false; }
+  };
+  /* Coming back to the window asks at once rather than at the end of a slow interval. */
+  try {
+    document.addEventListener('visibilitychange', function(){
+      if (windowHidden()) return;
+      sentAt = 0;
+      try { probe(); } catch (e) { /* the interval will come round anyway */ }
+    });
+  } catch (e) { /* no visibility events: the interval alone then */ }
   var probe = function(){
     if (!base) return;
+    var now = Date.now();
+    /* A quarter second of slack, because a timer that fires a hair early would otherwise skip the turn and halve the
+       rate. */
+    if (sentAt && now - sentAt < (windowHidden() ? SLOW_POLL_MS : POLL_MS) - 250) return;
     // Give the one in flight a few polls to answer; past that it is not going to, and holding the slot costs more.
-    if (inFlight && Date.now() - sentAt < POLL_MS * 3) return;
+    if (inFlight && now - sentAt < POLL_MS * 3) return;
     drop();
     var img = new Image();
     inFlight = img;
