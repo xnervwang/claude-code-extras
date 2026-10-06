@@ -59,6 +59,17 @@ const SETUP = String.raw`
   window.requestAnimationFrame = function(cb){ return setTimeout(function(){ cb(performance.now()); }, 16); };
   try { localStorage.setItem('cce.plain', CFG.plain ? '1' : '0'); } catch (e) {}
   var COUNT = { cdp: 0, qsa: 0, text: 0 };
+  /* A revision probe whose request is never answered, which is what a stalled webview resource looks like to the page.
+     Counting the requests it starts, and the ones it gives up on, is how the poll's one-at-a-time rule is held to. */
+  var PROBES = { made: 0, cancelled: 0 };
+  if (CFG.stallProbe) {
+    window.Image = function(){
+      var el = { onload: null, onerror: null, naturalWidth: 0, naturalHeight: 0 }, src = '';
+      Object.defineProperty(el, 'src', { get: function(){ return src; },
+        set: function(v){ if (v === '') PROBES.cancelled++; else PROBES.made++; src = v; } });
+      return el;
+    };
+  }
   (function(){
     var cdp = Node.prototype.compareDocumentPosition;
     Node.prototype.compareDocumentPosition = function(o){ COUNT.cdp++; return cdp.call(this, o); };
@@ -174,6 +185,7 @@ const PHASES = String.raw`
       b = snap(); mut.on = false;
       R.idleSweeps = b.n - a.n;
       R.idleChild = mut.child; R.idleAttr = mut.attr; R.idleChars = mut.chars; R.idleText = b.text - a.text;
+      R.probesMade = PROBES.made; R.probesCancelled = PROBES.cancelled;
       R.viewButton = !!document.querySelector('[data-cce-view]');
       R.plainButton = !!document.querySelector('[data-cce-plain-btn]');
       var rule = document.querySelector('style[data-cce-plain]');

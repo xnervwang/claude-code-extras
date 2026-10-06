@@ -204,6 +204,20 @@ console.log('\nwhat the page costs, in a browser');
       if (!churn.error && churn.idleSweeps === 0 && churn.idleChild > 0) {
         ok(`stylesheets coming and going in the head start no sweep (${churn.idleChild} changes, 0 sweeps)`);
       } else bad(`with stylesheets coming and going in the head: ${churn.error || churn.idleSweeps + ' sweeps for ' + churn.idleChild + ' changes'}`);
+      /* The poll asks for one small file over and over, and a webview resource is fetched through the editor's service
+         worker. One fetch that never answers used to leave a request in flight for the life of the panel while the poll
+         started another every three seconds: 25 were outstanding at once on a real stalled panel. Each one also holds one
+         of the desktop service worker's 32 host-resource permits, so the pile can exhaust that budget for every panel in
+         every window. Measured against the code before the guard: 5 started and none given up on. */
+      const stalled = harness.run(browser, { turns: SHORT, plain: true, grows: 1, idleMs: 13000, stallProbe: true,
+        efforts: { sid: '00000000-0000-4000-8000-00000000abcd', css: '#cce-effort{--cce-effort:""}\n' } });
+      if (!stalled.error && stalled.probesMade <= 3 && stalled.probesCancelled >= 1) {
+        ok(`a poll whose request never answers keeps one in flight and drops it (${stalled.probesMade} started, `
+          + `${stalled.probesCancelled} given up on in 13s)`);
+      } else {
+        bad('a stalled poll piles up requests, each holding a service-worker permit: '
+          + (stalled.error || `${stalled.probesMade} started, ${stalled.probesCancelled} given up on`));
+      }
       /* A reply growing is what drives sweeps in use. Ordering two messages costs the browser a walk along every message
          between them, so a sweep that compares at all costs in proportion to the conversation squared. */
       const busy = runs.filter(([, r]) => !(r.growSweeps >= 4 && r.growCdp === 0 && r.growText === 0));

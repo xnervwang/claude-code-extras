@@ -116,32 +116,78 @@
    * address only changes when the content does - which is exactly when a re-fetch is wanted.
    */
   var cssUrl = function(){ return base + LIVE_CSS + (lastRev >= 0 ? '?v=' + lastRev : ''); };
+  /* The one still loading when another revision arrives, dropped rather than left in the head for the same reason the
+     poll drops its own request: a fetch the service worker never answers would otherwise sit there holding one of its
+     host-resource permits, and every further revision would add one more. Dropping it rather than skipping the new one
+     keeps a stalled load from holding back an update. */
+  var loading = null;
   var reloadCss = function(){
     if (!base) { useFallback(); return; }
+    if (loading) {
+      loading.onload = loading.onerror = null;
+      if (loading.parentNode) loading.parentNode.removeChild(loading);
+      loading = null;
+    }
     var l = document.createElement('link');
     l.rel = 'stylesheet';
     l.media = 'print';
     l.href = cssUrl();
     l.onload = function(){
+      if (loading === l) loading = null;
       l.media = 'all';
       if (sheet && sheet !== l && sheet.parentNode) sheet.parentNode.removeChild(sheet);
       sheet = l; loadedOnce = true; onCache = null; offCache = {};
       if (fallback && fallback.parentNode) { fallback.parentNode.removeChild(fallback); fallback = null; }
       schedule();
     };
-    l.onerror = function(){ if (l.parentNode) l.parentNode.removeChild(l); useFallback(); onCache = null; offCache = {}; schedule(); };
+    l.onerror = function(){
+      if (loading === l) loading = null;
+      if (l.parentNode) l.parentNode.removeChild(l);
+      useFallback(); onCache = null; offCache = {}; schedule();
+    };
+    loading = l;
     head.appendChild(l);
+  };
+  /*
+   * One request at a time, and the one before it is dropped rather than left hanging.
+   *
+   * A webview resource is fetched through the editor's service worker, and a fetch that never answers leaves this
+   * request in flight for as long as the panel lives. Starting another one every POLL_MS regardless then turns one
+   * stalled fetch into a growing pile: measured on a stalled panel, 25 of these were outstanding at once after 99
+   * seconds, none of them finished, and the panel had no way back. Worse, the desktop service worker holds one of its 32
+   * host-resource permits for each body that is neither read to the end nor cancelled, so a pile of these can exhaust
+   * that budget for every webview of this extension in every window - this poll taking the editor's own panels down with
+   * it.
+   *
+   * Clearing `src` is what cancels a request that Chromium has not answered, which both returns the permit and lets the
+   * next poll start clean. The handlers are detached first, because clearing `src` fires `error` on some builds and the
+   * poll must not act on the answer to a request it has given up on.
+   */
+  var inFlight = null, sentAt = 0;
+  var drop = function(){
+    if (!inFlight) return;
+    inFlight.onload = inFlight.onerror = null;
+    try { inFlight.src = ''; } catch (e) { /* nothing more to do than let it go */ }
+    inFlight = null;
   };
   var probe = function(){
     if (!base) return;
+    // Give the one in flight a few polls to answer; past that it is not going to, and holding the slot costs more.
+    if (inFlight && Date.now() - sentAt < POLL_MS * 3) return;
+    drop();
     var img = new Image();
+    inFlight = img;
+    sentAt = Date.now();
+    var done = function(){ if (inFlight === img) inFlight = null; };
     img.onload = function(){
+      done();
       var w = img.naturalWidth;
       if (w !== lastRev) { var first = lastRev === -1; lastRev = w; if (!first) reloadCss(); }
       // The height is the efforts' own revision (76-effort.js), carried by the same request.
       try { effortProbe(img.naturalHeight); } catch (e) {}
     };
-    img.src = base + LIVE_REV + '?t=' + Date.now();
+    img.onerror = done;
+    img.src = base + LIVE_REV + '?t=' + sentAt;
   };
   /*
    * Held between stylesheet loads. getComputedStyle is a synchronous read that forces style resolution, and while a
