@@ -144,12 +144,16 @@ function backgroundProperty(list) {
 }
 
 /*
- * This extension's own version, taken from its manifest rather than passed in by a caller, so that forgetting to thread
- * it through could not quietly disable the rule in writeLive that depends on it.
+ * This extension's own version and id, taken from its manifest rather than passed in by a caller, so that forgetting to
+ * thread them through could not quietly disable the rule in writeLive that depends on them.
  */
-const OURS = (() => {
-  try { return String(require('../package.json').version || ''); } catch (_) { return ''; }
+const SELF = (() => {
+  try {
+    const p = require('../package.json');
+    return { version: String(p.version || ''), id: String(p.publisher || '') + '.' + String(p.name || '') };
+  } catch (_) { return { version: '', id: '' }; }
 })();
+const OURS = SELF.version;
 const VERSION_LINE = /^\/\* Claude Code Extras ([0-9][0-9.]*) live settings/m;
 
 /** Whether the first version is behind the second, comparing dot-separated numbers. */
@@ -160,6 +164,20 @@ function older(a, b) {
     if (x !== y) return x < y;
   }
   return false;
+}
+
+/*
+ * Whether a build of this extension carrying `version` is one the editor currently has installed.
+ *
+ * Read from the editor's own registry of installed extensions, not from the directory names beside it: a replaced
+ * version's folder is left on disk, so a name scan answers yes for a build nobody runs. `null` means the registry could
+ * not be read, which a caller has to tell apart from a plain no.
+ */
+function installedHere(extensionsDir, version) {
+  let list;
+  try { list = JSON.parse(fs.readFileSync(path.join(extensionsDir, 'extensions.json'), 'utf8')); } catch (_) { return null; }
+  if (!Array.isArray(list)) return null;
+  return list.some((e) => e && e.identifier && e.identifier.id === SELF.id && String(e.version || '') === String(version));
 }
 
 /*
@@ -459,9 +477,18 @@ function writeLive(claudeExtensionPath, opts = {}) {
    * It is the rule the patched bundles already follow - a marker carries a version, and an older patcher does not touch
    * what a newer one owns. The cost is that a setting changed in a window running the older build does not reach the
    * panel until that window is reloaded.
+   *
+   * Yielding is conditional on that newer build still being installed, because a version number can also go down: a
+   * build that was packaged and installed, then withdrawn in favour of a lower number, leaves its stamp behind with no
+   * host anywhere that could rewrite the file. Every host then reads a version above its own and backs off, and the
+   * stylesheet is frozen for good - the panel keeps whatever was in it, so a conversation's background sessions and
+   * scheduled prompts stop appearing and nothing reports an error. Measured: a file stamped 1.0.9 held two Claude Code
+   * installs at two days stale. When the registry cannot be read there is no way to tell a withdrawn build from a
+   * running one, and yielding is the safer of the two.
    */
   const there = (VERSION_LINE.exec(current || '') || [])[1];
-  if (there && OURS && older(OURS, there)) return false;
+  if (there && OURS && older(OURS, there)
+      && installedHere(path.dirname(claudeExtensionPath), there) !== false) return false;
   const r = readRev(rev);
   writeAtomic(css, next);
   // The width carries the revision: the page polls this image and reloads the stylesheet when it changes.

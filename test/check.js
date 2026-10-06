@@ -1628,7 +1628,27 @@ console.log('\none live stylesheet, several windows');
     ok('what a newer build wrote is left alone');
   } else bad('an older build overwrites a newer one, which is the flicker this prevents');
 
-  fs.writeFileSync(css, fs.readFileSync(css, 'utf8').replace('Extras 9.9.9', 'Extras 0.0.1'));
+  /* Yielding to a newer stamp lasts only as long as that build is installed. A version number can go down - a build
+     that shipped, then was withdrawn in favour of a lower number - and then no host anywhere can rewrite the file: every
+     one of them reads a version above its own and backs off, which froze a real stylesheet for two days with nothing
+     reporting an error. The registry beside the install is what settles it, because the folder of a replaced version
+     stays on disk and so a name scan still answers yes. */
+  const registry = path.join(path.dirname(root), 'extensions.json');
+  const id = require('../package.json').publisher + '.' + require('../package.json').name;
+  const hadRegistry = fs.existsSync(registry);
+  const savedRegistry = hadRegistry ? fs.readFileSync(registry, 'utf8') : null;
+  fs.writeFileSync(registry, JSON.stringify([{ identifier: { id }, version: '9.9.9' }]));
+  if (webview.writeLive(root, { enabled: true, userEdge: false }) === false && head().includes('9.9.9')) {
+    ok('a newer stamp is honoured while that build is still installed');
+  } else bad('a newer build that is still installed gets overwritten, which is the flicker this prevents');
+
+  fs.writeFileSync(registry, JSON.stringify([{ identifier: { id }, version: ours }]));
+  if (webview.writeLive(root, opts) === true && head().includes(ours)) {
+    ok('a stamp from a build no longer installed is taken over, so a withdrawn version cannot freeze the file');
+  } else bad('a withdrawn build keeps the stylesheet for good, and the panel silently stops being updated');
+  if (hadRegistry) fs.writeFileSync(registry, savedRegistry); else fs.unlinkSync(registry);
+
+  fs.writeFileSync(css, fs.readFileSync(css, 'utf8').replace('Extras ' + ours, 'Extras 0.0.1'));
   if (webview.writeLive(root, opts) === true && head().includes(ours)) ok('what an older build wrote is taken over');
   else bad('an older build keeps the file, so an upgrade never reaches the panel');
 
