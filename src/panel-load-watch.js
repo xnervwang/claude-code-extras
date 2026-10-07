@@ -17,7 +17,11 @@
  * request id verbatim and everything else reduced to a type name. So the whole report is the request id. Claude Code does
  * not know the type and logs one more line saying so; nothing else happens to the message.
  *
- * Silent when the panel opens in time, which is nearly always: no message, no timer left running.
+ * One short report as soon as it runs, because when it runs is itself the measurement: the editor writes a panel's HTML
+ * only after the service worker that serves the panel has settled, and a wait there leaves the panel blank before any of
+ * this exists. Set against the moment Claude Code was asked to open the panel and the moment the bundle's first message
+ * arrives, both already in the same log, it says which side of the HTML the wait fell on. Beyond that, silent when the
+ * panel opens in time, which is nearly always: no further message, no timer left running.
  */
 (function () {
   'use strict';
@@ -34,11 +38,13 @@
      still pending at 1 minute means no answer is coming from the worker's own timeout, and still pending past 5 means
      the worker never had the request at all. */
   var CHECKS = [15000, 60000, 300000, 600000];
-  var MAX_SENT = CHECKS.length + 1;
+  var MAX_SENT = CHECKS.length + 2;
   // Early enough that the first report already says whether a request made from scratch got an answer.
   var FRESH_AT = 10000;
 
   var t0 = Date.now();
+  // How long this document had existed when the HTML reached this line: the frame is created only once the worker settles.
+  var sinceFrame = (function () { try { return Math.round(performance.now()); } catch (e) { return -1; } })();
   var files = { js: null, css: null };
   var readyMs = -1, swChanges = 0, sent = 0, reportedStuck = false, timers = [];
   var fresh = null;
@@ -141,6 +147,9 @@
   document.addEventListener('load', function (e) { arrived(e, true); }, true);
   document.addEventListener('error', function (e) { arrived(e, false); }, true);
 
+  /* After the current script, so the placement flags the next one sets are there to report. Not one of the timers the
+     bundle's arrival clears: this one goes out whatever happens next. */
+  setTimeout(function () { send('start frame=' + sinceFrame + 'ms'); }, 0);
   timers.push(setTimeout(function () { if (files.js === null) tryFresh(); }, FRESH_AT));
   for (var i = 0; i < CHECKS.length; i++) {
     timers.push(setTimeout(function () {

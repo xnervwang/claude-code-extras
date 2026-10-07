@@ -24,7 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 5;
+const VERSION = 6;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';

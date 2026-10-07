@@ -3321,7 +3321,7 @@ console.log('\na panel whose bundle never arrives says so');
       Date: { now: () => now },
       setTimeout: (fn, ms) => { timers.push({ due: now + ms, fn, live: true }); return timers.length; },
       clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
-      performance: { getEntriesByType: () => (opts.entries || []) },
+      performance: { getEntriesByType: () => (opts.entries || []), now: () => 42 },
       navigator: { serviceWorker: {
         controller: 'controller' in opts ? opts.controller : { state: 'activated' },
         ready: new Promise(() => {}),
@@ -3355,13 +3355,23 @@ console.log('\na panel whose bundle never arrives says so');
     const bundleAcquires = () => { try { return env.acquireVsCodeApi() === handle; } catch (e) { return false; } };
     return { sent, images, fire, advance, bundleAcquires, env };
   };
-  const texts = (p) => p.sent.map((m) => m.requestId);
+  const texts = (p) => p.sent.map((m) => m.requestId).filter((t) => !/^start /.test(t));
 
+  {
+    /* The one line every panel sends, as soon as its HTML is in: the time it is logged at is the measurement. */
+    const p = page();
+    p.env.IS_SIDEBAR = true;
+    p.advance(0);
+    const all = p.sent.map((m) => m.requestId);
+    if (all.length === 1 && /^start frame=42ms after=0ms in=sidebar js=pending /.test(all[0])) {
+      ok('a panel reports once as its HTML goes in, after the placement flags are set');
+    } else bad(`the start report: ${JSON.stringify(all)}`);
+  }
   {
     const p = page();
     p.advance(500); p.fire('load', CSS); p.fire('load', JS); p.advance(700000);
-    if (!p.sent.length && !p.images.length) ok('a panel that opens in time sends nothing and asks for nothing extra');
-    else bad(`a panel that opened in 0.5 s still reported: ${JSON.stringify(texts(p))}`);
+    if (!texts(p).length && p.sent.length === 1 && !p.images.length) ok('a panel that opens in time sends nothing beyond that and asks for nothing extra');
+    else bad(`a panel that opened in 0.5 s still reported: ${JSON.stringify(p.sent.map((m) => m.requestId))}`);
     if (p.bundleAcquires() && p.bundleAcquires()) ok('the bundle gets its handle, and asking again does not throw');
     else bad('the bundle could not get its message handle with the watch in place');
   }

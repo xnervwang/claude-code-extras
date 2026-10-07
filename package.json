@@ -154,7 +154,7 @@
         "claudeCodeExtras.recordOpenLatency": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Record how long a panel takes before it starts loading, read out of Claude Code's own log. Each panel also reports, into that same log, when its own files take over 3 s to arrive or never do - including a panel that stays blank, which nothing else can see from inside. Turned off, nothing is read and nothing is written - not even the check for whether the log grew - and panels opened afterwards carry no report."
+          "markdownDescription": "Record how long a panel takes before it starts loading, read out of Claude Code's own log. Each panel also writes into that same log one line as it starts, and more when its own files take over 3 s to arrive or never do - including a panel that stays blank, which nothing else can see from inside. Turned off, nothing is read and nothing is written - not even the check for whether the log grew - and panels opened afterwards carry no report."
         },
         "claudeCodeExtras.workPlanOfferMinTurns": {
           "type": "number",
