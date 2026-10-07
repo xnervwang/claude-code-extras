@@ -441,6 +441,10 @@
     new MutationObserver(onMutations).observe(document.documentElement, { childList: true, subtree: true });
     probe();
     setInterval(probe, POLL_MS);
+    // Leftovers in the editor's resource cache (05-page-setup.js): once the panel has settled, then now and again.
+    setTimeout(function(){ try { sweepCaches(); } catch (e) {} }, 30000);
+    setInterval(function(){ try { sweepCaches(); } catch (e) {} }, SWEEP_MS);
+    try { window.addEventListener('pagehide', function(){ forget(lastProbeUrl); }); } catch (e) {}
     // The chime and the low-context outline must not depend on DOM churn: a turn can end without
     // any further mutation, which would leave the last sweep observing a still-busy state.
     setInterval(function(){ try { watchIdle(); } catch (e) {} try { fillWindow(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensurePlainControl(); } catch (e) {} try { paintToolClock(); } catch (e) {} try { orderControls(); } catch (e) {} }, 700);

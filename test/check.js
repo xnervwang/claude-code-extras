@@ -3493,12 +3493,54 @@ console.log('\na panel whose bundle never arrives says so');
     if (i > csp && csp >= 0 && on.slice(i + watch.length).startsWith('<link href="style.css" rel="stylesheet">') && link > i) {
       ok('the watch goes into the panel\'s HTML word for word, with its nonce, after the policy and just ahead of the stylesheet');
     } else bad('the watch is not where it should be in the generated HTML');
+    const clear = '<script nonce="n0nce">' + host.CACHE_CLEAR + '</script>';
+    const c = on.indexOf(clear);
+    if (c > csp && c < i) ok('the cache clearing goes in ahead of the watch, with the same nonce');
+    else bad('the cache clearing is not ahead of the watch in the generated HTML');
     globalThis[host.LOAD_WATCH_OFF] = true;
     const off = html('n0nce', 'style.css', false, 'worker-src x');
     delete globalThis[host.LOAD_WATCH_OFF];
-    if (off === new Function('U', 'K', 'X', 'j', tpl)('n0nce', 'style.css', false, 'worker-src x')) {
-      ok('with the recording turned off the HTML is Claude Code\'s own, character for character');
-    } else bad('the HTML differs from Claude Code\'s own with the recording turned off');
+    const own = new Function('U', 'K', 'X', 'j', tpl)('n0nce', 'style.css', false, 'worker-src x');
+    if (off.replace(clear, '') === own && off.includes(clear)) {
+      ok('with the recording turned off the HTML is Claude Code\'s own plus the cache clearing, which is not behind that setting');
+    } else bad('with the recording turned off the HTML is not Claude Code\'s own plus the cache clearing');
+  }
+
+  /* The clearing itself: the editor's resource caches and nothing else, once per origin, and again if it did not finish.
+     It settles on promises, so it runs in a child process that can wait for them. */
+  const clearing = cp.spawnSync(process.execPath, ['-e', `
+    const vm = require('vm');
+    const CLEAR = ${JSON.stringify(host.CACHE_CLEAR)};
+    const run = (opts) => {
+      const deleted = [], store = Object.assign({}, opts.stored || {});
+      const env = {
+        caches: {
+          keys: () => Promise.resolve(['vscode-resource-cache-4', 'vscode-resource-cache-6', 'another-cache']),
+          delete: (n) => { deleted.push(n); return opts.fails ? Promise.reject(new Error('no')) : Promise.resolve(true); },
+        },
+        localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+        Promise,
+      };
+      vm.createContext(env);
+      vm.runInContext(CLEAR, env);
+      return new Promise((r) => setTimeout(() => r({ deleted, store }), 20));
+    };
+    (async () => {
+      const out = [await run({}), await run({ stored: { 'cce.resourceCacheCleared': '1' } }), await run({ fails: true })];
+      process.stdout.write(JSON.stringify(out));
+    })();`], { encoding: 'utf8' });
+  let runs = null;
+  try { runs = JSON.parse(clearing.stdout); } catch (e) { bad('the clearing could not be run: ' + (clearing.stderr || e.message)); }
+  if (runs) {
+    const [first, again, failed] = runs;
+    if (JSON.stringify(first.deleted) === JSON.stringify(['vscode-resource-cache-4', 'vscode-resource-cache-6'])
+      && first.store['cce.resourceCacheCleared'] === '1') {
+      ok('the clearing deletes the editor\'s resource caches, leaves any other cache, and remembers it did');
+    } else bad(`the clearing did ${JSON.stringify(first)}`);
+    if (!again.deleted.length) ok('once done for an origin, it does not run again');
+    else bad(`it ran again: ${JSON.stringify(again.deleted)}`);
+    if (!('cce.resourceCacheCleared' in failed.store)) ok('a clearing that fails is not remembered, so the next panel tries again');
+    else bad('a failed clearing was remembered as done');
   }
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   if (/globalThis\[host\.LOAD_WATCH_OFF\] = !cfg\(\)\.get\(LATENCY_ON_SETTING, true\)/.test(ext)

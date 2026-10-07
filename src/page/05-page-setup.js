@@ -116,6 +116,59 @@
    * address only changes when the content does - which is exactly when a re-fetch is wanted.
    */
   var cssUrl = function(){ return base + LIVE_CSS + (lastRev >= 0 ? '?v=' + lastRev : ''); };
+  /*
+   * Every address this script fetches has to be taken back out of the editor's cache once it is done with.
+   *
+   * The editor's webview service worker keeps each response that carries an ETag in a Cache Storage cache named
+   * vscode-resource-cache-<n>, keyed on the full address, and never trims it. The revision poll changes its address
+   * every time and the stylesheets change theirs with every revision, so each request used to leave one entry behind for
+   * good. Over weeks one panel origin's cache grew to millions of entries and close to ten gigabytes, and a lookup in it
+   * stopped returning: every panel of that origin then stayed blank, in every window, across restarts.
+   *
+   * The cache belongs to the panel's own origin, so the page can delete from it. The cache names are looked up once in
+   * a while rather than on every call, since the poll would otherwise ask for them every three seconds.
+   */
+  var RESOURCE_CACHE = 'vscode-resource-cache-';
+  var cacheNames = null, cacheNamesAt = 0;
+  var withCaches = function(fn){
+    try {
+      if (typeof caches === 'undefined' || !caches || !caches.keys) return;
+      var now = Date.now();
+      var ready = cacheNames && now - cacheNamesAt < 600000 ? Promise.resolve(cacheNames)
+        : caches.keys().then(function(names){
+          cacheNames = names.filter(function(n){ return String(n).indexOf(RESOURCE_CACHE) === 0; });
+          cacheNamesAt = now;
+          return cacheNames;
+        });
+      ready.then(function(names){
+        names.forEach(function(n){ caches.open(n).then(fn).then(null, function(){}); });
+      }, function(){});
+    } catch (e) { /* no Cache Storage here, so nothing was kept either */ }
+  };
+  var forget = function(url){
+    if (!url) return;
+    withCaches(function(cache){ return cache['delete'](url); });
+  };
+  /* What single deletes miss: an answer that arrived after its request was given up on, and whatever a panel held when it
+     closed. Everything this script fetched with a query goes, apart from what this page still uses; another panel losing
+     its entry only costs it a fresh fetch the next time it asks. */
+  var OURS = '/webview/claude-code-extras.';
+  var SWEEP_MS = 600000;
+  var sweepCaches = function(){
+    var keep = {};
+    if (sheet && sheet.href) keep[sheet.href] = true;
+    if (loading && loading.href) keep[loading.href] = true;
+    if (inFlight && inFlight.src) keep[inFlight.src] = true;
+    if (typeof effortLink !== 'undefined' && effortLink && effortLink.href) keep[effortLink.href] = true;
+    withCaches(function(cache){
+      return cache.keys().then(function(requests){
+        requests.forEach(function(r){
+          var u = String(r && r.url || '');
+          if (u.indexOf(OURS) >= 0 && u.indexOf('?') >= 0 && !keep[u]) cache['delete'](r).then(null, function(){});
+        });
+      });
+    });
+  };
   /* The one still loading when another revision arrives, dropped rather than left in the head for the same reason the
      poll drops its own request: a fetch the service worker never answers would otherwise sit there holding one of its
      host-resource permits, and every further revision would add one more. Dropping it rather than skipping the new one
@@ -135,7 +188,10 @@
     l.onload = function(){
       if (loading === l) loading = null;
       l.media = 'all';
-      if (sheet && sheet !== l && sheet.parentNode) sheet.parentNode.removeChild(sheet);
+      if (sheet && sheet !== l) {
+        if (sheet.href !== l.href) forget(sheet.href);
+        if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+      }
       sheet = l; loadedOnce = true; onCache = null; offCache = {};
       if (fallback && fallback.parentNode) { fallback.parentNode.removeChild(fallback); fallback = null; }
       schedule();
@@ -164,6 +220,9 @@
    * poll must not act on the answer to a request it has given up on.
    */
   var inFlight = null, sentAt = 0;
+  /* The address of the request before this one, taken out of the cache when the next is sent: by then the worker has long
+     finished storing it, which a delete right after the answer could not be sure of. */
+  var lastProbeUrl = '';
   var drop = function(){
     if (!inFlight) return;
     inFlight.onload = inFlight.onerror = null;
@@ -218,7 +277,9 @@
       try { effortProbe(img.naturalHeight); } catch (e) {}
     };
     img.onerror = done;
-    img.src = base + LIVE_REV + '?t=' + sentAt;
+    forget(lastProbeUrl);
+    lastProbeUrl = base + LIVE_REV + '?t=' + sentAt;
+    img.src = lastProbeUrl;
   };
   /*
    * Held between stylesheet loads. getComputedStyle is a synchronous read that forces style resolution, and while a

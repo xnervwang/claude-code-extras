@@ -75,7 +75,11 @@
     l.rel = 'stylesheet';
     l.href = base + EFFORT_PREFIX + sid + '.css?r=' + rev;
     l.onload = function(){
-      if (effortLink && effortLink !== l && effortLink.parentNode) effortLink.parentNode.removeChild(effortLink);
+      if (effortLink && effortLink !== l) {
+        // Each revision is another address, kept by the editor's cache until something deletes it (05-page-setup.js).
+        if (effortLink.href !== l.href) forget(effortLink.href);
+        if (effortLink.parentNode) effortLink.parentNode.removeChild(effortLink);
+      }
       effortLink = l;
       readEfforts();
     };
