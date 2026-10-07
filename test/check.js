@@ -3301,6 +3301,159 @@ console.log('\na window whose install was replaced by a rebuild of the same vers
   else bad('not guarded against a replaced install: ' + missing.join(', '));
 }
 
+/* ── 24. a panel whose bundle never arrives says so ──
+   The watch runs inline in the panel's HTML, ahead of the bundle (src/panel-load-watch.js says why). Two things are
+   checked against a fake page whose clock the test drives. It must never break the panel it watches: the bundle asks for
+   its message handle as it starts, and the editor throws on a second request. And it has to speak only when there is
+   something to say, in a form Claude Code writes into its log verbatim. */
+console.log('\na panel whose bundle never arrives says so');
+{
+  const { applyEdits } = require('../src/edits');
+  const JS = 'https://file+.vscode-resource.vscode-cdn.net/x/webview/index.js?v=1';
+  const CSS = 'https://file+.vscode-resource.vscode-cdn.net/x/webview/index.css';
+  const page = (opts = {}) => {
+    let now = 1000000;
+    const timers = [], sent = [], images = [];
+    const listeners = { load: [], error: [] };
+    let acquired = 0;
+    const handle = { postMessage: (m) => sent.push(m) };
+    const env = {
+      Date: { now: () => now },
+      setTimeout: (fn, ms) => { timers.push({ due: now + ms, fn, live: true }); return timers.length; },
+      clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
+      performance: { getEntriesByType: () => (opts.entries || []) },
+      navigator: { serviceWorker: {
+        controller: 'controller' in opts ? opts.controller : { state: 'activated' },
+        ready: new Promise(() => {}),
+        addEventListener: () => {},
+      } },
+      document: {
+        hidden: false,
+        addEventListener: (type, fn, capture) => { if (capture && listeners[type]) listeners[type].push(fn); },
+        querySelector: () => ({ href: CSS }),
+      },
+      Image: function () { images.push(this); },
+      acquireVsCodeApi: () => {
+        if (acquired++) throw new Error('An instance of the VS Code API has already been acquired');
+        return handle;
+      },
+    };
+    env.window = env;
+    vm.createContext(env);
+    vm.runInContext(host.LOAD_WATCH, env, { filename: 'panel-load-watch.js' });
+    const fire = (type, url) => listeners[type].forEach((fn) => fn({ target: { src: url } }));
+    const advance = (ms) => {
+      const end = now + ms;
+      for (;;) {
+        const t = timers.filter((x) => x.live && x.due <= end).sort((a, b) => a.due - b.due)[0];
+        if (!t) break;
+        now = t.due; t.live = false; t.fn();
+      }
+      now = end;
+    };
+    /* The bundle's own request for the handle, as it makes it when it starts. */
+    const bundleAcquires = () => { try { return env.acquireVsCodeApi() === handle; } catch (e) { return false; } };
+    return { sent, images, fire, advance, bundleAcquires, env };
+  };
+  const texts = (p) => p.sent.map((m) => m.requestId);
+
+  {
+    const p = page();
+    p.advance(500); p.fire('load', CSS); p.fire('load', JS); p.advance(700000);
+    if (!p.sent.length && !p.images.length) ok('a panel that opens in time sends nothing and asks for nothing extra');
+    else bad(`a panel that opened in 0.5 s still reported: ${JSON.stringify(texts(p))}`);
+    if (p.bundleAcquires() && p.bundleAcquires()) ok('the bundle gets its handle, and asking again does not throw');
+    else bad('the bundle could not get its message handle with the watch in place');
+  }
+  {
+    const p = page();
+    p.advance(4000); p.fire('load', JS); p.advance(700000);
+    const t = texts(p);
+    if (t.length === 1 && /^slow js\[/.test(t[0]) && / js=ok@4000ms /.test(t[0])) ok('a bundle 4 s late is reported once, as slow');
+    else bad(`a 4 s bundle reported as ${JSON.stringify(t)}`);
+  }
+  {
+    const p = page();
+    p.advance(15000);
+    let t = texts(p);
+    if (t.length === 1 && /^stuck after=15000ms in=tab js=pending css=pending sw=activated /.test(t[0]) && / fresh=pending$/.test(t[0])) {
+      ok('a bundle still missing at 15 s is reported, with the page\'s service worker and a fresh request still unanswered');
+    } else bad(`at 15 s: ${JSON.stringify(t)}`);
+    if (p.images.length === 1 && /\/webview\/index\.css\?cce-fresh=\d+$/.test(p.images[0].src)) ok('the fresh request is one, for the stylesheet, made from scratch');
+    else bad(`fresh requests: ${JSON.stringify(p.images.map((i) => i.src))}`);
+    p.advance(700000 - 15000);
+    t = texts(p);
+    const at = t.map((x) => (x.match(/after=(\d+)ms/) || [])[1]);
+    if (JSON.stringify(at) === JSON.stringify(['15000', '60000', '300000', '600000'])) ok('a bundle that never comes is reported at 15 s, 1, 5 and 10 minutes, and then no more');
+    else bad(`a missing bundle was reported at ${JSON.stringify(at)}`);
+    p.fire('load', JS);
+    t = texts(p);
+    if (t.length === 5 && /^arrived js\[/.test(t[4])) ok('when it does come after all, that is reported too');
+    else bad(`after arriving at last: ${JSON.stringify(t.slice(4))}`);
+    if (p.bundleAcquires()) ok('a bundle that starts after the watch has reported still gets the same handle');
+    else bad('the watch took the handle the late bundle needed');
+  }
+  {
+    const p = page();
+    p.advance(12000); p.images[0].onerror(); p.advance(3000);
+    const t = texts(p);
+    if (t.length === 1 && / fresh=answered@2000ms$/.test(t[0])) ok('a fresh request that is answered says so, with how long it took');
+    else bad(`with the fresh request answered: ${JSON.stringify(t)}`);
+  }
+  {
+    /* The stylesheet sits in the head, ahead of the watch, so on most opens it has arrived before anything listens. */
+    const p = page({ entries: [{ name: CSS, startTime: 10, responseStart: 14, responseEnd: 15 }] });
+    p.advance(15000);
+    const t = texts(p);
+    if (t.length === 1 && / css=ok@before-watch /.test(t[0])) ok('a stylesheet that arrived before the watch started is not reported as pending');
+    else bad(`with the stylesheet already in: ${JSON.stringify(t)}`);
+  }
+  {
+    const p = page({ controller: null });
+    p.advance(2000); p.fire('error', JS); p.advance(700000);
+    const t = texts(p);
+    if (t.length === 1 && /^failed js\[/.test(t[0]) && / sw=none /.test(t[0])) ok('a bundle that fails is reported once, and a page no service worker controls says so');
+    else bad(`a failed bundle on an uncontrolled page: ${JSON.stringify(t)}`);
+  }
+  {
+    /* Claude Code logs a message's type when it is a short lowercase name and its requestId as it is, and reduces every
+       other field to a type name - so the whole report has to be the request id. */
+    const p = page();
+    p.advance(15000);
+    const m = p.sent[0] || {};
+    if (/^[a-z][a-z0-9_]{0,63}$/.test(m.type) && typeof m.requestId === 'string' && Object.keys(m).length === 2) {
+      ok('the report is a known-safe type and a string request id, the two fields Claude Code logs verbatim');
+    } else bad(`report shape: ${JSON.stringify(m)}`);
+  }
+
+  /* Where the edit puts it, and the setting that keeps it out. */
+  const edit = host.EDITS.find((e) => e.name === 'panel load watch');
+  const tpl = 'return`<body>\n        <script nonce="${U}">\n          window.IS_SIDEBAR = ${X?"true":"false"}\n        </script>\n      </body>`';
+  const r = edit ? applyEdits(tpl, [edit]) : { error: 'no such edit' };
+  if (r.error) bad('the panel load watch edit did not apply to the template shape: ' + r.error);
+  else {
+    const html = new Function('U', 'X', r.out);
+    delete globalThis[host.LOAD_WATCH_OFF];
+    const on = html('n0nce', false);
+    const watch = '<script nonce="n0nce">' + host.LOAD_WATCH + '</script>';
+    const i = on.indexOf(watch), j = on.indexOf('window.IS_SIDEBAR = false');
+    if (i >= 0 && j > i && on.slice(i + watch.length).startsWith('<script nonce="n0nce">')) {
+      ok('the watch goes into the panel\'s HTML word for word, with its nonce, ahead of the first script');
+    } else bad('the watch is not where it should be in the generated HTML');
+    globalThis[host.LOAD_WATCH_OFF] = true;
+    const off = html('n0nce', false);
+    delete globalThis[host.LOAD_WATCH_OFF];
+    if (!off.includes('cce_panel_load') && off.includes('<script nonce="n0nce">\n          window.IS_SIDEBAR = false')) {
+      ok('with the recording turned off the HTML is Claude Code\'s own');
+    } else bad('the watch is still in the HTML with the recording turned off');
+  }
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/globalThis\[host\.LOAD_WATCH_OFF\] = !cfg\(\)\.get\(LATENCY_ON_SETTING, true\)/.test(ext)
+    && /affectsConfiguration\(LATENCY_ON_SETTING\)\) loadWatchOff\(\)/.test(ext)) {
+    ok('the latency setting drives the watch, at activation and whenever it changes');
+  } else bad('extension.js does not set the watch flag from the latency setting');
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

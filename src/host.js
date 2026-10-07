@@ -24,11 +24,20 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 4;
+const VERSION = 5;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
 const TMP_SUFFIX = '.claude-code-extras-host.tmp';
+
+/* The script that reports a panel whose bundle does not arrive (src/panel-load-watch.js says why it has to be in the
+   HTML). It goes into the host bundle as a JSON string, so nothing in it is read as template syntax; the one thing that
+   could still break out is the end of a script element. */
+const LOAD_WATCH = fs.readFileSync(path.join(__dirname, 'panel-load-watch.js'), 'utf8');
+if (/<\/script/i.test(LOAD_WATCH)) throw new Error('panel-load-watch.js must not contain a closing script tag');
+/* Read by the host at the moment a panel's HTML is built, so the setting reaches every panel opened after it changes.
+   Unset counts as on: a panel restored before this extension has activated still gets the watch. */
+const LOAD_WATCH_OFF = '__cceNoLoadWatch';
 
 const EDITS = [
   {
@@ -58,6 +67,20 @@ const EDITS = [
     to: () => ';_cceChat;get activeSessionId(){return this._cceChat}'
       + 'set activeSessionId(v){this._cceChat=v;globalThis.__cceActiveChat=v;'
       + 'try{globalThis.__cceChatHook&&globalThis.__cceChatHook(v)}catch(e){}}',
+  },
+  /*
+   * The panel load watch, ahead of the first script in the panel's HTML.
+   *
+   * Anchored on the script that sets the panel's placement flags, which is the first one in the body and is followed by
+   * the bundle, and given the same nonce: the panel's policy runs no script without it. Ahead of both, so that it is in
+   * place before the bundle asks for its message handle.
+   */
+  {
+    name: 'panel load watch',
+    re: /<script nonce="\$\{([\w$]+)\}">(\s*)window\.IS_SIDEBAR = /g,
+    to: (m, nonce, gap) => '${globalThis.' + LOAD_WATCH_OFF + '?"":\'<script nonce="\'+' + nonce + '+\'">\'+'
+      + JSON.stringify(LOAD_WATCH) + '+\'</script>\'}'
+      + '<script nonce="${' + nonce + '}">' + gap + 'window.IS_SIDEBAR = ',
   },
 ];
 
@@ -125,7 +148,7 @@ function restore(claudeExtensionPath) {
 
 module.exports = {
   id: 'anthropic.claude-code', name: 'Claude Code host',
-  VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS,
+  VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, LOAD_WATCH, LOAD_WATCH_OFF,
   patchSource, status, apply, restore, hostFile, targetFile: hostFile,
   findInstalls: require('./webview').findInstalls,
 };

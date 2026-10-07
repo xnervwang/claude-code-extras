@@ -19,6 +19,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const webview = require('./src/webview');
+const host = require('./src/host');
 const { safeColor } = webview;
 const { readTasks } = require('./src/tasks');
 const background = require('./src/background');
@@ -376,6 +377,16 @@ function activate(context) {
     }
   }
   sampleLatency();
+
+  /* The other half of the same recording runs in the panel itself (src/panel-load-watch.js), put there by the patched
+     host bundle as each panel's HTML is built. That bundle runs in this process and reads this flag at that moment, so
+     the setting reaches the next panel opened without a reload. */
+  const loadWatchOff = () => { globalThis[host.LOAD_WATCH_OFF] = !cfg().get(LATENCY_ON_SETTING, true); };
+  loadWatchOff();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => { if (e.affectsConfiguration(LATENCY_ON_SETTING)) loadWatchOff(); }),
+    { dispose: () => { delete globalThis[host.LOAD_WATCH_OFF]; } },
+  );
 
   /*
    * TEMPORARY, FOR ONE INVESTIGATION - delete with the watcher in src/openlatency.js once the panel's slow first message
