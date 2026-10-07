@@ -101,9 +101,9 @@ plugin's skill description still loads in Claude Code; use
   beforehand to `~/.claude/agent-work-plan-plans-<timestamp>/`.
 - Disabling the extension, as opposed to uninstalling it, leaves the patch in place. Run
   `Extras for Claude Code: Remove from Claude Code (restore original files)` first.
-- Versions up to 1.0.7 left an entry in VS Code's webview cache every three seconds; after weeks,
-  Claude Code panels in editor tabs could stay blank in every window. 1.0.8 clears that cache the
-  first time a panel opens. If panels stay blank after uninstalling 1.0.7 or earlier, quit VS Code
+- Versions up to 1.0.8 left an entry in VS Code's webview cache every three seconds; after weeks,
+  Claude Code panels in editor tabs could stay blank in every window. 1.0.9 clears that cache the
+  first time a panel opens. If panels stay blank after uninstalling 1.0.8 or earlier, quit VS Code
   and delete the `CacheStorage` folders under `WebStorage` in VS Code's data folder:
   `~/Library/Application Support/Code` on macOS, `%APPDATA%\Code` on Windows, `~/.config/Code` on Linux.
 

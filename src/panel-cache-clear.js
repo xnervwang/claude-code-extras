@@ -6,7 +6,7 @@
  * Runs in the Claude Code panel, not in Node: src/host.js puts it inline at the top of the panel's HTML, ahead of every
  * file the panel asks for. Once per panel origin, it deletes the editor's webview resource caches for that origin.
  *
- * Builds up to 1.0.7 polled a revision image every three seconds at an address that changed each time, and fetched
+ * Builds up to 1.0.8 polled a revision image every three seconds at an address that changed each time, and fetched
  * their stylesheets at an address that changed with every revision. The editor's webview service worker keeps a
  * Cache Storage entry for every such address and never trims them, so over weeks one origin's cache grew to millions
  * of entries; a lookup in it then never returned, and every panel of that origin stayed blank, in every window, across
