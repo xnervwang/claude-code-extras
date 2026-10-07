@@ -17,11 +17,17 @@
  * request id verbatim and everything else reduced to a type name. So the whole report is the request id. Claude Code does
  * not know the type and logs one more line saying so; nothing else happens to the message.
  *
+ * It sits in the head ahead of the panel's stylesheet. A script that comes after a stylesheet in the document is not run
+ * until that stylesheet has arrived, so placed any later this was held back by the very request it was there to watch.
+ *
  * One short report as soon as it runs, because when it runs is itself the measurement: the editor writes a panel's HTML
  * only after the service worker that serves the panel has settled, and a wait there leaves the panel blank before any of
  * this exists. Set against the moment Claude Code was asked to open the panel and the moment the bundle's first message
  * arrives, both already in the same log, it says which side of the HTML the wait fell on. Beyond that, silent when the
  * panel opens in time, which is nearly always: no further message, no timer left running.
+ *
+ * Every later report also asks the service worker in charge of this panel what it has in hand. Only a worker carrying
+ * the diagnostic edit answers; the stock one ignores the question, which the report then says.
  */
 (function () {
   'use strict';
@@ -58,13 +64,16 @@
   } catch (e) { /* reported as unknown below */ }
 
   var kindOf = function (url) {
-    if (typeof url !== 'string') return '';
+    // The request this makes from scratch is for the stylesheet too, and must not be read as the panel's own.
+    if (typeof url !== 'string' || url.indexOf('cce-fresh=') >= 0) return '';
     var p = url.split('?')[0];
     if (p.slice(-17) === '/webview/index.js') return 'js';
     if (p.slice(-18) === '/webview/index.css') return 'css';
     return '';
   };
+  // The flags are set by a script further down, which waits behind the stylesheet like any other.
   var where = function () {
+    if (typeof window.IS_SIDEBAR === 'undefined') return '?';
     return window.IS_SESSION_LIST_ONLY ? 'list' : window.IS_SIDEBAR ? 'sidebar' : 'tab';
   };
   var controller = function () {
@@ -74,8 +83,8 @@
     } catch (e) { return 'unknown'; }
   };
   var fileState = function (f) { return f === null ? 'pending' : (f.ok ? 'ok@' : 'error@') + f.ms; };
-  /* The stylesheet is in the head, ahead of this script, so on an ordinary open it has arrived before anything here was
-     listening. A finished request leaves a timing entry, so its absence is what pending means. */
+  /* A finished request leaves a timing entry, so a file this missed the event for is still told apart from one that is
+     pending. */
   var already = function (kind) {
     if (files[kind] !== null) return;
     try {
@@ -101,16 +110,45 @@
     return kind + '[-]';
   };
 
-  var send = function (what) {
+  var send = function (what, at, worker) {
     if (sent >= MAX_SENT) return;
     sent++;
     already('css');
-    var text = what + ' after=' + (Date.now() - t0) + 'ms in=' + where()
+    var text = what + ' after=' + ((at || Date.now()) - t0) + 'ms in=' + where()
       + ' js=' + fileState(files.js) + ' css=' + fileState(files.css)
       + ' sw=' + controller() + ' ready=' + (readyMs < 0 ? 'no' : readyMs + 'ms') + ' swchanges=' + swChanges
       + ' hidden=' + (document.hidden ? 1 : 0)
-      + (fresh ? ' fresh=' + (fresh.ms < 0 ? 'pending' : fresh.how + '@' + fresh.ms + 'ms') : '');
+      + (fresh ? ' fresh=' + (fresh.ms < 0 ? 'pending' : fresh.how + '@' + fresh.ms + 'ms') : '')
+      + (worker === undefined ? '' : ' worker{' + worker + '}');
     try { globalThis.acquireVsCodeApi().postMessage({ type: 'cce_panel_load', requestId: text }); } catch (e) { /* lost */ }
+  };
+
+  /* The question goes to the worker controlling this frame and the answer comes back to this frame. Messages from a
+     worker are held until the document has finished parsing unless asked for, and a page stuck on its stylesheet never
+     finishes - hence startMessages. Two seconds, then the report goes without it. */
+  var askWorker = function (then) {
+    var c = null, done = false, nonce = Math.random();
+    try { c = navigator.serviceWorker && navigator.serviceWorker.controller; } catch (e) { c = null; }
+    if (!c) { then('-'); return; }
+    var finish = function (answer) {
+      if (done) return;
+      done = true;
+      try { navigator.serviceWorker.removeEventListener('message', on); } catch (e) { /* nothing to remove */ }
+      then(answer);
+    };
+    var on = function (e) {
+      if (e && e.data && e.data.channel === 'cce-status' && e.data.nonce === nonce) finish(String(e.data.data));
+    };
+    try {
+      navigator.serviceWorker.addEventListener('message', on);
+      if (navigator.serviceWorker.startMessages) navigator.serviceWorker.startMessages();
+      c.postMessage({ channel: 'cce-status', nonce: nonce });
+    } catch (e) { finish('unreachable'); return; }
+    setTimeout(function () { finish('no-answer'); }, 2000);
+  };
+  var report = function (what) {
+    var at = Date.now();
+    askWorker(function (state) { send(what, at, state); });
   };
 
   /* One request made from scratch when the bundle is already late: whether anything this panel asks for is answered, or
@@ -139,23 +177,22 @@
     files[kind] = { ok: ok, ms: (Date.now() - t0) + 'ms' };
     if (kind !== 'js') return;
     stop();
-    if (!ok) send('failed ' + timing('js'));
-    else if (reportedStuck) send('arrived ' + timing('js') + ' ' + timing('css'));
+    if (!ok) report('failed ' + timing('js'));
+    else if (reportedStuck) report('arrived ' + timing('js') + ' ' + timing('css'));
     else if (Date.now() - t0 >= SLOW_MS) send('slow ' + timing('js') + ' ' + timing('css'));
   };
   /* Load and error do not bubble, but a listener on the document in the capture phase sees them for every element. */
   document.addEventListener('load', function (e) { arrived(e, true); }, true);
   document.addEventListener('error', function (e) { arrived(e, false); }, true);
 
-  /* After the current script, so the placement flags the next one sets are there to report. Not one of the timers the
-     bundle's arrival clears: this one goes out whatever happens next. */
+  /* Not one of the timers the bundle's arrival clears: this one goes out whatever happens next. */
   setTimeout(function () { send('start frame=' + sinceFrame + 'ms'); }, 0);
   timers.push(setTimeout(function () { if (files.js === null) tryFresh(); }, FRESH_AT));
   for (var i = 0; i < CHECKS.length; i++) {
     timers.push(setTimeout(function () {
       if (files.js !== null) return;
       reportedStuck = true;
-      send('stuck');
+      report('stuck');
     }, CHECKS[i]));
   }
 })();

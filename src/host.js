@@ -24,7 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 6;
+const VERSION = 7;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
@@ -69,18 +69,19 @@ const EDITS = [
       + 'try{globalThis.__cceChatHook&&globalThis.__cceChatHook(v)}catch(e){}}',
   },
   /*
-   * The panel load watch, ahead of the first script in the panel's HTML.
+   * The panel load watch, in the head just ahead of the panel's stylesheet.
    *
-   * Anchored on the script that sets the panel's placement flags, which is the first one in the body and is followed by
-   * the bundle, and given the same nonce: the panel's policy runs no script without it. Ahead of both, so that it is in
-   * place before the bundle asks for its message handle.
+   * Anchored on the stylesheet link and the policy before it, which is where the nonce comes from: the panel's policy
+   * runs no script without it. Ahead of the stylesheet because a script after one waits for it, and the stylesheet's
+   * request is one of those the watch is there to see stuck.
    */
   {
     name: 'panel load watch',
-    re: /<script nonce="\$\{([\w$]+)\}">(\s*)window\.IS_SIDEBAR = /g,
-    to: (m, nonce, gap) => '${globalThis.' + LOAD_WATCH_OFF + '?"":\'<script nonce="\'+' + nonce + '+\'">\'+'
+    re: /(script-src 'nonce-\$\{([\w$]+)\}';[\s\S]{0,600}?)(<link href="\$\{[\w$]+\}" rel="stylesheet">)/g,
+    to: (m, before, nonce, link) => before
+      + '${globalThis.' + LOAD_WATCH_OFF + '?"":\'<script nonce="\'+' + nonce + '+\'">\'+'
       + JSON.stringify(LOAD_WATCH) + '+\'</script>\'}'
-      + '<script nonce="${' + nonce + '}">' + gap + 'window.IS_SIDEBAR = ',
+      + link,
   },
 ];
 

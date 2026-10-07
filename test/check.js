@@ -3302,30 +3302,41 @@ console.log('\na window whose install was replaced by a rebuild of the same vers
 }
 
 /* ── 24. a panel whose bundle never arrives says so ──
-   The watch runs inline in the panel's HTML, ahead of the bundle (src/panel-load-watch.js says why). Two things are
-   checked against a fake page whose clock the test drives. It must never break the panel it watches: the bundle asks for
-   its message handle as it starts, and the editor throws on a second request. And it has to speak only when there is
-   something to say, in a form Claude Code writes into its log verbatim. */
+   The watch runs inline in the panel's HTML, ahead of the panel's stylesheet (src/panel-load-watch.js says why). Two
+   things are checked against a fake page whose clock the test drives. It must never break the panel it watches: the
+   bundle asks for its message handle as it starts, and the editor throws on a second request. And it has to speak only
+   when there is something to say, in a form Claude Code writes into its log verbatim. */
 console.log('\na panel whose bundle never arrives says so');
 {
   const { applyEdits } = require('../src/edits');
   const JS = 'https://file+.vscode-resource.vscode-cdn.net/x/webview/index.js?v=1';
   const CSS = 'https://file+.vscode-resource.vscode-cdn.net/x/webview/index.css';
+  /* opts.answers: the panel's service worker carries the diagnostic edit and answers what it has in hand. */
   const page = (opts = {}) => {
     let now = 1000000;
-    const timers = [], sent = [], images = [];
+    const timers = [], sent = [], images = [], swListeners = [];
     const listeners = { load: [], error: [] };
     let acquired = 0;
     const handle = { postMessage: (m) => sent.push(m) };
+    const controller = 'controller' in opts ? opts.controller : {
+      state: 'activated',
+      postMessage: (m) => {
+        if (!opts.answers || !m || m.channel !== 'cce-status') return;
+        const reply = { data: { channel: 'cce-status', nonce: m.nonce, data: 'self=activated@x inflight=1' } };
+        swListeners.slice().forEach((fn) => fn(reply));
+      },
+    };
     const env = {
       Date: { now: () => now },
       setTimeout: (fn, ms) => { timers.push({ due: now + ms, fn, live: true }); return timers.length; },
       clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
       performance: { getEntriesByType: () => (opts.entries || []), now: () => 42 },
       navigator: { serviceWorker: {
-        controller: 'controller' in opts ? opts.controller : { state: 'activated' },
+        controller,
         ready: new Promise(() => {}),
-        addEventListener: () => {},
+        startMessages: () => {},
+        addEventListener: (type, fn) => { if (type === 'message') swListeners.push(fn); },
+        removeEventListener: (type, fn) => { const i = swListeners.indexOf(fn); if (i >= 0) swListeners.splice(i, 1); },
       } },
       document: {
         hidden: false,
@@ -3341,6 +3352,8 @@ console.log('\na panel whose bundle never arrives says so');
     env.window = env;
     vm.createContext(env);
     vm.runInContext(host.LOAD_WATCH, env, { filename: 'panel-load-watch.js' });
+    // The placement flags, as the panel's own script further down sets them once it gets to run.
+    if (opts.flags !== false) env.IS_SIDEBAR = false;
     const fire = (type, url) => listeners[type].forEach((fn) => fn({ target: { src: url } }));
     const advance = (ms) => {
       const end = now + ms;
@@ -3353,25 +3366,30 @@ console.log('\na panel whose bundle never arrives says so');
     };
     /* The bundle's own request for the handle, as it makes it when it starts. */
     const bundleAcquires = () => { try { return env.acquireVsCodeApi() === handle; } catch (e) { return false; } };
-    return { sent, images, fire, advance, bundleAcquires, env };
+    return { sent, images, fire, advance, bundleAcquires, env, swListeners };
   };
   const texts = (p) => p.sent.map((m) => m.requestId).filter((t) => !/^start /.test(t));
 
   {
-    /* The one line every panel sends, as soon as its HTML is in: the time it is logged at is the measurement. */
+    /* The one line every panel sends, as soon as it runs: the time it is logged at is the measurement. The flags it
+       reports come from a later script, which may not have run yet. */
+    const early = page({ flags: false });
+    early.advance(0);
     const p = page();
     p.env.IS_SIDEBAR = true;
     p.advance(0);
-    const all = p.sent.map((m) => m.requestId);
-    if (all.length === 1 && /^start frame=42ms after=0ms in=sidebar js=pending /.test(all[0])) {
-      ok('a panel reports once as its HTML goes in, after the placement flags are set');
-    } else bad(`the start report: ${JSON.stringify(all)}`);
+    const a = early.sent.map((m) => m.requestId), b = p.sent.map((m) => m.requestId);
+    if (a.length === 1 && /^start frame=42ms after=0ms in=\? js=pending /.test(a[0])
+      && b.length === 1 && / in=sidebar /.test(b[0]) && !/worker\{/.test(b[0])) {
+      ok('a panel reports once as it starts, without waiting on the worker, and says when it cannot tell where it is');
+    } else bad(`the start report: ${JSON.stringify([a, b])}`);
   }
   {
     const p = page();
     p.advance(500); p.fire('load', CSS); p.fire('load', JS); p.advance(700000);
-    if (!texts(p).length && p.sent.length === 1 && !p.images.length) ok('a panel that opens in time sends nothing beyond that and asks for nothing extra');
-    else bad(`a panel that opened in 0.5 s still reported: ${JSON.stringify(p.sent.map((m) => m.requestId))}`);
+    if (!texts(p).length && p.sent.length === 1 && !p.images.length && !p.swListeners.length) {
+      ok('a panel that opens in time sends nothing beyond that, asks the worker nothing and asks for nothing extra');
+    } else bad(`a panel that opened in 0.5 s still reported: ${JSON.stringify(p.sent.map((m) => m.requestId))}`);
     if (p.bundleAcquires() && p.bundleAcquires()) ok('the bundle gets its handle, and asking again does not throw');
     else bad('the bundle could not get its message handle with the watch in place');
   }
@@ -3383,54 +3401,77 @@ console.log('\na panel whose bundle never arrives says so');
     else bad(`a 4 s bundle reported as ${JSON.stringify(t)}`);
   }
   {
+    /* A stock worker ignores the question, so each report goes two seconds later and says it got no answer - but it is
+       dated when the check fired. */
     const p = page();
     p.advance(15000);
+    if (texts(p).length === 0) ok('a report waits for the worker\'s answer rather than going without it');
+    else bad(`reported before the worker had its two seconds: ${JSON.stringify(texts(p))}`);
+    p.advance(2000);
     let t = texts(p);
-    if (t.length === 1 && /^stuck after=15000ms in=tab js=pending css=pending sw=activated /.test(t[0]) && / fresh=pending$/.test(t[0])) {
-      ok('a bundle still missing at 15 s is reported, with the page\'s service worker and a fresh request still unanswered');
-    } else bad(`at 15 s: ${JSON.stringify(t)}`);
+    if (t.length === 1 && /^stuck after=15000ms in=tab js=pending css=pending sw=activated /.test(t[0])
+      && / fresh=pending worker\{no-answer\}$/.test(t[0])) {
+      ok('a bundle still missing at 15 s is reported, with a fresh request unanswered and a worker that does not answer');
+    } else bad(`at 17 s: ${JSON.stringify(t)}`);
     if (p.images.length === 1 && /\/webview\/index\.css\?cce-fresh=\d+$/.test(p.images[0].src)) ok('the fresh request is one, for the stylesheet, made from scratch');
     else bad(`fresh requests: ${JSON.stringify(p.images.map((i) => i.src))}`);
-    p.advance(700000 - 15000);
+    p.advance(700000 - 17000);
     t = texts(p);
     const at = t.map((x) => (x.match(/after=(\d+)ms/) || [])[1]);
     if (JSON.stringify(at) === JSON.stringify(['15000', '60000', '300000', '600000'])) ok('a bundle that never comes is reported at 15 s, 1, 5 and 10 minutes, and then no more');
     else bad(`a missing bundle was reported at ${JSON.stringify(at)}`);
-    p.fire('load', JS);
+    p.fire('load', JS); p.advance(2000);
     t = texts(p);
     if (t.length === 5 && /^arrived js\[/.test(t[4])) ok('when it does come after all, that is reported too');
     else bad(`after arriving at last: ${JSON.stringify(t.slice(4))}`);
     if (p.bundleAcquires()) ok('a bundle that starts after the watch has reported still gets the same handle');
     else bad('the watch took the handle the late bundle needed');
+    if (!p.swListeners.length) ok('every question to the worker is withdrawn once answered or given up on');
+    else bad(`${p.swListeners.length} listeners for the worker's answer left behind`);
+  }
+  {
+    /* The request made from scratch is for the stylesheet as well; its timing entry must not pass for the panel's own. */
+    const p = page({ entries: [{ name: CSS + '?cce-fresh=1', startTime: 10000, responseStart: 10002, responseEnd: 10003 }] });
+    p.advance(17000);
+    const t = texts(p);
+    if (t.length === 1 && / css=pending /.test(t[0])) ok('the fresh request\'s answer is not taken for the stylesheet arriving');
+    else bad(`with only the fresh request answered: ${JSON.stringify(t)}`);
+  }
+  {
+    const p = page({ answers: true });
+    p.advance(15000);
+    const t = texts(p);
+    if (t.length === 1 && / worker\{self=activated@x inflight=1\}$/.test(t[0])) ok('a worker carrying the diagnostic edit has its answer in the report at once');
+    else bad(`with an answering worker: ${JSON.stringify(t)}`);
   }
   {
     const p = page();
-    p.advance(12000); p.images[0].onerror(); p.advance(3000);
+    p.advance(12000); p.images[0].onerror(); p.advance(5000);
     const t = texts(p);
-    if (t.length === 1 && / fresh=answered@2000ms$/.test(t[0])) ok('a fresh request that is answered says so, with how long it took');
+    if (t.length === 1 && / fresh=answered@2000ms /.test(t[0])) ok('a fresh request that is answered says so, with how long it took');
     else bad(`with the fresh request answered: ${JSON.stringify(t)}`);
   }
   {
-    /* The stylesheet sits in the head, ahead of the watch, so on most opens it has arrived before anything listens. */
     const p = page({ entries: [{ name: CSS, startTime: 10, responseStart: 14, responseEnd: 15 }] });
-    p.advance(15000);
+    p.advance(17000);
     const t = texts(p);
-    if (t.length === 1 && / css=ok@before-watch /.test(t[0])) ok('a stylesheet that arrived before the watch started is not reported as pending');
+    if (t.length === 1 && / css=ok@before-watch /.test(t[0])) ok('a stylesheet whose load was missed is still not reported as pending');
     else bad(`with the stylesheet already in: ${JSON.stringify(t)}`);
   }
   {
     const p = page({ controller: null });
     p.advance(2000); p.fire('error', JS); p.advance(700000);
     const t = texts(p);
-    if (t.length === 1 && /^failed js\[/.test(t[0]) && / sw=none /.test(t[0])) ok('a bundle that fails is reported once, and a page no service worker controls says so');
-    else bad(`a failed bundle on an uncontrolled page: ${JSON.stringify(t)}`);
+    if (t.length === 1 && /^failed js\[/.test(t[0]) && / sw=none /.test(t[0]) && / worker\{-\}$/.test(t[0])) {
+      ok('a bundle that fails is reported once, and a page no service worker controls says so');
+    } else bad(`a failed bundle on an uncontrolled page: ${JSON.stringify(t)}`);
   }
   {
     /* Claude Code logs a message's type when it is a short lowercase name and its requestId as it is, and reduces every
        other field to a type name - so the whole report has to be the request id. */
     const p = page();
-    p.advance(15000);
-    const m = p.sent[0] || {};
+    p.advance(17000);
+    const m = p.sent[1] || {};
     if (/^[a-z][a-z0-9_]{0,63}$/.test(m.type) && typeof m.requestId === 'string' && Object.keys(m).length === 2) {
       ok('the report is a known-safe type and a string request id, the two fields Claude Code logs verbatim');
     } else bad(`report shape: ${JSON.stringify(m)}`);
@@ -3438,24 +3479,26 @@ console.log('\na panel whose bundle never arrives says so');
 
   /* Where the edit puts it, and the setting that keeps it out. */
   const edit = host.EDITS.find((e) => e.name === 'panel load watch');
-  const tpl = 'return`<body>\n        <script nonce="${U}">\n          window.IS_SIDEBAR = ${X?"true":"false"}\n        </script>\n      </body>`';
+  const tpl = 'return`<head>\n        <meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-${U}\'; ${j};">\n\n'
+    + '        <meta name="viewport" content="width=device-width, initial-scale=1.0">\n        <link href="${K}" rel="stylesheet">\n'
+    + '      </head><body>\n        <script nonce="${U}">\n          window.IS_SIDEBAR = ${X?"true":"false"}\n        </script>\n      </body>`';
   const r = edit ? applyEdits(tpl, [edit]) : { error: 'no such edit' };
   if (r.error) bad('the panel load watch edit did not apply to the template shape: ' + r.error);
   else {
-    const html = new Function('U', 'X', r.out);
+    const html = new Function('U', 'K', 'X', 'j', r.out);
     delete globalThis[host.LOAD_WATCH_OFF];
-    const on = html('n0nce', false);
+    const on = html('n0nce', 'style.css', false, 'worker-src x');
     const watch = '<script nonce="n0nce">' + host.LOAD_WATCH + '</script>';
-    const i = on.indexOf(watch), j = on.indexOf('window.IS_SIDEBAR = false');
-    if (i >= 0 && j > i && on.slice(i + watch.length).startsWith('<script nonce="n0nce">')) {
-      ok('the watch goes into the panel\'s HTML word for word, with its nonce, ahead of the first script');
+    const i = on.indexOf(watch), csp = on.indexOf('Content-Security-Policy'), link = on.indexOf('<link href="style.css"');
+    if (i > csp && csp >= 0 && on.slice(i + watch.length).startsWith('<link href="style.css" rel="stylesheet">') && link > i) {
+      ok('the watch goes into the panel\'s HTML word for word, with its nonce, after the policy and just ahead of the stylesheet');
     } else bad('the watch is not where it should be in the generated HTML');
     globalThis[host.LOAD_WATCH_OFF] = true;
-    const off = html('n0nce', false);
+    const off = html('n0nce', 'style.css', false, 'worker-src x');
     delete globalThis[host.LOAD_WATCH_OFF];
-    if (!off.includes('cce_panel_load') && off.includes('<script nonce="n0nce">\n          window.IS_SIDEBAR = false')) {
-      ok('with the recording turned off the HTML is Claude Code\'s own');
-    } else bad('the watch is still in the HTML with the recording turned off');
+    if (off === new Function('U', 'K', 'X', 'j', tpl)('n0nce', 'style.css', false, 'worker-src x')) {
+      ok('with the recording turned off the HTML is Claude Code\'s own, character for character');
+    } else bad('the HTML differs from Claude Code\'s own with the recording turned off');
   }
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   if (/globalThis\[host\.LOAD_WATCH_OFF\] = !cfg\(\)\.get\(LATENCY_ON_SETTING, true\)/.test(ext)
