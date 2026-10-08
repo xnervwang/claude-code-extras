@@ -24,7 +24,7 @@ const { safeColor } = webview;
 const { readTasks } = require('./src/tasks');
 const background = require('./src/background');
 const efforts = require('./src/efforts');
-const { countOpen, sweepOrphans, liveSessions, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
+const { countOpen, sweepOrphans, liveSessions, planDir, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
 const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
@@ -435,7 +435,10 @@ function activate(context) {
       else if (typeof v === 'number' && v >= 1) values[key] = Math.floor(v);
       else if (typeof v === 'string' && v) values[key] = v;
     }
-    const file = path.join(PLAN_DIR, 'config.json');
+    /* planDir(), not PLAN_DIR: that one is only the directory's name, and joined on its own it resolves against the
+       extension host's working directory - a config.json the hooks never read. */
+    const dir = planDir();
+    const file = path.join(dir, 'config.json');
     const next = JSON.stringify(values, null, 2) + '\n';
     try {
       let current = null;
@@ -443,7 +446,7 @@ function activate(context) {
       /* Several windows write this, and they all write the same thing from the same settings - so comparing first keeps
          them from taking turns rewriting one file, the way the live stylesheet already does. */
       if (current === next) return;
-      fs.mkdirSync(PLAN_DIR, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(file, next);
     } catch (e) {
       log.appendLine('work plan hook settings: ' + e.message);

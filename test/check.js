@@ -2957,6 +2957,19 @@ console.log('\nthe row command');
   }
 }
 
+/* ── 19a. where the hook settings are written ──
+   The hooks read config.json from the plugin's data directory, and nothing reports a settings file written anywhere
+   else: the hooks just keep their defaults, so every setting the editor offers for them silently does nothing. */
+console.log('\nwhere the hook settings are written');
+{
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const body = (/function writeHookSettings\(\) \{[\s\S]*?\n  \}\n/.exec(ext) || [''])[0];
+  if (/const dir = planDir\(\);/.test(body) && /path\.join\(dir, 'config\.json'\)/.test(body)
+      && !/(path\.join|mkdirSync)\(PLAN_DIR\b/.test(body)) {
+    ok('config.json is written into the data directory the hooks read, by its full path');
+  } else bad('writeHookSettings does not write config.json under planDir(), so the hooks would never see it');
+}
+
 /* ── 19b. the hooks around a compaction ──
    One asks for the rows being worked on to be brought up to date as the context nears the compaction line, the other
    points the turn that resumes after it at the plan. Both carry their own checks, against transcripts built for the
