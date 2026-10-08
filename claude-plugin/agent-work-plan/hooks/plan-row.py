@@ -3,9 +3,9 @@
 # Copyright (c) 2026, Xnerv Wang
 # All rights reserved.
 
-"""Change the state of one row of a work plan, or add a row: the state, the note, and the times that go with them.
+"""Change one row of a work plan, or add a row: the state, the note, the description, and the times that go with them.
 
-  plan-row.py PLAN set ROW STATE [--note TEXT]
+  plan-row.py PLAN set ROW [STATE] [--note TEXT] [--detail TEXT]
   plan-row.py PLAN add STATE TITLE [--under ROW] [--note TEXT]
 
 ROW is the number shown in front of a row, closed rows counted: 3 is the third row at the top, 2.1 the first one under
@@ -29,7 +29,7 @@ import sys
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
 
-from plan_path import CLOSED_STATES, STATES, now_stamp, settings
+from plan_path import CLOSED_STATES, MAX_DETAIL_CHARS, MAX_DETAIL_LINES, STATES, detail_over, now_stamp, settings
 
 PLAN_NAME = re.compile(r"^[0-9A-Fa-f][0-9A-Fa-f-]{7,}\.json$")
 
@@ -75,6 +75,24 @@ def note(node, text):
         node.pop("note", None)
 
 
+def detail(node, text):
+    """Replace the row's description; an empty one removes it. Past the limit the whole command is refused.
+
+    The limit is the one the view cuts at and the guard enforces on a Write or Edit, so a description set here is never
+    one the view would show cut short.
+    """
+    if text is None:
+        return
+    how = detail_over(text)
+    if how:
+        raise Refused("That description is %s; the limit is %d lines and %d characters, which is where the view cuts it. "
+                      "Say what picking the task up needs, not how it got here." % (how, MAX_DETAIL_LINES, MAX_DETAIL_CHARS))
+    if text.strip():
+        node["detail"] = text.strip()
+    else:
+        node.pop("detail", None)
+
+
 def load(path, may_create):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -118,13 +136,23 @@ def run(args):
     plan = load(path, args.action == "add")
     now = now_stamp()
     if args.action == "set":
+        if args.state is None and args.note is None and args.detail is None:
+            raise Refused("Nothing to change: give a state, --note or --detail.")
         node = find(plan["nodes"], args.row)
         if node is None:
             raise Refused("There is no row %s in this plan." % args.row)
         was = node.get("state", "todo")
-        enter(node, args.state, now)
+        detail(node, args.detail)
+        # The state a row is already in is not entered again: `since` says how long it has been in it, and a command
+        # that only rewrites the description must not restart that clock.
+        if args.state is not None and args.state != was:
+            enter(node, args.state, now)
+            said = "row %s: %s -> %s" % (args.row, was, args.state)
+        else:
+            said = "row %s: still %s" % (args.row, was)
         note(node, args.note)
-        said = "row %s: %s -> %s" % (args.row, was, args.state)
+        if args.detail is not None:
+            said += ", description %s" % ("set" if args.detail.strip() else "removed")
     else:
         title = args.title.strip()
         if not title:
@@ -155,10 +183,11 @@ def main(argv=None):
     parser.add_argument("plan", help="the plan file, as given at the top of the injected block")
     actions = parser.add_subparsers(dest="action")
     actions.required = True
-    change = actions.add_parser("set", help="put a row in a state")
+    change = actions.add_parser("set", help="put a row in a state, or change its note or description")
     change.add_argument("row", help="the number shown in front of the row, such as 3 or 2.1")
-    change.add_argument("state", choices=STATES)
+    change.add_argument("state", nargs="?", choices=STATES, help="leave it out to keep the state the row is in")
     change.add_argument("--note", help="replace the row's note; an empty one removes it")
+    change.add_argument("--detail", help="replace the row's description; an empty one removes it")
     add = actions.add_parser("add", help="add a row, at the end of the plan or under another row")
     add.add_argument("state", choices=STATES)
     add.add_argument("title")

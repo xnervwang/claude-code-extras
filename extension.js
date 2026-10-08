@@ -52,6 +52,7 @@ const HOOK_SETTINGS = {
   enabled: 'claudeCodeExtras.workPlan',
   offerMinTurns: 'claudeCodeExtras.workPlanOfferMinTurns',
   offerMinToolCalls: 'claudeCodeExtras.workPlanOfferMinToolCalls',
+  quietWhenReplyMatches: 'claudeCodeExtras.workPlanQuietWhenReplyMatches',
 };
 
 /** Every install of Claude Code this adapter can see: the active one plus sibling versions in the same folder. */
@@ -432,6 +433,7 @@ function activate(context) {
       const v = cfg().get(setting);
       if (typeof v === 'boolean') values[key] = v;
       else if (typeof v === 'number' && v >= 1) values[key] = Math.floor(v);
+      else if (typeof v === 'string' && v) values[key] = v;
     }
     const file = path.join(PLAN_DIR, 'config.json');
     const next = JSON.stringify(values, null, 2) + '\n';

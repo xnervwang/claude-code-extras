@@ -72,6 +72,10 @@ DEFAULTS = {
     # one task and left to do it cannot branch - measured over 61 offers, 53 went to single-turn workers and none of
     # them wanted a plan, while every conversation that did want one had spoken at least three times.
     "offerMinTurns": 3,
+    # A regular expression for the conversation's latest reply. When it matches, the two hooks around a compaction say
+    # nothing. It is for a conversation that relays another model's replies word for word: an instruction injected there
+    # is either relayed to a model that cannot act on it or obeyed by breaking the relay. Empty matches nothing.
+    "quietWhenReplyMatches": "",
 }
 
 
@@ -95,11 +99,79 @@ def settings(directory=None):
             if isinstance(value, bool):
                 out[key] = value
             continue
+        if isinstance(fallback, str):
+            if isinstance(value, str):
+                out[key] = value
+            continue
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             continue
         if value >= 1:
             out[key] = int(value)
     return out
+
+
+"""How long a row's description may be, and the one test of it.
+
+The view cuts a description at this length, the guard refuses a write past it, and the row command refuses to set one
+past it. Kept the same as MAX_DETAIL_LINES and MAX_DETAIL_CHARS in the extension's src/workplan.js and as the numbers the
+skill quotes; test/check.js asserts they are equal - a gate that refuses at one length while the view cuts at another
+would be a gate nobody could satisfy.
+"""
+MAX_DETAIL_LINES = 12
+MAX_DETAIL_CHARS = 900
+
+
+def detail_over(value):
+    """How a description breaks the limit, or None. Mirrors detail() in the extension's src/workplan.js.
+
+    The character count is taken over the lines that would survive, not over the whole value, because that is what the
+    view measures after dropping the rest - counting the whole thing would refuse a description the view shows in full.
+    """
+    lines = str(value).strip().split("\n")
+    kept = "\n".join(lines[:MAX_DETAIL_LINES])
+    if len(lines) > MAX_DETAIL_LINES:
+        return "%d lines" % len(lines)
+    if len(kept) > MAX_DETAIL_CHARS:
+        return "%d characters" % len(kept)
+    return None
+
+
+def latest_reply_matches(transcript_path, pattern, tail=256 * 1024):
+    """Whether the newest reply with any text in it matches `pattern`. False for an empty or unusable pattern.
+
+    Turns made of tool calls alone are passed over, so a relayed reply followed by a few commands still counts as the
+    latest one. Only the tail of the transcript is read: the answer is always near its end, and a transcript runs to
+    hundreds of megabytes.
+    """
+    if not pattern:
+        return False
+    try:
+        rx = re.compile(pattern)
+    except re.error:
+        return False
+    try:
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as fh:
+            fh.seek(max(0, size - tail))
+            chunk = fh.read().decode("utf-8", "replace")
+    except (OSError, TypeError):
+        return False
+    for line in reversed(chunk.split("\n")):
+        if '"assistant"' not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("type") != "assistant":
+            continue
+        content = (row.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        text = "".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+        if text.strip():
+            return bool(rx.search(text))
+    return False
 
 
 def plan_file(payload):

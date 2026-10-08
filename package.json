@@ -162,6 +162,11 @@
           "minimum": 1,
           "markdownDescription": "How many times you have to have spoken before a conversation with no work plan is told it could keep one. A plan is for a conversation that branches, and a session handed one task and left to do it cannot branch: of 61 conversations offered a plan, the 53 that were single-task workers all declined, while every one that wanted a plan had spoken at least three times."
         },
+        "claudeCodeExtras.workPlanQuietWhenReplyMatches": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "A regular expression (Python syntax) tested against the conversation's latest reply. When it matches, the hooks that ask for the plan to be brought up to date before a compaction, and point at it after one, say nothing. Meant for a conversation that relays another model's replies word for word. Empty matches nothing."
+        },
         "claudeCodeExtras.workPlanOfferMinToolCalls": {
           "type": "number",
           "default": 25,

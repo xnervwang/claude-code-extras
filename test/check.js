@@ -454,6 +454,8 @@ console.log('\nwhat the hooks read of a transcript');
         ['guard-work-plan.py', { hook_event_name: 'PreToolUse', tool_name: 'Edit',
           tool_input: { file_path: '/elsewhere/a.js', old_string: 'a', new_string: 'b' } }],
         ['nudge-work-plan.py', { hook_event_name: 'Stop' }],
+        ['refresh-work-plan.py', { hook_event_name: 'Stop' }],
+        ['resume-work-plan.py', { hook_event_name: 'SessionStart', source: 'compact' }],
       ];
       const took = (script, extra) => {
         const payload = (t) => Object.assign({ session_id: SID, transcript_path: t }, extra);
@@ -1458,7 +1460,7 @@ console.log('\none limit on a description');
   const root = path.join(__dirname, '..');
   const plan = require('../src/workplan');
   const hook = fs.readFileSync(
-    path.join(root, 'claude-plugin', 'agent-work-plan', 'hooks', 'guard-work-plan.py'), 'utf8');
+    path.join(root, 'claude-plugin', 'agent-work-plan', 'hooks', 'plan_path.py'), 'utf8');
   const skill = fs.readFileSync(
     path.join(root, 'claude-plugin', 'agent-work-plan', 'skills', 'maintain', 'SKILL.md'), 'utf8');
   const num = (src, name) => {
@@ -1468,7 +1470,7 @@ console.log('\none limit on a description');
   const quoted = /limited to (\d+) lines and (\d+) characters/.exec(skill);
   const want = [plan.MAX_DETAIL_LINES, plan.MAX_DETAIL_CHARS];
   const saw = {
-    'the hook that refuses a write': [num(hook, 'MAX_DETAIL_LINES'), num(hook, 'MAX_DETAIL_CHARS')],
+    'the hooks and the row command (plan_path.py)': [num(hook, 'MAX_DETAIL_LINES'), num(hook, 'MAX_DETAIL_CHARS')],
     'the skill that asks for it': quoted ? [Number(quoted[1]), Number(quoted[2])] : [null, null],
   };
   const off = Object.entries(saw)
@@ -1595,6 +1597,25 @@ console.log('\nabandoned work plans');
         return t;
       },
       (t, r) => r.deleted === 0 && left(t.dir).join() === id(2) + '.turn'],
+    /* Which context marks have already asked a conversation to bring its plan up to date. */
+    ['the water-mark state of a conversation goes when the conversation does',
+      () => {
+        const t = build([id(1)], []);
+        const f = path.join(t.dir, id(2) + '.watermark');
+        fs.writeFileSync(f, '- fired: 170000\n');
+        fs.utimesSync(f, OLD / 1000, OLD / 1000);
+        return t;
+      },
+      (t, r) => r.deleted === 1 && left(t.dir).length === 0],
+    ['and is kept while the conversation is still there',
+      () => {
+        const t = build([id(2)], []);
+        const f = path.join(t.dir, id(2) + '.watermark');
+        fs.writeFileSync(f, '- fired: 170000\n');
+        fs.utimesSync(f, OLD / 1000, OLD / 1000);
+        return t;
+      },
+      (t, r) => r.deleted === 0 && left(t.dir).join() === id(2) + '.watermark'],
   ];
 
   for (const [what, make, want] of cases) {
@@ -2900,6 +2921,55 @@ console.log('\nthe row command');
     if (r.status === 1 && !fs.existsSync(t.file)) ok('setting a row in a plan that does not exist creates nothing');
     else bad(`set on no plan: status ${r.status}, file made ${fs.existsSync(t.file)}`);
     done(t);
+  }
+
+  /* The description is what the hook before a compaction asks to be brought up to date, one command per row, so it
+     has to be settable without rewriting the file - and without restarting the clock of the state the row is in. */
+  {
+    const t = stage(plan());
+    const before = read(t).nodes[0];
+    const r = row(t, 'set', '1', '--detail', 'next: run the build');
+    const d = read(t).nodes[0];
+    if (r.status === 0 && d.detail === 'next: run the build' && d.state === before.state && !('since' in d)) {
+      ok('a description is set on its own, leaving the state and its time as they were');
+    } else bad(`set 1 --detail: status ${r.status}, said ${JSON.stringify(r.stdout + r.stderr)}, row ${JSON.stringify(d)}`);
+    row(t, 'set', '1', 'doing');
+    const since = read(t).nodes[0].since;
+    row(t, 'set', '1', 'doing', '--detail', 'later step');
+    const again = read(t).nodes[0];
+    if (again.since === since && again.detail === 'later step') ok('naming the state a row is already in does not restart its clock');
+    else bad(`same state again moved since from ${since} to ${again.since}`);
+    row(t, 'set', '1', '--detail', '');
+    if (!('detail' in read(t).nodes[0])) ok('an empty description removes it');
+    else bad('an empty --detail left a description behind');
+    done(t);
+  }
+  {
+    const t = stage(plan());
+    const before = fs.readFileSync(t.file, 'utf8');
+    const long = row(t, 'set', '1', '--detail', 'x'.repeat(901));
+    const tall = row(t, 'set', '1', '--detail', Array(14).fill('line').join('\n'));
+    const none = row(t, 'set', '1');
+    if ([long, tall, none].every((r) => r.status === 1) && fs.readFileSync(t.file, 'utf8') === before) {
+      ok('a description past the limit, or a set with nothing to change, is refused and touches nothing');
+    } else bad(`refusals: ${[long, tall, none].map((r) => r.status).join(',')}, file changed ${fs.readFileSync(t.file, 'utf8') !== before}`);
+    done(t);
+  }
+}
+
+/* ── 19b. the hooks around a compaction ──
+   One asks for the rows being worked on to be brought up to date as the context nears the compaction line, the other
+   points the turn that resumes after it at the plan. Both carry their own checks, against transcripts built for the
+   purpose: which marks ask and when, how the window is told, the quiet pattern, a plan switched off. */
+console.log('\nthe hooks around a compaction');
+{
+  const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+  for (const name of ['refresh-work-plan.py', 'resume-work-plan.py']) {
+    const r = cp.spawnSync('python3', [path.join(hooks, name), '--selftest'], { encoding: 'utf8' });
+    const out = (r.stdout || '') + (r.stderr || '');
+    const passed = (out.match(/^PASS /gm) || []).length;
+    if (r.status === 0 && /all checks pass/.test(out)) ok(`${name}: ${passed} checks of its own pass`);
+    else bad(`${name}: ${out.split('\n').filter((l) => /^FAIL|Error|Traceback/.test(l)).join(' | ') || out.slice(-400)}`);
   }
 }
 

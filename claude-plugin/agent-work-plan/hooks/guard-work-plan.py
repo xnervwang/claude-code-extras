@@ -26,30 +26,11 @@ import sys
 # installed plugin directory.
 sys.dont_write_bytecode = True
 
-from plan_path import data_dir, settings
+from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, data_dir, settings
+from plan_path import detail_over as over
 
-# Kept the same as MAX_DETAIL_LINES and MAX_DETAIL_CHARS in the extension's src/workplan.js, and as the numbers the
-# skill quotes. Three copies, so test/check.js asserts they are equal - a gate that refuses at one length while the view
-# cuts at another would be a gate nobody could satisfy.
-MAX_DETAIL_LINES = 12
-MAX_DETAIL_CHARS = 900
 # Enough of a title to recognise the row by; a rejection has to say which description, not merely that there was one.
 TITLE_SHOWN = 60
-
-
-def over(value):
-    """How the description breaks the limit, or None. Mirrors detail() in the extension's src/workplan.js.
-
-    The character count is taken over the lines that would survive, not over the whole value, because that is what the
-    view measures after dropping the rest - counting the whole thing would refuse a description the view shows in full.
-    """
-    lines = str(value).strip().split("\n")
-    kept = "\n".join(lines[:MAX_DETAIL_LINES])
-    if len(lines) > MAX_DETAIL_LINES:
-        return "%d lines" % len(lines)
-    if len(kept) > MAX_DETAIL_CHARS:
-        return "%d characters" % len(kept)
-    return None
 
 
 def walk(nodes, found, depth=0):

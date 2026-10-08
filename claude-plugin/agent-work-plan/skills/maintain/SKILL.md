@@ -1,6 +1,6 @@
 ---
 name: maintain
-description: Keep this conversation's work plan up to date - the tree of what it still has to do, with a state on every row. Use it when the user raises something new to be done, when they approve something, when you start work on a row, when a row comes to wait on someone else, when a piece of work is finished or abandoned, and when doing one thing turns out to require finishing another first. Also use it before ending a turn that changed the shape of the work, which is what the Stop hook asks for.
+description: Keep this conversation's work plan up to date - the tree of what it still has to do, with a state on every row. Use it when the user raises something new to be done, when they approve something, when you start work on a row, when a row comes to wait on someone else, when a piece of work is finished or abandoned, when doing one thing turns out to require finishing another first, and when a hook reports that the context has passed a water mark before a compaction. Also use it before ending a turn that changed the shape of the work, which is what the Stop hook asks for.
 version: 1.0.0
 tags: [work-plan, task-tracking, long-conversation, handoff]
 ---
@@ -160,6 +160,8 @@ undo.
 | The work is finished, or the user says it is | Move it to `done` and set `closed` |
 | The user decides against it | Move it to `dropped` and set `closed`, with the reason in `detail` |
 | Doing A turns out to need B finished first | Add B as a child of A, with its own `opened` |
+| A hook says the context has passed a water mark | For every `doing` row, `set <row> --detail TEXT`: the exact next step, anything not to do, and the user's own words written nowhere else |
+| A compaction has just happened | Read the plan file with a tool before anything else; the `detail` of each `doing` row holds the next step |
 | The user says to leave something for later | Move it to `parked`, with the reason in `note` |
 
 **Only the user's word moves a row to `todo`.** Anything you decide is worth doing goes in as `discussing` and stays
@@ -198,19 +200,21 @@ hand means reading the clock first and rewriting the whole file. The block put i
 command line with both paths filled in. Its two forms are:
 
 ```bash
-python3 <path>/plan-row.py <plan file> set <row> <state> [--note TEXT]
+python3 <path>/plan-row.py <plan file> set <row> [<state>] [--note TEXT] [--detail TEXT]
 python3 <path>/plan-row.py <plan file> add <state> <title> [--under <row>] [--note TEXT]
 ```
 
-`<row>` is the number in front of a row, such as `3` or `2.1`; closed rows count. `--note ""` removes the note.
-The command reads the plan file immediately before writing, so it keeps edits the user made by hand. It takes `opened`,
-`since` and `closed` from the clock, writes the whole file, and renames it into place. `add` creates a plan file if one
-does not exist; `set` does not.
+`<row>` is the number in front of a row, such as `3` or `2.1`; closed rows count, and `--note ""` removes the note.
+`--detail` replaces the row's description, `--detail ""` removes it, and a description past 12 lines or 900 characters
+is refused without changing the file. Omitting `<state>` keeps the row's state; naming its current state does not reset
+`since`. The command reads the plan file immediately before writing to keep hand edits, takes `opened`, `since`, and
+`closed` from the clock, writes the whole file, and renames it into place; `add` creates a missing plan file, but `set`
+does not.
 
 The command refuses a row number that does not exist, a state outside the seven fixed keywords, a file that does not
 parse, a file that is not a plan, and plans switched off. It leaves the file untouched in each case.
 
-Change a title or description, or move a row, by editing the file directly under the two rules below: read the file
+Change a title, or move a row, by editing the file directly under the two rules below: read the file
 before writing it, and never delete a node. The row command satisfies both rules by itself.
 
 ## Two rules that do not bend

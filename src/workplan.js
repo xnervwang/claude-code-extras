@@ -65,6 +65,9 @@ const { LINK_FILE: BACKGROUND_FILE } = require('./background');
 /* Which turn a conversation is in and how far that turn has got, left by the plugin's injection hook for the hook that
    reminds a turn to mark what it is working on. Rewritten every turn, and gone with the conversation like the rest. */
 const TURN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.turn$/i;
+/* Which context marks have already asked a conversation to bring its plan up to date before a compaction, left by the
+   plugin's water-mark hook. It describes that conversation, so it goes when the conversation does. */
+const WATERMARK_FILE = /^[0-9a-f][0-9a-f-]{7,}\.watermark$/i;
 // Where each reply's effort changed, kept per conversation by src/efforts.js.
 const { STATE_FILE: EFFORT_FILE } = require('./efforts');
 /* The same list as STATES in the plugin's plan_path.py, in the same order; test/check.js holds them together. */
@@ -235,8 +238,8 @@ function sweepOrphans(opts = {}) {
   try { names = fs.readdirSync(dir); } catch (_) { return { deleted: 0, kept: 0, why: '' }; }
   let deleted = 0, kept = 0;
   for (const name of names) {
-    if (![PLAN_FILE, OFFER_FILE, NUDGE_FILE, BACKGROUND_FILE, TURN_FILE, EFFORT_FILE].some((re) => re.test(name))) continue;
-    if (live.has(name.replace(/\.(json|offered|nudged|background|turn|effort)$/i, ''))) { kept++; continue; }
+    if (![PLAN_FILE, OFFER_FILE, NUDGE_FILE, BACKGROUND_FILE, TURN_FILE, WATERMARK_FILE, EFFORT_FILE].some((re) => re.test(name))) continue;
+    if (live.has(name.replace(/\.(json|offered|nudged|background|turn|watermark|effort)$/i, ''))) { kept++; continue; }
     const file = path.join(dir, name);
     let st;
     try { st = fs.statSync(file); } catch (_) { continue; }
