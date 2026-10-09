@@ -52,12 +52,12 @@ function findBrowser() {
   return '';
 }
 
-/* Runs before the injected script: the frame shim, the stored plain-view choice, the counters, and the stand-in panel.
+/* Runs before the injected script: the frame shim, the counters, and the stand-in panel with the object Claude Code's
+   Focus view is read and set through.
    The counters wrap browser methods rather than anything of ours, so the script under test is byte for byte the one
    that ships. */
 const SETUP = String.raw`
   window.requestAnimationFrame = function(cb){ return setTimeout(function(){ cb(performance.now()); }, 16); };
-  try { localStorage.setItem('cce.plain', CFG.plain ? '1' : '0'); } catch (e) {}
   var COUNT = { cdp: 0, qsa: 0, text: 0 };
   /* Every request the revision poll starts, and every one it gives up on. With stallProbe the request is never answered,
      which is what a stalled webview resource looks like to the page; without it the real load goes ahead and only the
@@ -101,8 +101,15 @@ const SETUP = String.raw`
     subagentTasks: { value: new Map() },
     sessionId: { value: CFG.efforts ? CFG.efforts.sid : '' },
   };
+  // What the panel hands its components as \`context\`, reduced to the part the button uses. A build without Focus view
+  // has none, which is what \`focusCtx: false\` stands for.
+  var focusCtx = { on: !!CFG.focus, calls: [], get focusViewEnabled(){ return this.on; },
+    setFocusView: function(v){ this.calls.push(v); this.on = v; return Promise.resolve(); } };
   // Not 'top': that is the window's own read-only property, and a global of that name is silently left as the window.
-  var sessionFiber = { memoizedProps: { session: session }, return: null };
+  var sessionFiber = { memoizedProps: CFG.focusCtx === false ? { session: session } : { session: session, context: focusCtx },
+    return: null };
+  // The send button is React's too, so the walk up from it reaches the same props the messages do.
+  document.querySelector('button[type="submit"]')[FIBER] = { memoizedProps: {}, return: sessionFiber };
   var list = document.getElementById('list'), uuid = 0, replies = 0, lastRow = null, compactions = 0;
   // Replies get uuids of the real shape, numbered from 1, so a run can name one.
   var replyId = function(n){ var d = String(n); while (d.length < 12) d = '0' + d; return '00000000-0000-4000-8000-' + d; };
@@ -200,9 +207,9 @@ const PHASES = String.raw`
       R.idleChild = mut.child; R.idleAttr = mut.attr; R.idleChars = mut.chars; R.idleText = b.text - a.text;
       R.probesMade = PROBES.made; R.probesCancelled = PROBES.cancelled;
       R.viewButton = !!document.querySelector('[data-cce-view]');
-      R.plainButton = !!document.querySelector('[data-cce-plain-btn]');
-      var rule = document.querySelector('style[data-cce-plain]');
-      R.plainRule = rule ? rule.textContent.length : -1;
+      var fb = document.querySelector('[data-cce-focus-btn]');
+      R.focusButton = !!fb;
+      R.focusLabel = fb ? fb.getAttribute('aria-label') : '';
       if (CFG.efforts) {
         var effLinks = document.querySelectorAll('link[href*="effort"]'), carrier = document.getElementById('cce-effort');
         R.effortLinks = effLinks.length;
@@ -244,7 +251,19 @@ const PHASES = String.raw`
     b = snap();
     R.rebuildSweeps = b.n - a.n; R.rebuildCdp = b.cdp - a.cdp;
     R.prompts = CFG.turns + 1; R.compactions = compactions;
+    if (CFG.clickFocus) return clickFocus();
     finish();
+  };
+  /* The button pressed once: what it asked of the panel, and what it says afterwards. */
+  var clickFocus = function(){
+    var fb = document.querySelector('[data-cce-focus-btn]');
+    if (!fb) { R.clicked = false; return finish(); }
+    fb.click();
+    later(900, function(){
+      R.clicked = true; R.focusCalls = focusCtx.calls.slice(); R.focusAfter = focusCtx.on;
+      R.focusLabelAfter = fb.getAttribute('aria-label');
+      finish();
+    });
   };
   later(500, function(){ settle(-1, 0, 500); });
 `;
@@ -266,10 +285,10 @@ function page(cfg, script) {
 }
 
 /**
- * One stand-in panel, run to the end. `cfg`: turns, compactEvery, plain, subagent, and the phase lengths. Resolves to the
+ * One stand-in panel, run to the end. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent, and the phase lengths. Resolves to the
  * page's counts, or { error } saying why there are none.
  */
-const DEFAULTS = { turns: 100, compactEvery: 20, plain: true, subagent: true, settleCapMs: 6000, idleMs: 3000, grows: 8 };
+const DEFAULTS = { turns: 100, compactEvery: 20, focus: true, subagent: true, settleCapMs: 6000, idleMs: 3000, grows: 8 };
 
 function run(browser, cfg, script) {
   const full = Object.assign({}, DEFAULTS, cfg);

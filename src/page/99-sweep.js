@@ -29,10 +29,6 @@
     if (sessionRef) indexTitles(sessionRef);
     for (var i = 0; i < bubbles.length; i++) {
       var b = bubbles[i], c = ctxOf(b);
-      /* Your own side carries blocks too, and a tool result is recorded as something you said. Labelling here costs
-         nothing - the context is already in hand - and without it the bulkiest thing the plain view exists to remove
-         would be the one thing it could not reach. A block of your own text is labelled `text` and stays. */
-      applyKind(b, c.block && c.block.content && c.block.content.type);
       if (!c.message) continue;
       var g = groups.get(c.message); if (!g) { g = []; groups.set(c.message, g); }
       g.push(b);
@@ -87,7 +83,6 @@
        The check stays because the binary search in turnStartFor depends on the order: an assumption that quietly stopped
        holding would hand every reply the wrong turn start, with nothing to show it had. */
     if (!ordered) promptTs.sort(function(a, b){ return a - b; });
-    try { beginToolSweep(promptTs.length ? promptTs[promptTs.length - 1] : 0); } catch (e) {}
     var tC = clock();
     var msgs = document.querySelectorAll(ASSIST);
     // Both are already in hand, so aiming the text observer costs one walk up to the scrolling ancestor and a compare.
@@ -141,10 +136,6 @@
         if (annot) {
           v = isOff('timestamps') ? '' : fmt(cx.message.timestamp);
           var t = cx.block.content && cx.block.content.type;
-          // Label the block with its kind while its type is in hand. The plain-conversation filter reads the label off a
-          // stylesheet rule, so this is the only place that has to touch the block for it.
-          applyKind(row, t);
-          if (t === 'tool_use' || t === 'server_tool_use') noteTool(cx, t);
           if (agentView && own === VIEW && (t === 'tool_use' || t === 'server_tool_use')) {
             acts.push({ node: row, ts: cx.message.timestamp, text: toolLabel(cx.block.content) });
           }
@@ -164,7 +155,6 @@
       }
       if (uus.length) UUIDS_OF.set(msgs[j], uus);
     }
-    try { endToolSweep(); } catch (e) {}
     // Compaction blocks belong to the main thread, so a sub-agent view hides them too.
     var cps = document.querySelectorAll(COMPACT);
     for (var cq = 0; cq < cps.length; cq++) applyOwner(cps[cq], 'main');
@@ -178,7 +168,7 @@
     try { syncMap(agentView ? acts : prompts, cps); } catch (e) {}
     var tF = clock();
     try { ensureViewControl(); } catch (e) {}
-    try { ensurePlainControl(); } catch (e) {}
+    try { ensureFocusControl(); } catch (e) {}
     try { ensureInfo(); } catch (e) {}
     try { orderControls(); } catch (e) {}
     try { wireCtxButton(); } catch (e) {}
@@ -295,7 +285,7 @@
    * Nothing is moved while they are already in this order: rearranging the row on a timer would pull a button out from
    * under the pointer, and a click that lands on the wrong control is worse than an order nobody chose.
    */
-  var ORDER = ['[data-cce-info]', '[data-cce-plain-btn]', '[data-cce-mute]', '[data-cce-view]'];
+  var ORDER = ['[data-cce-info]', '[data-cce-focus-btn]', '[data-cce-mute]', '[data-cce-view]'];
   var orderControls = function(){
     var send = document.querySelector(SEND);
     if (!send) return;
@@ -315,52 +305,7 @@
     for (var k = 0; k < want.length; k++) mode.parentElement.insertBefore(want[k], mode);
   };
 
-  /*
-   * Label a block the moment it appears, before the browser has painted it.
-   *
-   * The sweep is throttled to 250ms and labels a block when it gets there, which is correct for everything that reads a
-   * label but too late for the one thing that HIDES by it. A tool call is drawn at full height, stands there for up to a
-   * quarter second, and then collapses - so a run of them walks the whole conversation up and down, which is unreadable
-   * at the rate tool calls arrive.
-   *
-   * A mutation callback runs at the microtask checkpoint of the task that inserted the node, and painting happens after
-   * that task. Labelling here therefore lands before the first paint of that block: it is hidden in the frame it would
-   * otherwise have appeared in, and no height ever changes.
-   *
-   * This does NOT make the throttle looser. It costs one walk up the React tree per element inserted, which is bounded
-   * by what arrived rather than by how long the conversation is - the growth the throttle exists to prevent. It is also
-   * skipped entirely unless the plain view is switched on, since nothing else needs a label this early.
-   *
-   * The alternative was hiding blocks that have no label yet, and it was worse in a way worth recording: rows that never
-   * get one - the panel's own structure, which carries no block - would have stayed hidden for good, and a sweep that
-   * stopped running would empty the conversation instead of merely leaving it unfiltered.
-   */
-  var labelBlock = function(el){
-    var cx = ctxOf(el);
-    if (cx.block && cx.block.content) applyKind(el, cx.block.content.type);
-  };
-  var labelAdded = function(node){
-    if (!node || node.nodeType !== 1 || typeof node.matches !== 'function') return;
-    // Your own side carries the block on the message element itself; the other side carries one per child.
-    if (node.matches(USER)) { labelBlock(node); return; }
-    var parent = node.parentElement;
-    if (parent && typeof parent.matches === 'function' && parent.matches(ASSIST)) { labelBlock(node); return; }
-    // A whole message arriving at once brings its blocks with it.
-    if (node.matches(ASSIST)) {
-      var kids = node.children;
-      for (var i = 0; i < kids.length; i++) labelBlock(kids[i]);
-    }
-  };
   var onMutations = function(records){
-    // Guarded on its own, so a fault here cannot cost the sweep that would have labelled the block anyway.
-    try {
-      if (plainOn() && !isOff('footerPlainView')) {
-        for (var i = 0; i < records.length; i++) {
-          var added = records[i].addedNodes;
-          for (var j = 0; j < added.length; j++) labelAdded(added[j]);
-        }
-      }
-    } catch (e) {}
     /* Changes inside the document's head are stylesheets coming and going - this script's own reloads among them - and
        none of them can change a message. A panel that mounts something there changes the body as well, which is what
        gets swept. Without this, every reload of a stylesheet was a sweep of its own. */
@@ -447,7 +392,7 @@
     try { window.addEventListener('pagehide', function(){ forget(lastProbeUrl); }); } catch (e) {}
     // The chime and the low-context outline must not depend on DOM churn: a turn can end without
     // any further mutation, which would leave the last sweep observing a still-busy state.
-    setInterval(function(){ try { watchIdle(); } catch (e) {} try { fillWindow(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensurePlainControl(); } catch (e) {} try { paintToolClock(); } catch (e) {} try { orderControls(); } catch (e) {} }, 700);
+    setInterval(function(){ try { watchIdle(); } catch (e) {} try { fillWindow(); } catch (e) {} try { markCtxLow(); } catch (e) {} try { ensureMute(); } catch (e) {} try { ensureInfo(); } catch (e) {} try { ensureFocusControl(); } catch (e) {} try { orderControls(); } catch (e) {} }, 700);
     run();
     report();
   };

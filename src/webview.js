@@ -199,7 +199,7 @@ const SWITCHES = [
   'chime',            // the three sounds at the end of a turn
   'sessionDates',     // how long each session ran, on the session list
   'footerInfo',       // the info button and what it shows
-  'footerPlainView',  // the button that leaves only the conversation
+  'footerPlainView',  // the button that turns Claude Code's Focus view on and off
   'footerViewFilter', // main thread versus one sub-agent
   'footerMute',       // the button that silences the chimes
   'backgroundSessions', // the `claude --bg` sessions a conversation started, in its agent map

@@ -231,7 +231,7 @@
         "claudeCodeExtras.show.footerPlainView": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "The footer button that leaves only the conversation, and, while it is folded and a turn runs, the latest tool call at the end of the working indicator's line. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+          "markdownDescription": "The footer button that turns Claude Code's Focus view on and off. Shown only with a Claude Code build that has Focus view. Turning it off stops the work, not only the drawing, and takes effect without a reload."
         },
         "claudeCodeExtras.show.footerViewFilter": {
           "type": "boolean",

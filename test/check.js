@@ -139,15 +139,13 @@ else bad('hot loop lost its early exit — the fiber walk will run to full depth
 /* What the page writes on every sweep or every tick has to be skipped when it would not change. Writing text is a
    mutation, the page's own observer answers a mutation with a sweep, and the sweep reaches these writes again - so one
    unconditional write keeps the page sweeping four times a second with nothing happening on it. Measured with the real
-   script on an idle page: 19 sweeps in five seconds with the plain view on, 3 with it off. */
+   script on an idle page: 19 sweeps in five seconds against 3, from one stylesheet rule rewritten on every tick. */
 {
   const page = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', f), 'utf8');
-  const plain = page('87-plain-view.js'), view = page('85-view-filter.js');
-  if (plain.includes('if (plainStyle.textContent !== rule) plainStyle.textContent = rule;')
-      && plain.includes("if (plainStyle.textContent) plainStyle.textContent = '';")
-      && !/\n\s*plainStyle\.textContent = sel\.join/.test(plain)) {
-    ok('the plain view writes its rule only when the rule changes');
-  } else bad('the plain view rewrites its rule unconditionally, which keeps an idle page sweeping');
+  const focus = page('87-focus-view.js'), view = page('85-view-filter.js');
+  if (focus.includes("if (FOCUSBTN.getAttribute('data-cce-fold') !== want) {")) {
+    ok('the Focus view button rebuilds its icon only when the state turns over');
+  } else bad('the Focus view button rebuilds its icon on every tick, which keeps an idle page sweeping');
   if (view.includes('if (VIEWBTN.textContent !== label) VIEWBTN.textContent = label;')) {
     ok('the view button writes its label only when the label changes');
   } else bad('the view button rewrites its label on every sweep, which keeps an idle page sweeping');
@@ -177,9 +175,9 @@ console.log('\nwhat the page costs, in a browser');
   } else {
     const SHORT = 100, LONG = 400;
     const runs = [
-      ['plain view on', harness.run(browser, { turns: SHORT, plain: true })],
-      ['plain view on, four times as long', harness.run(browser, { turns: LONG, plain: true })],
-      ['plain view off', harness.run(browser, { turns: SHORT, plain: false })],
+      ['Focus view on', harness.run(browser, { turns: SHORT, focus: true })],
+      ['Focus view on, four times as long', harness.run(browser, { turns: LONG, focus: true })],
+      ['Focus view off', harness.run(browser, { turns: SHORT, focus: false })],
     ];
     const [short, long, off] = runs.map(([, r]) => r);
     const failed = runs.filter(([, r]) => r.error || !r.script);
@@ -187,10 +185,24 @@ console.log('\nwhat the page costs, in a browser');
       bad('the stand-in panel did not run: ' + failed.map(([what, r]) => `${what}: ${r.error || 'the script did not load'}`).join('; '));
     } else {
       /* What follows is only evidence if the stand-in reached the code those costs were found in. */
-      if (runs.every(([, r]) => r.viewButton && r.plainButton) && short.plainRule > 0 && off.plainRule === 0) {
-        ok('the stand-in panel brings up the view button, the plain-view button and its rule');
+      if (runs.every(([, r]) => r.viewButton && r.focusButton)) {
+        ok('the stand-in panel brings up the view button and the Focus view button');
       } else bad('the stand-in panel did not reach the code under test: '
-        + JSON.stringify(runs.map(([what, r]) => [what, r.viewButton, r.plainButton, r.plainRule])));
+        + JSON.stringify(runs.map(([what, r]) => [what, r.viewButton, r.focusButton])));
+      /* The button is only a control for Claude Code's Focus view, so what it says has to come from there, and a press has
+         to go there - nothing of its own to fall out of step with another page. */
+      if (/^Focus view is on/.test(short.focusLabel) && /^Showing thinking and tool calls/.test(off.focusLabel)) {
+        ok('the button says what Claude Code\'s Focus view is set to, on and off');
+      } else bad(`the button's label did not follow the setting: on "${short.focusLabel}", off "${off.focusLabel}"`);
+      const pressed = harness.run(browser, { turns: 10, focus: false, clickFocus: true });
+      if (!pressed.error && pressed.clicked && JSON.stringify(pressed.focusCalls) === '[true]' && pressed.focusAfter === true
+          && /^Focus view is on/.test(pressed.focusLabelAfter)) {
+        ok('a press turns Focus view on through the panel\'s own object, and the label follows');
+      } else bad('a press of the Focus view button: ' + (pressed.error || JSON.stringify(
+        { clicked: pressed.clicked, calls: pressed.focusCalls, after: pressed.focusAfter, label: pressed.focusLabelAfter })));
+      const older = harness.run(browser, { turns: 10, focusCtx: false });
+      if (!older.error && older.viewButton && !older.focusButton) ok('a Claude Code build without Focus view gets no button');
+      else bad('without Focus view in the panel: ' + (older.error || `the button was ${older.focusButton ? 'shown' : 'missing, and so was the view button'}`));
       /* A write the page answers with a sweep that makes the write again keeps an idle page sweeping four times a second.
          Such a page never holds still long enough to count as settled, and changes things while idle. */
       const restless = runs.filter(([, r]) => !(r.settledAfter < harness.DEFAULTS.settleCapMs && r.idleSweeps === 0
@@ -200,7 +212,7 @@ console.log('\nwhat the page costs, in a browser');
         `${what}: ${r.idleSweeps} sweeps and ${r.idleChild + r.idleAttr + r.idleChars} changes in ${harness.DEFAULTS.idleMs}ms`).join('; '));
       /* Reloading a stylesheet puts a link into the head and takes the old one out. A page that answered that with a
          sweep would sweep every time any conversation's efforts changed, in every panel open. */
-      const churn = harness.run(browser, { turns: SHORT, plain: true, headChurn: true });
+      const churn = harness.run(browser, { turns: SHORT, focus: true, headChurn: true });
       if (!churn.error && churn.idleSweeps === 0 && churn.idleChild > 0) {
         ok(`stylesheets coming and going in the head start no sweep (${churn.idleChild} changes, 0 sweeps)`);
       } else bad(`with stylesheets coming and going in the head: ${churn.error || churn.idleSweeps + ' sweeps for ' + churn.idleChild + ' changes'}`);
@@ -209,7 +221,7 @@ console.log('\nwhat the page costs, in a browser');
          started another every three seconds: 25 were outstanding at once on a real stalled panel. Each one also holds one
          of the desktop service worker's 32 host-resource permits, so the pile can exhaust that budget for every panel in
          every window. Measured against the code before the guard: 5 started and none given up on. */
-      const stalled = harness.run(browser, { turns: SHORT, plain: true, grows: 1, idleMs: 13000, stallProbe: true,
+      const stalled = harness.run(browser, { turns: SHORT, focus: true, grows: 1, idleMs: 13000, stallProbe: true,
         efforts: { sid: '00000000-0000-4000-8000-00000000abcd', css: '#cce-effort{--cce-effort:""}\n' } });
       if (!stalled.error && stalled.probesMade <= 3 && stalled.probesCancelled >= 1) {
         ok(`a poll whose request never answers keeps one in flight and drops it (${stalled.probesMade} started, `
@@ -220,7 +232,7 @@ console.log('\nwhat the page costs, in a browser');
       }
       /* Nobody is reading a panel in a window that is not on screen, and several editor windows at once is the ordinary
          case, so the poll drops to a crawl for a backgrounded window. Measured over the same 13 seconds. */
-      const probeRate = (opts) => harness.run(browser, Object.assign({ turns: SHORT, plain: true, grows: 1,
+      const probeRate = (opts) => harness.run(browser, Object.assign({ turns: SHORT, focus: true, grows: 1,
         idleMs: 13000, efforts: { sid: '00000000-0000-4000-8000-00000000abcd', css: '#cce-effort{--cce-effort:""}\n' } },
         opts));
       const seen = probeRate({}), unseen = probeRate({ windowHidden: true });
@@ -929,7 +941,7 @@ console.log('\nreply efforts');
     else note('skipped: no Chrome or Chromium here - set CCE_BROWSER to one to run the efforts in a page');
   } else {
     const sid = 'dddddddd-2222-4333-8444-555555555555';
-    const r = harness.run(browser, { turns: 30, plain: false, subagent: false,
+    const r = harness.run(browser, { turns: 30, focus: false, subagent: false,
       efforts: { sid, css: `#cce-effort{--cce-effort:"${H(1)}=max,${H(40)}=high!${H(80)}"}\n` } });
     const shown = (r.labels || []).map((l) => String(l || '').split('  ').pop().replace(/^\d+s · /, ''));
     const want = shown.map((_, i) => (i + 1 < 40 ? 'opus-5-5 max' : i + 1 <= 80 ? 'opus-5-5 high' : 'opus-5-5'));
@@ -3279,81 +3291,6 @@ console.log('\nevery call on the work plan view is one it has');
     ok('the sweep of abandoned plans is the module\'s function, imported as such');
   } else bad('the sweep of abandoned plans is not called through the module');
   fs.rmSync(stub, { force: true });
-}
-
-console.log('\nthe latest tool call, on the working line of a folded conversation');
-{
-  const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '87-plain-view.js'), 'utf8');
-  let searches = 0, busy = false, prompts = 0;
-  const box = {
-    out: {},
-    isOff: () => false,
-    fmt: (ms) => 'T' + ms,
-    dur: (ms) => (ms > 0 ? Math.round(ms / 1000) + 's' : ''),
-    setStyle() {}, setLabel() {}, SEND: 'z',
-    sigOn: (name) => name === 'visiblyBusy' && busy,
-    sigLen: (name) => (name === 'permissionRequests' ? prompts : 0),
-    window: { innerHeight: 800, localStorage: { getItem: () => '1', setItem() {} } },
-    document: { querySelector: () => null, querySelectorAll: () => { searches++; return []; } },
-  };
-  new vm.Script(`(function(){${fragment}\n;out.begin = beginToolSweep; out.note = noteTool; out.end = endToolSweep;` +
-    ` out.text = toolClockText; out.paint = paintToolClock; out.now = function(){ return toolNow; };})()`,
-    { filename: '87-plain-view.js' }).runInNewContext(box);
-  const o = box.out, T = 1000000;
-  const call = (at, name, doneAt, type = 'tool_use') => ({ message: { timestamp: at }, block: { content: { type, name }, cceResultAt: doneAt } });
-  const sweep = (turnAt, calls) => { o.begin(turnAt); for (const c of calls) o.note(c, c.block.content.type); o.end(); };
-  const expect = (got, want, label) => (got === want ? ok(label) : bad(`${label}: got "${got}", expected "${want}"`));
-
-  sweep(T, [call(T + 1000, 'Read', T + 2000), call(T + 3000, 'Bash')]);
-  expect(o.text(o.now(), T + 8000, false), `Bash running for 5s (since T${T + 3000})`, 'a call with no result yet reads as running, with its start');
-  expect(o.text(o.now(), T + 8000, true), 'Bash 5s', 'and has a short form for a narrow panel');
-  sweep(T, [call(T + 1000, 'Read', T + 2000), call(T + 3000, 'Bash', T + 9000)]);
-  expect(o.text(o.now(), T + 12000, false), `last tool Bash finished 3s ago (T${T + 9000})`, 'once it is back, how long ago it finished');
-  sweep(T, []);
-  expect(o.now().at, T + 3000, 'a sweep that meets no tool call in the same turn keeps the figures it had');
-  sweep(T + 20000, [call(T + 3000, 'Bash', T + 9000)]);
-  expect(o.text(o.now(), T + 25000, false), 'no tool call yet this turn (5s since your message)', 'a new turn with no call says so, timed from your message');
-  sweep(T + 20000, [call(T + 3000, 'Bash')]);
-  expect(o.now().open, 0, 'a call from an earlier turn that never came back is not running');
-  sweep(T, [call(T + 1000, 'Read'), call(T + 2000, 'Grep')]);
-  expect(o.text(o.now(), T + 6000, false), `2 tools running for 5s (since T${T + 1000})`, 'two open calls are counted, timed from the first');
-  sweep(T, [call(T + 1000, 'web_search', undefined, 'server_tool_use')]);
-  expect(o.now().open, 0, 'a server tool, whose result time is not recorded, is never counted as running');
-  box.isOff = () => true;
-  sweep(T, [call(T + 5000, 'Edit')]);
-  expect(o.now().name, 'web_search', 'switched off, nothing is gathered');
-  box.isOff = () => false;
-
-  o.paint(); o.paint();
-  expect(searches, 0, 'not busy: the page is not searched at all');
-  busy = true; prompts = 1; o.paint();
-  expect(searches, 0, 'busy but waiting on a permission prompt, which hides the indicator: not searched either');
-  prompts = 0; o.paint(); o.paint(); o.paint();
-  expect(searches, 1, 'busy with no indicator found: searched once, then not again within a few seconds');
-
-
-  // Where the indicator is drawn: two rows the panel can draw it in, found by the words a screen reader hears.
-  let clock = 1e6, pageRows = [];
-  const span = (box) => ({ textContent: 'Claude is working', parentElement: box });
-  const row = (getSpans) => ({ isConnected: true, querySelectorAll: () => getSpans(), contains: (x) => getSpans().some((s) => s.parentElement === x) });
-  let boxB = { isConnected: true }, spansB = [span(boxB)];
-  const rowA = row(() => []), rowB = row(() => spansB);
-  const box2 = { out: {}, isOff: () => false, fmt: String, dur: String, setStyle() {}, setLabel() {}, SEND: 'z',
-    sigOn: () => true, sigLen: () => 0, Date: { now: () => clock },
-    window: { innerHeight: 800, localStorage: { getItem: () => '1', setItem() {} } },
-    document: { querySelector: () => null, querySelectorAll: () => { searches++; return pageRows; } } };
-  searches = 0;
-  new vm.Script(`(function(){${fragment}\n;out.find = findWorking;})()`, { filename: '87-plain-view.js' }).runInNewContext(box2);
-  const find = box2.out.find;
-  pageRows = [rowA];
-  expect(find(), null, 'an indicator not yet drawn is not found');
-  pageRows = [rowA, rowB]; clock += 1000;
-  expect(find() === null && searches === 1, true, 'and the page is not searched again within a few seconds');
-  clock += 3000;
-  expect(find(), rowB, 'after that it is found in whichever row it is drawn');
-  expect(find() === rowB && searches === 2, true, 'and kept: finding it again searches nothing');
-  boxB.isConnected = false; boxB = { isConnected: true }; spansB = [span(boxB)];
-  expect(find() === rowB && searches === 2, true, 'a new turn draws a new indicator in the same row, found without searching the page');
 }
 
 console.log('\na window whose install was replaced by a rebuild of the same version');

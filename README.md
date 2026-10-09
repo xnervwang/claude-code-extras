@@ -1,6 +1,6 @@
 # Extras for Claude Code
 
-This VS Code extension edits the installed Claude Code extension to add a Claude-maintained work plan to its chat panel. The plan keeps unfinished work on screen and puts it back in front of Claude after older turns are compacted. It also adds timestamps; reply duration, context use, running spend, and model; a filterable table of contents with message stepping; a context meter with a hover breakdown; sub-agent tags and filters; a fold for thinking and tool calls; chimes; and session details.
+This VS Code extension edits the installed Claude Code extension to add a Claude-maintained work plan to its chat panel. The plan keeps unfinished work on screen and puts it back in front of Claude after older turns are compacted. It also adds timestamps; reply duration, context use, running spend, and model; a filterable table of contents with message stepping; a context meter with a hover breakdown; sub-agent tags and filters; a footer button for Claude Code's Focus view; chimes; and session details.
 Not affiliated with Anthropic. Requires Anthropic's Claude Code extension, which it adds nothing without, and VS Code 1.94 or later. 24 settings, 11 commands.
 
 Discuss tasks in parallel threads: you can raise a new topic before finishing another, without starting a separate conversation for each task. Keep several tasks open and discuss them by row number, in any order: `122: try another icon`, `101.1: not now`. One message can settle several rows, and you can return to a row hours later. The plan is a tree of remaining work. Numbers mark positions in its file and stay fixed when finished rows leave gaps. They appear in the activity-bar tree and the open rows shown to Claude every turn, even after compaction. Claude records decisions on each row: approval makes it `todo`, rejection `dropped`, and deferral `parked`.
@@ -19,7 +19,7 @@ Extras for Claude Code edits files inside the installed Claude Code extension. T
 by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
 alone with a warning.
 
-Verified against Claude Code 2.1.288, 2.1.289, 2.1.291 and 2.1.292; compatibility with other builds unknown.
+Verified against Claude Code 2.1.292 and 2.1.294; compatibility with other builds unknown.
 
 ## Work plan
 
@@ -38,10 +38,6 @@ edge, and the footer controls. Thinking and tool calls shown, which is the defau
 
 ![Chat panel with thinking and tool calls shown](images/tools-expanded.png)
 
-The same conversation with one footer button pressed, leaving your messages and Claude's replies:
-
-![The same conversation with thinking and tool calls folded away](images/tools-folded.png)
-
 ## Features
 
 | What it shows | Where it appears |
@@ -50,7 +46,7 @@ The same conversation with one footer button pressed, leaving your messages and 
 | **Reply figures:** `2m10s · ctx 33% · cost $0.42 · opus-5 high`; turn duration, context-window use, running spend, and the model and effort the reply was sent with | Each reply, including closed turns |
 | **Sub-agent tags and filters:** spawn descriptions, such as `#look up tomorrow's weather`; `All`, `Main`, and individual sub-agent filters; table of contents follows filter | Tags on rows; filters in footer |
 | **Conversation navigation:** message times, opening words, compaction points; filter box; click-to-scroll; message stepping with arrows, `,`, and `.`; top and bottom jumps | Right-edge table of contents; buttons |
-| **Conversation only:** thinking and tool calls folded away; while a turn runs, the latest tool call at the end of the working indicator's line, such as `Bash running for 2m55s (since 11:11:18)` or `last tool Bash finished 35s ago (11:14:13)` | Footer button; the working indicator's line |
+| **Focus view button:** turns Claude Code's own Focus view on and off; the tooltip says which is showing; only with Claude Code builds that have Focus view | Footer button |
 | **Context meter:** visible even with over half the window free; outline at 15% remaining; category, memory-file, and custom-agent breakdown | Chat panel meter; hover tooltip |
 | **Session dates:** `11d · 09/05→09/16`; Claude Code relative last-active time, followed by date span | Sessions |
 | **Chimes:** two rising notes, three knocks, two falling notes; synthesized sound; no shipped audio files; footer mute button | Finished turn, permission request, question; local panel, including Remote SSH; footer |
