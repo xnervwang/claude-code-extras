@@ -4,7 +4,7 @@
 
 'use strict';
 /*
- * Extras for Claude Code — user interface additions for the Claude Code panel in VS Code.
+ * Work Plan for Claude Code — user interface additions for the Claude Code panel in VS Code.
  *
  * This extension owns no user interface of its own. It patches the Claude Code extension's own files at rest, one
  * adapter per target file (see src/adapters.js), and every write is guarded the same way: match the expected code
@@ -38,21 +38,25 @@ const ID = PACKAGE.publisher + '.' + PACKAGE.name;
 /* Where this copy is installed, kept for deactivate for the same reason. */
 let selfPath = '';
 
-const SETTING = 'claudeCodeExtras.enabled';
-const COLOR_SETTING = 'claudeCodeExtras.userMessageColor';
-const EDGE_SETTING = 'claudeCodeExtras.userMessageEdge';
+/* Settings and commands are named under this prefix. The keys this extension keeps in its own state are not settings,
+   are not seen by anyone, and keep the names they were first stored under. */
+const PREFIX = 'claudeCodeWorkPlan.';
+const LEGACY_PREFIX = 'claudeCodeExtras.';
+const SETTING = PREFIX + 'enabled';
+const COLOR_SETTING = PREFIX + 'userMessageColor';
+const EDGE_SETTING = PREFIX + 'userMessageEdge';
 const REMOVED_KEY = 'claudeCodeExtras.removed';
 const PLUGIN_KEY = 'claudeCodeExtras.workPlanPlugin';
 const SWEEP_KEY = 'claudeCodeExtras.lastOrphanSweep';
 const LATENCY_KEY = 'claudeCodeExtras.latencyOffset';
-const THRESHOLD_SETTING = 'claudeCodeExtras.latencyThresholdSeconds';
-const LATENCY_ON_SETTING = 'claudeCodeExtras.recordOpenLatency';
+const THRESHOLD_SETTING = PREFIX + 'latencyThresholdSeconds';
+const LATENCY_ON_SETTING = PREFIX + 'recordOpenLatency';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
-  enabled: 'claudeCodeExtras.workPlan',
-  offerMinTurns: 'claudeCodeExtras.workPlanOfferMinTurns',
-  offerMinToolCalls: 'claudeCodeExtras.workPlanOfferMinToolCalls',
-  quietWhenReplyMatches: 'claudeCodeExtras.workPlanQuietWhenReplyMatches',
+  enabled: PREFIX + 'workPlan',
+  offerMinTurns: PREFIX + 'workPlanOfferMinTurns',
+  offerMinToolCalls: PREFIX + 'workPlanOfferMinToolCalls',
+  quietWhenReplyMatches: PREFIX + 'workPlanQuietWhenReplyMatches',
 };
 
 /** Every install of Claude Code this adapter can see: the active one plus sibling versions in the same folder. */
@@ -77,9 +81,75 @@ async function offerReload(text) {
   if (pick === 'Reload Window') vscode.commands.executeCommand('workbench.action.reloadWindow');
 }
 
-function activate(context) {
-  const log = vscode.window.createOutputChannel('Extras for Claude Code');
+/* Commands were once named under the old prefix, and a keybinding someone made then still names them that way. The old
+   names stay registered, unlisted, so those keep working. */
+function registerCommand(name, fn) {
+  const current = vscode.commands.registerCommand(PREFIX + name, fn);
+  const legacy = vscode.commands.registerCommand(LEGACY_PREFIX + name, fn);
+  return { dispose() { current.dispose(); legacy.dispose(); } };
+}
+
+/*
+ * Settings were once named under the old prefix. A value set under an old name is copied to its new name, in the same
+ * scope, and the old one is then cleared where the editor allows that - it may refuse to write a name no extension
+ * declares any more, and then the old line stays behind, read by nothing.
+ *
+ * A copy is made only where the new name has no value of its own, so nothing set under the new name is overwritten; and
+ * each scope is done once, so putting a new name back to its default later does not bring the old value back.
+ */
+const RENAMED_KEY = LEGACY_PREFIX + 'settingsRenamed';
+async function renameSettings(context) {
+  const contrib = (context.extension.packageJSON.contributes || {}).configuration || {};
+  const names = [].concat(contrib).flatMap((c) => Object.keys((c && c.properties) || {}))
+    .filter((k) => k.startsWith(PREFIX)).map((k) => k.slice(PREFIX.length));
+  const T = vscode.ConfigurationTarget;
+  const groups = [];
+  const all = () => vscode.workspace.getConfiguration();
+  if (!context.globalState.get(RENAMED_KEY)) {
+    groups.push({ state: context.globalState,
+      scopes: [{ where: 'user', target: T.Global, field: 'globalValue', conf: all }] });
+  }
+  const folders = vscode.workspace.workspaceFolders || [];
+  if (folders.length && !context.workspaceState.get(RENAMED_KEY)) {
+    const inFolder = (f) => ({ where: 'folder ' + f.name, target: T.WorkspaceFolder, field: 'workspaceFolderValue',
+      conf: () => vscode.workspace.getConfiguration(undefined, f.uri) });
+    groups.push({ state: context.workspaceState,
+      scopes: [{ where: 'workspace', target: T.Workspace, field: 'workspaceValue', conf: all }].concat(folders.map(inFolder)) });
+  }
+  const done = [];
+  for (const g of groups) {
+    let complete = true;
+    for (const sc of g.scopes) {
+      const conf = sc.conf();
+      let moved = 0, left = 0;
+      for (const name of names) {
+        const old = conf.inspect(LEGACY_PREFIX + name);
+        const value = old ? old[sc.field] : undefined;
+        if (value === undefined) continue;
+        const now = conf.inspect(PREFIX + name);
+        try {
+          if (!now || now[sc.field] === undefined) await conf.update(PREFIX + name, value, sc.target);
+          moved++;
+        } catch (_) { complete = false; continue; }
+        try { await conf.update(LEGACY_PREFIX + name, undefined, sc.target); } catch (_) { left++; }
+      }
+      if (moved) done.push(`${moved} in ${sc.where}` + (left ? ` (${left} old line${left > 1 ? 's' : ''} left in place)` : ''));
+    }
+    if (complete) await g.state.update(RENAMED_KEY, true);
+  }
+  return done.join(', ');
+}
+
+async function activate(context) {
+  let renamed = '';
+  try { renamed = await renameSettings(context); } catch (e) { renamed = 'failed: ' + (e && e.message); }
+  return start(context, renamed);
+}
+
+function start(context, renamed) {
+  const log = vscode.window.createOutputChannel('Work Plan for Claude Code');
   context.subscriptions.push(log);
+  if (renamed) log.appendLine(`settings moved from ${LEGACY_PREFIX}* to ${PREFIX}*: ${renamed}`);
   /*
    * When this host started, so that the patch write can be placed against the panel's own startup.
    *
@@ -136,7 +206,7 @@ function activate(context) {
 
   /* One setting per switchable addition, named after it. Reading them here rather than in src/webview.js keeps that
      file free of the editor's API, which is what lets the tests run it. */
-  const switchedOff = () => webview.SWITCHES.filter((k) => cfg().get('claudeCodeExtras.show.' + k, true) === false);
+  const switchedOff = () => webview.SWITCHES.filter((k) => cfg().get(PREFIX + 'show.' + k, true) === false);
   const options = () => {
     const off = switchedOff();
     return {
@@ -182,7 +252,7 @@ function activate(context) {
   async function sync({ interactive = false } = {}) {
     if (replaced()) {
       log.appendLine('sync: this window runs a build that has since been installed again; leaving the files to the windows running it');
-      if (interactive) offerReload('This window is running an earlier build of Extras for Claude Code than the one now installed. Reload the window to run it.');
+      if (interactive) offerReload('This window is running an earlier build of Work Plan for Claude Code than the one now installed. Reload the window to run it.');
       return;
     }
     const patched = [], restored = [], problems = [];
@@ -228,12 +298,12 @@ function activate(context) {
         }
       }
     }
-    if (!found && interactive) vscode.window.showWarningMessage('Extras for Claude Code: the Claude Code extension is not installed, so there is nothing to patch.');
+    if (!found && interactive) vscode.window.showWarningMessage('Work Plan for Claude Code: the Claude Code extension is not installed, so there is nothing to patch.');
     // A shape mismatch after a Claude Code update would otherwise be silent, so it is said out loud.
-    if (problems.length) vscode.window.showWarningMessage('Extras for Claude Code: ' + problems.join(' | '));
-    if (patched.length) offerReload(`Extras for Claude Code is installed in ${patched.join(' and ')}. Reload the window once to start; after that, On/Off and colors change live.`);
+    if (problems.length) vscode.window.showWarningMessage('Work Plan for Claude Code: ' + problems.join(' | '));
+    if (patched.length) offerReload(`Work Plan for Claude Code is installed in ${patched.join(' and ')}. Reload the window once to start; after that, On/Off and colors change live.`);
     // An uninstall already has the editor asking for a restart of its extensions; a second prompt would only compete.
-    if (restored.length && !leaving) offerReload(`Extras for Claude Code was removed from ${restored.join(' and ')}. Reload the window to finish.`);
+    if (restored.length && !leaving) offerReload(`Work Plan for Claude Code was removed from ${restored.join(' and ')}. Reload the window to finish.`);
   }
 
   /* No status bar item for on and off.
@@ -250,17 +320,17 @@ function activate(context) {
   };
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('claudeCodeExtras.enable', () => setEnabled(true)),
-    vscode.commands.registerCommand('claudeCodeExtras.disable', () => setEnabled(false)),
-    vscode.commands.registerCommand('claudeCodeExtras.toggle', () => setEnabled(!(enabled() && !removed()))),
-    vscode.commands.registerCommand('claudeCodeExtras.remove', async () => {
+    registerCommand('enable', () => setEnabled(true)),
+    registerCommand('disable', () => setEnabled(false)),
+    registerCommand('toggle', () => setEnabled(!(enabled() && !removed()))),
+    registerCommand('remove', async () => {
       await context.globalState.update(REMOVED_KEY, true);
       await sync({ interactive: true });
     }),
-    vscode.commands.registerCommand('claudeCodeExtras.status', () => {
+    registerCommand('status', () => {
       const lines = [];
       for (const adapter of ADAPTERS) for (const d of installs(adapter)) lines.push(`${adapter.name} ${path.basename(d)}: ${adapter.status(d)}`);
-      vscode.window.showInformationMessage('Extras for Claude Code — ' + (lines.join(' | ') || 'Claude Code is not installed') + (removed() ? ' (removed)' : ''));
+      vscode.window.showInformationMessage('Work Plan for Claude Code — ' + (lines.join(' | ') || 'Claude Code is not installed') + (removed() ? ' (removed)' : ''));
     }),
     /* Every setting this extension has, in the editor's own settings UI: search, per-workspace values, sync and a JSON
        view come with it, and none of it is ours to maintain. */
@@ -274,7 +344,7 @@ function activate(context) {
      * `disable` and not `uninstall`: uninstalling takes the plugin's data directory with it, and that is where every
      * conversation's plan lives.
      */
-    vscode.commands.registerCommand('claudeCodeExtras.disableWorkPlanPlugin', async () => {
+    registerCommand('disableWorkPlanPlugin', async () => {
       const yes = await vscode.window.showWarningMessage(
         'Stop Claude Code loading the work plan plugin? This edits Claude Code\'s own settings, and saves the skill '
         + 'description it loads every session. Your existing plans are left alone.',
@@ -285,11 +355,11 @@ function activate(context) {
       log.show(true);
       if (r.ok) await offerReload('The work plan plugin will stop loading in conversations started after a reload.');
     }),
-    vscode.commands.registerCommand('claudeCodeExtras.openSettings',
+    registerCommand('openSettings',
       // Our own id, so a change of publisher or name cannot leave this pointing at an extension that is not here.
       () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:' + context.extension.id)),
     /* Reads the records rather than measuring anything, so it is also the way to see them after a window restart. */
-    vscode.commands.registerCommand('claudeCodeExtras.showOpenLatency', () => {
+    registerCommand('showOpenLatency', () => {
       sampleLatency();
       /* Every window's records, not just this one's - a regression shows up across windows, and the window you happen to
          run this from is rarely the one that was slow. */
@@ -303,10 +373,10 @@ function activate(context) {
       if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();
       /* A switch has to reach the panel the moment it is flipped, which is what writing the stylesheet does. */
       const touched = [SETTING, COLOR_SETTING, EDGE_SETTING]
-        .concat(webview.SWITCHES.map((k) => 'claudeCodeExtras.show.' + k));
+        .concat(webview.SWITCHES.map((k) => PREFIX + 'show.' + k));
       if (!touched.some((k) => e.affectsConfiguration(k))) return;
       const c = cfg().get(COLOR_SETTING, '');
-      if (c && !safeColor(c)) vscode.window.showWarningMessage(`Extras for Claude Code: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
+      if (c && !safeColor(c)) vscode.window.showWarningMessage(`Work Plan for Claude Code: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
       sync();
     }),
     // A Claude Code update arrives as a new folder, so patch it as soon as that folder appears.
@@ -680,8 +750,8 @@ function activate(context) {
    * being looked at; a row's context menu reaches the file that row came from.
    */
   context.subscriptions.push(
-    vscode.commands.registerCommand('claudeCodeExtras.refreshWorkPlan', () => { workplan.refresh(); paintBadge(); }),
-    vscode.commands.registerCommand('claudeCodeExtras.installWorkPlanPlugin', () => syncPlugin(true)),
+    registerCommand('refreshWorkPlan', () => { workplan.refresh(); paintBadge(); }),
+    registerCommand('installWorkPlanPlugin', () => syncPlugin(true)),
     /*
      * Modal, because the description is the thing being read and a notification that slides away is not readable. It is
      * registered without being declared in the manifest, so it stays out of the command palette: it is only ever
@@ -693,7 +763,7 @@ function activate(context) {
      * person needs in order to pick the task up, not for the story of how it got here. Whatever was cut is still in the
      * file, which the title bar opens.
      */
-    vscode.commands.registerCommand('claudeCodeExtras.showWorkPlanDetail', (row) => {
+    registerCommand('showWorkPlanDetail', (row) => {
       if (!row) return;
       const head = [[row.state, row.note].filter(Boolean).join(' · ')];
       if (row.times) head.push(row.times);
@@ -702,12 +772,12 @@ function activate(context) {
       const body = row.detail || 'No description was written for this one.';
       vscode.window.showInformationMessage(row.title, { modal: true, detail: head.concat(['', body]).join('\n') });
     }),
-    vscode.commands.registerCommand('claudeCodeExtras.openWorkPlanFile', async (element) => {
+    registerCommand('openWorkPlanFile', async (element) => {
       let file = element && element.plan && element.plan.file;
       if (!file) {
         const plans = workplan.plans;
         if (!plans.length) {
-          vscode.window.showInformationMessage('Extras for Claude Code: no conversation on this machine is keeping a work plan.');
+          vscode.window.showInformationMessage('Work Plan for Claude Code: no conversation on this machine is keeping a work plan.');
           return;
         }
         if (plans.length === 1) file = plans[0].file;
@@ -740,4 +810,4 @@ function deactivate() {
   try { removal.finishLater(selfPath); } catch (_) { /* likewise */ }
 }
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, renameSettings };

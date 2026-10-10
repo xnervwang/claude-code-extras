@@ -131,7 +131,7 @@ def run(args):
     if not PLAN_NAME.match(os.path.basename(path)):
         raise Refused("%s is not a work plan: a plan is named by its conversation's session id." % path)
     if not settings(os.path.dirname(path))["enabled"]:
-        raise Refused("Work plans are switched off for this editor (claudeCodeExtras.workPlan), so nothing reads this "
+        raise Refused("Work plans are switched off for this editor (claudeCodeWorkPlan.workPlan), so nothing reads this "
                       "file. Track what is left in your reply instead.")
     plan = load(path, args.action == "add")
     now = now_stamp()

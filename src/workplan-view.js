@@ -246,7 +246,7 @@ class WorkPlanProvider {
       item.tooltip = new vscode.MarkdownString(
         `\`${this.problem.step}\` failed.\n\n${this.problem.said || 'It gave no reason.'}\n\n`
         + 'Until this succeeds nothing writes a work plan, so this view stays empty.');
-      item.command = { command: 'claudeCodeExtras.installWorkPlanPlugin', title: 'Try again' };
+      item.command = { command: 'claudeCodeWorkPlan.installWorkPlanPlugin', title: 'Try again' };
       return item;
     }
     if (element.kind === 'root') {
@@ -307,7 +307,7 @@ class WorkPlanProvider {
      * looks like it will do. The file has a button in the title bar and an entry in the row's context menu.
      */
     item.command = {
-      command: 'claudeCodeExtras.showWorkPlanDetail',
+      command: 'claudeCodeWorkPlan.showWorkPlanDetail',
       title: 'Show the description',
       arguments: [{
         title: node.title, state: word, note: node.note, detail: node.detail,

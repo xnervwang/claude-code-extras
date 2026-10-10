@@ -2400,11 +2400,11 @@ console.log('\none switch per addition, wired at both ends');
     .filter((f) => f.endsWith('.js'))
     .map((f) => fs.readFileSync(path.join(root, 'src', 'page', f), 'utf8')).join('\n');
 
-  const noSetting = webview.SWITCHES.filter((k) => !settings['claudeCodeExtras.show.' + k]);
+  const noSetting = webview.SWITCHES.filter((k) => !settings['claudeCodeWorkPlan.show.' + k]);
   if (!noSetting.length) ok(`all ${webview.SWITCHES.length} switches have a setting a person can find`);
   else bad(`no setting for ${noSetting.join(', ')}`);
 
-  const onByDefault = webview.SWITCHES.every((k) => settings['claudeCodeExtras.show.' + k].default === true);
+  const onByDefault = webview.SWITCHES.every((k) => settings['claudeCodeWorkPlan.show.' + k].default === true);
   if (onByDefault) ok('every switch defaults to on, so an upgrade turns nothing off');
   else bad('a switch does not default to on');
 
@@ -2530,8 +2530,8 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
     /* The setting has to reach the plugin, and the view has to be hidden by it. Neither is visible from the other side. */
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
     const view = manifest.contributes.views.claudeCodeExtras[0];
-    const setting = manifest.contributes.configuration.properties['claudeCodeExtras.workPlan'];
-    if (setting && setting.default === true && view.when === 'config.claudeCodeExtras.workPlan') {
+    const setting = manifest.contributes.configuration.properties['claudeCodeWorkPlan.workPlan'];
+    if (setting && setting.default === true && view.when === 'config.claudeCodeWorkPlan.workPlan') {
       ok('the view is hidden by the same setting the hooks read, and starts on');
     } else bad(`setting ${JSON.stringify(setting && setting.default)}, view when ${JSON.stringify(view.when)}`);
   }
@@ -3291,6 +3291,114 @@ console.log('\nevery call on the work plan view is one it has');
     ok('the sweep of abandoned plans is the module\'s function, imported as such');
   } else bad('the sweep of abandoned plans is not called through the module');
   fs.rmSync(stub, { force: true });
+}
+
+/* Settings once lived under claudeCodeExtras.*. Moving them is the one part of the rename that can lose what a person set,
+   so it is run against a stand-in for the editor's settings: what is copied, what is never overwritten, what is left when
+   the editor refuses to clear a name nobody declares, and that a scope is done only once. */
+console.log('\nsettings moved from their old names');
+{
+  const stub = path.join(os.tmpdir(), 'cce-vscode-rename-stub.js');
+  fs.writeFileSync(stub, `
+    class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
+    const store = { values: {}, refuseLegacyClear: false, refuseWrite: false, folders: [{ name: 'f', uri: {} }] };
+    const FIELD = { 1: 'globalValue', 2: 'workspaceValue', 3: 'workspaceFolderValue' };
+    const conf = {
+      inspect: (k) => ({ key: k, globalValue: (store.values.globalValue || {})[k], workspaceValue: (store.values.workspaceValue || {})[k],
+        workspaceFolderValue: (store.values.workspaceFolderValue || {})[k] }),
+      update: async (k, v, target) => {
+        if (store.refuseWrite && !k.startsWith('claudeCodeExtras.')) throw new Error('refused');
+        if (store.refuseLegacyClear && k.startsWith('claudeCodeExtras.')) throw new Error('not a registered configuration');
+        const f = FIELD[target], bag = store.values[f] || (store.values[f] = {});
+        if (v === undefined) delete bag[k]; else bag[k] = v;
+      },
+    };
+    module.exports = {
+      store, TreeItem,
+      TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+      ThemeIcon: class {}, ThemeColor: class {}, MarkdownString: class {}, EventEmitter: class { constructor() { this.event = () => ({ dispose() {} }); } fire() {} },
+      Uri: { file: (p) => ({ fsPath: p }) },
+      ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
+      workspace: { getConfiguration: () => conf, get workspaceFolders() { return store.folders; } },
+      window: {}, commands: {}, extensions: {},
+    };
+  `);
+  const script = `
+    const Module = require('module'), realResolve = Module._resolveFilename;
+    Module._resolveFilename = function (request, ...rest) { return request === 'vscode' ? ${JSON.stringify(stub)} : realResolve.call(this, request, ...rest); };
+    const path = require('path'), fs = require('fs');
+    const vs = require(${JSON.stringify(stub)});
+    const ext = require(${JSON.stringify(path.join(__dirname, '..', 'extension.js'))});
+    const __dirname2 = ${JSON.stringify(path.join(__dirname))};
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname2, '..', 'package.json'), 'utf8'));
+  const memo = () => { const m = new Map(); return { get: (k) => m.get(k), update: async (k, v) => { m.set(k, v); } }; };
+  const context = () => ({ extension: { packageJSON: manifest }, globalState: memo(), workspaceState: memo() });
+  const at = (field, k) => (vs.store.values[field] || {})[k];
+  const run = async () => {
+    const results = [];
+    const reset = (values) => { vs.store.values = JSON.parse(JSON.stringify(values)); vs.store.refuseLegacyClear = false; vs.store.refuseWrite = false; };
+
+    reset({ globalValue: { 'claudeCodeExtras.enabled': false, 'claudeCodeExtras.userMessageColor': 'blue', 'claudeCodeWorkPlan.userMessageColor': 'red' },
+      workspaceValue: { 'claudeCodeExtras.workPlan': false } });
+    const c1 = context();
+    const said = await ext.renameSettings(c1);
+    results.push([at('globalValue', 'claudeCodeWorkPlan.enabled') === false && at('globalValue', 'claudeCodeExtras.enabled') === undefined,
+      'a value under an old name is copied to its new name and cleared from the old one']);
+    results.push([at('globalValue', 'claudeCodeWorkPlan.userMessageColor') === 'red' && at('globalValue', 'claudeCodeExtras.userMessageColor') === undefined,
+      'a value already set under the new name is not overwritten']);
+    results.push([at('workspaceValue', 'claudeCodeWorkPlan.workPlan') === false && at('globalValue', 'claudeCodeWorkPlan.workPlan') === undefined,
+      'a workspace value stays a workspace value']);
+    results.push([/2 in user/.test(said) && /1 in workspace/.test(said), \`what was moved is said, per scope ("\${said}")\`]);
+
+    delete vs.store.values.globalValue['claudeCodeWorkPlan.enabled'];
+    vs.store.values.globalValue['claudeCodeExtras.enabled'] = false;
+    await ext.renameSettings(c1);
+    results.push([at('globalValue', 'claudeCodeWorkPlan.enabled') === undefined,
+      'a scope is moved once: a new name put back to its default does not get the old value again']);
+
+    reset({ globalValue: { 'claudeCodeExtras.show.chime': false } });
+    vs.store.refuseLegacyClear = true;
+    const c2 = context();
+    const said2 = await ext.renameSettings(c2);
+    results.push([at('globalValue', 'claudeCodeWorkPlan.show.chime') === false && at('globalValue', 'claudeCodeExtras.show.chime') === false
+      && c2.globalState.get('claudeCodeExtras.settingsRenamed') === true && /left in place/.test(said2),
+      'when the editor will not clear an old name, the value is still moved and the old line is left, as said']);
+
+    reset({ globalValue: { 'claudeCodeExtras.enabled': false } });
+    vs.store.refuseWrite = true;
+    const c3 = context();
+    await ext.renameSettings(c3);
+    results.push([c3.globalState.get('claudeCodeExtras.settingsRenamed') !== true && at('globalValue', 'claudeCodeExtras.enabled') === false,
+      'a copy that fails leaves the old value and the scope not done, so the next start tries again']);
+    return results;
+  };
+    run().then((r) => process.stdout.write(JSON.stringify(r)), (e) => process.stdout.write(JSON.stringify({ error: String(e && e.stack || e) })));
+  `;
+  let results;
+  try { results = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); }
+  catch (e) { results = { error: e.message }; }
+  if (results.error) bad('moving settings threw: ' + results.error);
+  else for (const [cond, label] of results) (cond ? ok : bad)(label);
+  fs.rmSync(stub, { force: true });
+}
+
+/* The extension's identifier stays claude-code-extras, and so do the names it keeps its own state under; everything a
+   person reads or types is Work Plan. A name left behind in one of these places is the old one coming back. */
+console.log('\nthe name a person sees');
+{
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const c = manifest.contributes;
+  const keys = [].concat(c.configuration).flatMap((x) => Object.keys(x.properties));
+  const stray = keys.filter((k) => !k.startsWith('claudeCodeWorkPlan.'))
+    .concat(c.commands.filter((x) => !x.command.startsWith('claudeCodeWorkPlan.')).map((x) => x.command));
+  const shown = JSON.stringify([manifest.displayName, c.commands.map((x) => x.title), c.viewsContainers, [].concat(c.configuration).map((x) => x.title)]);
+  if (!stray.length && !/Extras for Claude Code/.test(shown) && manifest.displayName === 'Work Plan for Claude Code') {
+    ok('every setting and command is named under claudeCodeWorkPlan, and every title says Work Plan for Claude Code');
+  } else bad('old names in the manifest: ' + JSON.stringify(stray) + (/Extras for Claude Code/.test(shown) ? ' and an old title' : ''));
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8').split('\n');
+  const old = readme.filter((l) => /Extras for Claude Code/.test(l) || (/claudeCodeExtras\./.test(l) && !/by earlier versions are copied/.test(l)));
+  if (!old.length) ok('the README names nothing by its old name, apart from saying where old settings went');
+  else bad('the README still uses an old name: ' + old.map((l) => l.trim().slice(0, 80)).join(' | '));
 }
 
 console.log('\na window whose install was replaced by a rebuild of the same version');

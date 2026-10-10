@@ -1,4 +1,4 @@
-# Extras for Claude Code
+# Work Plan for Claude Code
 
 This VS Code extension edits the installed Claude Code extension to add a Claude-maintained work plan to its chat panel. The plan keeps unfinished work on screen and puts it back in front of Claude after older turns are compacted. It also adds timestamps; reply duration, context use, running spend, and model; a filterable table of contents with message stepping; a context meter with a hover breakdown; sub-agent tags and filters; a footer button for Claude Code's Focus view; chimes; and session details.
 Not affiliated with Anthropic. Requires Anthropic's Claude Code extension, which it adds nothing without, and VS Code 1.94 or later. 24 settings, 11 commands.
@@ -7,25 +7,25 @@ Discuss tasks in parallel threads: you can raise a new topic before finishing an
 
 ## Install
 
-Search for **Extras for Claude Code** in the Extensions view, or run
+Search for **Work Plan for Claude Code** in the Extensions view, or run
 `code --install-extension xnervwang.claude-code-extras`. Anthropic's Claude Code extension installs
 as a dependency.
 
 Reload the VS Code window twice after installing. Run
-`Extras for Claude Code: Show Status` for the patch status. In a Remote SSH window, install on the
+`Work Plan for Claude Code: Show Status` for the patch status. In a Remote SSH window, install on the
 remote.
 
-Extras for Claude Code edits files inside the installed Claude Code extension. The patch is reverted
+Work Plan for Claude Code edits files inside the installed Claude Code extension. The patch is reverted
 by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
 alone with a warning.
 
-Verified against Claude Code 2.1.292 and 2.1.294; compatibility with other builds unknown.
+Verified against Claude Code 2.1.295 and 2.1.296; compatibility with other builds unknown.
 
 ## Work plan
 
 The work plan is a tree of what the conversation you are looking at still has to do, in its own activity-bar view. Compaction summarizes older turns to fit the context window, so Claude can lose track of the main task after several digressions. The plan stays in a file outside the conversation, named for its session ID, and a hook injects the open rows every turn: a task raised twenty turns and several compactions ago remains in front of Claude and visible in the plan's activity-bar view.
 
-Claude keeps the plan current; you do not. The extension ships a Claude Code plugin, installed on first activation, that writes it. Every turn, the plugin puts open rows in front of the model, including how long `doing` and `waiting` rows have been in that state when a time is recorded. It also gives Claude the full command line for `plan-row.py`, a small command shipped with the plugin. Claude uses it to change a row or add one; the command gets times from the clock. The plugin says something at the end of a turn that changed things without touching the plan, and refuses a row whose description is longer than the view shows. After a batch of tool calls, it also reminds Claude to mark the row it is working on, once per turn, if the main thread has made at least three tool calls or changed at least two things besides the plan, and no row is marked `doing`. After each batch of tool calls and at the end of each turn, a hook reads the context size from the transcript. At 170k, 180k, or 195k tokens in a 200K window, or 960k, 970k, or 995k in a 1M window, it asks Claude to use `plan-row.py set <row> --detail TEXT` to give every `doing` row the exact next step, what not to do, and the user's words that appear nowhere else. If the plan has not been written since that request, the hook repeats it at the end of each turn while the context remains above the mark; `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` moves the marks down when it lowers the compaction line. After compaction, a second hook tells Claude that the context is at its smallest, gives the plan file path, and asks Claude to read it with a tool before doing anything else; neither hook says anything without a plan, and both say nothing when the latest reply matches `claudeCodeExtras.workPlanQuietWhenReplyMatches`, a regular expression that is empty by default and then matches nothing. A new request becomes `discussing`, unless you asked for work that Claude starts now: that goes straight to `doing`. A request to look into something gets its own row, `doing` while Claude looks and `done` when it answers; possible follow-up work goes in as `discussing`. Approval makes a row `todo`; starting work makes it `doing`, before the work; finishing makes it `done`. A started row held up by someone or something outside the conversation becomes `waiting`, with what it waits on in its note, and remains open. A decision against a row makes it `dropped` with the reason; leaving it for later makes it `parked` with the reason.
+Claude keeps the plan current; you do not. The extension ships a Claude Code plugin, installed on first activation, that writes it. Every turn, the plugin puts open rows in front of the model, including how long `doing` and `waiting` rows have been in that state when a time is recorded. It also gives Claude the full command line for `plan-row.py`, a small command shipped with the plugin. Claude uses it to change a row or add one; the command gets times from the clock. The plugin says something at the end of a turn that changed things without touching the plan, and refuses a row whose description is longer than the view shows. After a batch of tool calls, it also reminds Claude to mark the row it is working on, once per turn, if the main thread has made at least three tool calls or changed at least two things besides the plan, and no row is marked `doing`. After each batch of tool calls and at the end of each turn, a hook reads the context size from the transcript. At 170k, 180k, or 195k tokens in a 200K window, or 960k, 970k, or 995k in a 1M window, it asks Claude to use `plan-row.py set <row> --detail TEXT` to give every `doing` row the exact next step, what not to do, and the user's words that appear nowhere else. If the plan has not been written since that request, the hook repeats it at the end of each turn while the context remains above the mark; `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` moves the marks down when it lowers the compaction line. After compaction, a second hook tells Claude that the context is at its smallest, gives the plan file path, and asks Claude to read it with a tool before doing anything else; neither hook says anything without a plan, and both say nothing when the latest reply matches `claudeCodeWorkPlan.workPlanQuietWhenReplyMatches`, a regular expression that is empty by default and then matches nothing. A new request becomes `discussing`, unless you asked for work that Claude starts now: that goes straight to `doing`. A request to look into something gets its own row, `doing` while Claude looks and `done` when it answers; possible follow-up work goes in as `discussing`. Approval makes a row `todo`; starting work makes it `doing`, before the work; finishing makes it `done`. A started row held up by someone or something outside the conversation becomes `waiting`, with what it waits on in its note, and remains open. A decision against a row makes it `dropped` with the reason; leaving it for later makes it `parked` with the reason.
 
 If A needs B finished first, B becomes a child of A: a digression sits under the thing it interrupted. Rows have numbers such as 1, 2, and 2.1, so you can name one in conversation without quoting its title. The number is its place in the file; finishing a row leaves a gap rather than renumbering what follows. Unfinished rows appear first, newest first within that. The activity-bar badge counts `discussing` and `todo` rows and is absent, rather than zero, when there are none.
 
@@ -56,39 +56,42 @@ edge, and the footer controls. Thinking and tool calls shown, which is the defau
 
 ## Settings
 
-Open `Extras for Claude Code: Settings` for the settings UI. Options cover message times, reply figures,
+Open `Work Plan for Claude Code: Settings` for the settings UI. Options cover message times, reply figures,
 sub-agent tags, navigation, footer controls, sounds, session details, background sessions, the work plan and
 its offer thresholds, a pattern that keeps compaction hooks quiet during relayed conversations, and
 panel-opening latency recording. Message appearance:
-`claudeCodeExtras.userMessageColor` and `claudeCodeExtras.userMessageEdge`.
+`claudeCodeWorkPlan.userMessageColor` and `claudeCodeWorkPlan.userMessageEdge`.
 
 Most settings apply live without a reload; installing or upgrading the patch requires a reload.
 
-Turning `claudeCodeExtras.enabled` off stops the additions from appearing in the panel, but it does
+Settings named `claudeCodeExtras.*` by earlier versions are copied to the same names under `claudeCodeWorkPlan.*`
+the first time this version starts. Ones kept in a remote machine's own settings file are not moved; rename those by hand.
+
+Turning `claudeCodeWorkPlan.enabled` off stops the additions from appearing in the panel, but it does
 not undo the patch. The patch stays in Claude Code's installed files, and the injected script, its
 poll, and the hooks keep running. To restore the original files, run
-`Extras for Claude Code: Remove from Claude Code (restore original files)` or uninstall this
+`Work Plan for Claude Code: Remove from Claude Code (restore original files)` or uninstall this
 extension.
 
-Turning off `claudeCodeExtras.workPlan` hides the view and stops plan updates. The registered
+Turning off `claudeCodeWorkPlan.workPlan` hides the view and stops plan updates. The registered
 plugin's skill description still loads in Claude Code; use
-`Extras for Claude Code: Stop Loading the Work Plan Plugin` to stop loading it.
+`Work Plan for Claude Code: Stop Loading the Work Plan Plugin` to stop loading it.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `Extras for Claude Code: Settings` | Open this extension's VS Code settings |
-| `Extras for Claude Code: Toggle On/Off` | Toggle additions |
-| `Extras for Claude Code: Turn On` | Show additions |
-| `Extras for Claude Code: Turn Off` | Hide additions |
-| `Extras for Claude Code: Remove from Claude Code (restore original files)` | Restore original files |
-| `Extras for Claude Code: Show Status` | Report patch status and what was patched |
-| `Extras for Claude Code: Refresh Work Plan` | Refresh work plan |
-| `Extras for Claude Code: Open the Work Plan File` | Open current plan file |
-| `Extras for Claude Code: Install the Work Plan Plugin for Claude Code` | Register companion plugin |
-| `Extras for Claude Code: Show How Long Opening a Panel Took` | Read recorded panel-opening times |
-| `Extras for Claude Code: Stop Loading the Work Plan Plugin` | Remove plugin from Claude Code settings |
+| `Work Plan for Claude Code: Settings` | Open this extension's VS Code settings |
+| `Work Plan for Claude Code: Toggle On/Off` | Toggle additions |
+| `Work Plan for Claude Code: Turn On` | Show additions |
+| `Work Plan for Claude Code: Turn Off` | Hide additions |
+| `Work Plan for Claude Code: Remove from Claude Code (restore original files)` | Restore original files |
+| `Work Plan for Claude Code: Show Status` | Report patch status and what was patched |
+| `Work Plan for Claude Code: Refresh Work Plan` | Refresh work plan |
+| `Work Plan for Claude Code: Open the Work Plan File` | Open current plan file |
+| `Work Plan for Claude Code: Install the Work Plan Plugin for Claude Code` | Register companion plugin |
+| `Work Plan for Claude Code: Show How Long Opening a Panel Took` | Read recorded panel-opening times |
+| `Work Plan for Claude Code: Stop Loading the Work Plan Plugin` | Remove plugin from Claude Code settings |
 
 ## Known limits
 
@@ -97,7 +100,7 @@ plugin's skill description still loads in Claude Code; use
 - Uninstallation unregisters the plugin: Claude Code deletes its data directory; plans copied
   beforehand to `~/.claude/agent-work-plan-plans-<timestamp>/`.
 - Disabling the extension, as opposed to uninstalling it, leaves the patch in place. Run
-  `Extras for Claude Code: Remove from Claude Code (restore original files)` first.
+  `Work Plan for Claude Code: Remove from Claude Code (restore original files)` first.
 - Versions up to 1.0.8 left an entry in VS Code's webview cache every three seconds; after weeks,
   Claude Code panels in editor tabs could stay blank in every window. 1.0.9 clears that cache the
   first time a panel opens. If panels stay blank after uninstalling 1.0.8 or earlier, quit VS Code
