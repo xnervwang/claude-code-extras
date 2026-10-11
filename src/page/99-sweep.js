@@ -16,10 +16,10 @@
   var PROMPT_OF = new WeakMap();
 
   /*
-   * Claude Code (2.1.295 and later) draws a time of its own on your messages, and on a reply with text once the reply
-   * has finished, while its showMessageTimestamps is on. Where that time is on screen this script leaves its own out and
-   * keeps only what Claude Code does not show: the figures and the agent tag. Thinking, each tool call and the span it
-   * took keep their times, since nothing else gives them one.
+   * Claude Code (2.1.284 and later, on by default from 2.1.290) draws a time of its own on your messages, and on a
+   * reply with text once the reply has finished, while its showMessageTimestamps is on. Where that time is on screen
+   * this script leaves its own out and keeps only what Claude Code does not show: the figures and the agent tag.
+   * Thinking, each tool call and the span it took keep their times, since nothing else gives them one.
    *
    * Whether a message carries that time is read off the page rather than guessed from a version. The switch behind it
    * is read off the panel's own object, and when it turns over every mark already settled is made again once - a

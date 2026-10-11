@@ -201,7 +201,7 @@ console.log('\nwhat the page costs, in a browser');
       } else bad('a press of the Focus view button: ' + (pressed.error || JSON.stringify(
         { clicked: pressed.clicked, calls: pressed.focusCalls, after: pressed.focusAfter, label: pressed.focusLabelAfter })));
       /* Each reply's figures belong on its first block. Claude Code may draw a row of its own ahead of the blocks - since
-         2.1.295 a time line on every reply that has text - and that row carries no block. */
+         2.1.284, on by default from 2.1.290, a time line on every reply that has text - and that row carries no block. */
       const stamped = harness.run(browser, { turns: 10, panelStamp: true });
       if (!short.error && short.figuresAt.length && short.figuresAt.every((i) => i === 0)
           && !stamped.error && stamped.figuresAt.length && stamped.figuresAt.every((i) => i === 1)) {

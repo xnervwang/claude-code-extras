@@ -8,10 +8,10 @@
  *
  * The in-page script treats the children of a reply element as its blocks, give or take rows of the panel's own that
  * carry none. The stand-in panel the page tests run on is built to that same assumption, so it can never contradict it:
- * when 2.1.295 started drawing a time line ahead of the blocks of every reply that has text, every check here stayed
- * green while the figures dropped off those replies. This reads the real thing instead - the children the bundle gives
- * the element with the reply test id - and names each one, so a child nobody has looked at fails the run rather than
- * reaching a panel unnoticed.
+ * when Claude Code began drawing a time line ahead of the blocks of every reply that has text (2.1.284, on by default
+ * from 2.1.290), every check here stayed green while the figures dropped off those replies. This reads the real thing
+ * instead - the children the bundle gives the element with the reply test id - and names each one, so a child nobody
+ * has looked at fails the run rather than reaching a panel unnoticed.
  */
 
 const TESTID = '"data-testid":"assistant-message"';
