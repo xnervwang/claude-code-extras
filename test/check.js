@@ -1420,6 +1420,27 @@ console.log('\nbackground sessions');
   if (api.__cceScheduleCount() >= 2) ok('the sessions open the button even with no agent running');
   else bad('the button would stay hidden with only background sessions');
 
+  /* A command running in the background opens the button as well, and is named on it: the official map lists such
+     commands, but its button waits for an agent. Each case gets a fresh copy, since the counts are held briefly. */
+  {
+    const frag = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '82-scheduled-tasks.js'), 'utf8');
+    const withTasks = (n) => {
+      const tasks = new Map();
+      for (let i = 0; i < n; i++) tasks.set('t' + i, { taskId: 't' + i, taskType: 'local_bash', description: 'sleep 1230' });
+      const env = Object.assign({}, sandbox, { window: {},
+        sigValue: (name) => (name === 'sessionId' ? 'nobody' : name === 'backgroundTasks' ? tasks : undefined) });
+      new vm.Script(`(function(){${frag}})()`, { filename: '82-scheduled-tasks.js' }).runInNewContext(env);
+      return env.window;
+    };
+    const one = withTasks(1), two = withTasks(2), none = withTasks(0), mixed = withTasks(1);
+    const got = [one.__cceScheduleCount(), one.__cceAgentsLabel('0 agents', 0), two.__cceAgentsLabel('0 agents', 0),
+      none.__cceScheduleCount(), none.__cceAgentsLabel('0 agents', 0), mixed.__cceAgentsLabel('2 agents', 2)];
+    const want = [1, '1 task', '2 tasks', 0, '0 agents', '2 agents · 1 task'];
+    if (JSON.stringify(got) === JSON.stringify(want)) {
+      ok('a running background command opens the button and is named on it, beside any agents');
+    } else bad(`background commands: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  }
+
   sandbox.sigValue = (name) => (name === 'sessionId' ? 'someone-else' : undefined);
   calls.length = 0;
   if (api.__cceSchedule(h) === null) ok("another conversation's sessions are not shown here");

@@ -266,7 +266,15 @@
   };
 
   // The footer asks for these on every one of its renders, so the answer is held briefly rather than recomputed each time.
-  var bgCountsAt = 0, bgCounts = { timers: 0, bg: 0, live: 0, waiting: 0 };
+  var bgCountsAt = 0, bgCounts = { timers: 0, bg: 0, live: 0, waiting: 0, tasks: 0 };
+  /* The commands running in the background - a build, a test run, a `sleep` used as a timer. The official agent map
+     already lists them under its own heading, but its button appears only once the conversation has started an agent,
+     so a conversation whose only background work is a command had no way to the list short of typing /tasks. The
+     panel keeps only the running ones here; a finished one moves to a list of outcomes. */
+  var runningTasks = function(){
+    var m = sigValue('backgroundTasks');
+    return m && typeof m.size === 'number' ? m.size : 0;
+  };
   var ourCounts = function(){
     var now = Date.now();
     if (now - bgCountsAt < 500) return bgCounts;
@@ -276,13 +284,13 @@
       if (bgLive(bgs[i])) live++;
       if (bgs[i].state === 'blocked') waiting++;
     }
-    bgCounts = { timers: mySchedules().length, bg: bgs.length, live: live, waiting: waiting };
+    bgCounts = { timers: mySchedules().length, bg: bgs.length, live: live, waiting: waiting, tasks: runningTasks() };
     return bgCounts;
   };
   // Opens the footer button: anything of ours to show is reason enough, finished sessions included, since their results
   // are what someone comes to read.
   window.__cceScheduleCount = function(){
-    try { var c = ourCounts(); return c.timers + c.bg; } catch (e) { return 0; }
+    try { var c = ourCounts(); return c.timers + c.bg + c.tasks; } catch (e) { return 0; }
   };
 
   // The button's own label counts agents, so on a session with only our kinds it would read "0 agents". Detached
@@ -292,8 +300,9 @@
       if (typeof official !== 'string') return official;
       var c = ourCounts(), extra = [];
       if (c.timers) extra.push(c.timers + (c.timers === 1 ? ' timer' : ' timers'));
+      if (c.tasks) extra.push(c.tasks + (c.tasks === 1 ? ' task' : ' tasks'));
       if (c.live) extra.push(c.live + ' bg' + (c.waiting ? ' (' + c.waiting + ' waiting)' : ''));
-      else if (c.bg && !(count > 0) && !c.timers) extra.push(c.bg + ' bg done');
+      else if (c.bg && !(count > 0) && !c.timers && !c.tasks) extra.push(c.bg + ' bg done');
       if (!extra.length) return official;
       return count > 0 ? official + ' · ' + extra.join(' · ') : extra.join(' · ');
     } catch (e) { return official; }
