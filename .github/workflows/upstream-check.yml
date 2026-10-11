@@ -37,7 +37,8 @@ jobs:
           set -o pipefail
           code=0
           node test/against-latest.js 2>&1 | tee report.txt || code=$?
-          # The script tells two failures apart and so must this: 1 is an edit that no longer matches, which is the news
+          # The script tells two failures apart and so must this: 1 is a check that no longer holds - an edit that does not
+          # match, or a reply holding a child not seen before - which is the news
           # this check exists to carry, and 2 is never having reached the marketplace. Filing the second as the first
           # puts an untrue claim in the issue tracker, and a check that cries wolf stops being read.
           echo "code=$code" >> "$GITHUB_OUTPUT"
@@ -57,14 +58,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Open an issue when an edit stopped matching
+      - name: Open an issue when the check failed
         if: steps.upstream.outputs.code == '1'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const version = '${{ steps.upstream.outputs.version }}' || 'an unknown build';
-            const title = `Claude Code ${version} no longer matches one of the edits`;
+            const title = `Claude Code ${version} failed the upstream check`;
 
             // One issue per build: a four-times-a-day schedule would otherwise file the same news repeatedly.
             const existing = await github.paginate(github.rest.issues.listForRepo, {
@@ -79,10 +80,12 @@ jobs:
             try { report = fs.readFileSync('report.txt', 'utf8'); } catch (_) {}
 
             const body = [
-              `The upstream check ran against Claude Code **${version}** and at least one edit did not match exactly once.`,
+              `The upstream check ran against Claude Code **${version}** and failed. The report below says whether an edit did not`,
+              "match exactly once or a reply element in the panel's bundle has a child kind the suite has not seen before.",
               '',
-              'Until it is fixed, the extension will refuse to patch that build - deliberately, since a partial patch',
-              'is worse than none - so anyone who updates loses the additions and gets a warning instead.',
+              'If an edit does not match exactly once, the extension deliberately refuses to patch that build because a partial',
+              'patch is worse than none; anyone who updates loses the additions and gets a warning instead. If a reply has a new',
+              'kind of child, the patch still applies, but the additions may land in the wrong place.',
               '',
               '### What the check said',
               '',
@@ -96,6 +99,9 @@ jobs:
               'matches zero times means the code it anchors on was reshaped; find the new shape in the published',
               'bundle and widen the pattern to the part that is stable. An edit matching more than once means the',
               'pattern lost the detail that told its site apart from its siblings.',
+              '',
+              "`test/reply-shape.js` names each child of a reply read from the bundle. See what the new child draws and check where",
+              "the page script's figures and times land around it. Then add its kind to `KNOWN_REPLY_CHILDREN` in `test/check.js`.",
               '',
               'Run `node test/against-latest.js` to reproduce, and bump the adapter `VERSION` with any change so an',
               'already-patched install is repatched rather than skipped.',

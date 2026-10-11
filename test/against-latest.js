@@ -14,7 +14,8 @@
  * edit still matches exactly once. That failure is caught at runtime instead, by the marker the script raises in the
  * panel when it can no longer find any message.
  *
- * Exits non-zero when an edit does not match exactly once, which is what the workflow turns into an issue.
+ * Exits non-zero when an edit does not match exactly once, or when a reply holds a child of a kind not seen before
+ * (test/reply-shape.js); the workflow turns either into an issue.
  */
 const fs = require('fs');
 const os = require('os');
@@ -116,10 +117,10 @@ async function fetchPackage(url, dest) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
   }
   if (failed) {
-    console.log(`\nAt least one edit no longer matches Claude Code ${version}.`);
+    console.log(`\nA check failed against Claude Code ${version}: an edit no longer matches, or a reply holds a child not seen before.`);
     process.exit(1);
   }
-  console.log(`\nEvery edit still matches Claude Code ${version}.`);
+  console.log(`\nEvery edit still matches Claude Code ${version}, and a reply holds nothing new.`);
 })().catch((err) => {
   console.error(`upstream check could not run: ${err.message}`);
   process.exit(2);

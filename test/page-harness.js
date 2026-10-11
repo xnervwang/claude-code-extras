@@ -129,6 +129,8 @@ const SETUP = String.raw`
     m.setAttribute('data-testid', 'assistant-message');
     var message = { uuid: replyId(++replies), timestamp: ts, model: 'claude-opus-5-5' };
     if (owner) message.parentToolUseId = owner;
+    // Claude Code's own time line, drawn ahead of the blocks and carrying none of them.
+    if (CFG.panelStamp) { var stamp = document.createElement('div'); stamp.setAttribute('data-message-stamp', ''); m.appendChild(stamp); }
     for (var r = 0; r < KINDS.length; r++) {
       var row = document.createElement('div');
       row.className = 'timelineMessage_ab12';
@@ -206,6 +208,17 @@ const PHASES = String.raw`
       R.idleSweeps = b.n - a.n;
       R.idleChild = mut.child; R.idleAttr = mut.attr; R.idleChars = mut.chars; R.idleText = b.text - a.text;
       R.probesMade = PROBES.made; R.probesCancelled = PROBES.cancelled;
+      /* For each reply, which child carries the figures - the reply's duration is the one figure every reply has. */
+      R.figuresAt = [];
+      var replyEls = document.querySelectorAll('[data-testid="assistant-message"]');
+      for (var fi = 0; fi < replyEls.length; fi++) {
+        var kids = replyEls[fi].children, at = -1;
+        for (var fk = 0; fk < kids.length && at < 0; fk++) {
+          var lab = kids[fk].querySelector('[data-cce-ts]') || (kids[fk].hasAttribute('data-cce-ts') ? kids[fk] : null);
+          if (lab && /\d+s|\d+m/.test(lab.getAttribute('data-cce-ts') || '') && /\u00b7|opus/.test(lab.getAttribute('data-cce-ts'))) at = fk;
+        }
+        R.figuresAt.push(at);
+      }
       R.viewButton = !!document.querySelector('[data-cce-view]');
       var fb = document.querySelector('[data-cce-focus-btn]');
       R.focusButton = !!fb;

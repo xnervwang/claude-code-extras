@@ -20,6 +20,7 @@
   many checks it runs depends on how many Claude Code builds are installed, so the count is not quoted here.
 - `test/against-latest.js` checks the same edits against the current marketplace build.
 - `test/page-harness.js` runs the injected script in a headless browser against a stand-in panel, for the checks on what the page costs.
+- `test/reply-shape.js` reads what a reply element holds out of a real bundle, which the stand-in panel cannot contradict.
 - `build/pack.sh` produces the `.vsix` without npm.
 - `build/supported.js`, `build/update-versions.js`, and `supported-versions.json` maintain the record of verified Claude Code builds.
 
@@ -56,7 +57,7 @@ Keep the early exit in the injected script's React fiber tree loop. It runs for 
 
 Claude Code ships roughly once per working weekday. If a release reshapes patched code, the panel can lose every addition at once. On a user's machine, that may become apparent only after the update is installed.
 
-Run `node test/against-latest.js` to fetch the current marketplace build and check every edit against it. `.github/workflows/upstream-check.yml` runs that check four times a day. It files one issue per build when an edit stops matching and puts the report in the run summary either way.
+Run `node test/against-latest.js` to fetch the current marketplace build and check every edit against it. `.github/workflows/upstream-check.yml` runs that check four times a day. It files one issue per build when an edit stops matching or a reply holds a child not seen before, and puts the report in the run summary either way.
 
 These checks cannot catch changes to class names or test ids used by the in-page script. Every edit can still match exactly once while those lookups break. That failure appears at runtime through a marker the script raises in the panel.
 

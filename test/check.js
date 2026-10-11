@@ -200,6 +200,14 @@ console.log('\nwhat the page costs, in a browser');
         ok('a press turns Focus view on through the panel\'s own object, and the label follows');
       } else bad('a press of the Focus view button: ' + (pressed.error || JSON.stringify(
         { clicked: pressed.clicked, calls: pressed.focusCalls, after: pressed.focusAfter, label: pressed.focusLabelAfter })));
+      /* Each reply's figures belong on its first block. Claude Code may draw a row of its own ahead of the blocks - since
+         2.1.295 a time line on every reply that has text - and that row carries no block. */
+      const stamped = harness.run(browser, { turns: 10, panelStamp: true });
+      if (!short.error && short.figuresAt.length && short.figuresAt.every((i) => i === 0)
+          && !stamped.error && stamped.figuresAt.length && stamped.figuresAt.every((i) => i === 1)) {
+        ok('each reply\'s figures go on its first block, also behind a time line Claude Code draws ahead of the blocks');
+      } else bad('where the figures went, by child of each reply: plain ' + JSON.stringify(short.figuresAt).slice(0, 80)
+        + ', behind a time line ' + (stamped.error || JSON.stringify(stamped.figuresAt).slice(0, 80)));
       const older = harness.run(browser, { turns: 10, focusCtx: false });
       if (!older.error && older.viewButton && !older.focusButton) ok('a Claude Code build without Focus view gets no button');
       else bad('without Focus view in the panel: ' + (older.error || `the button was ${older.focusButton ? 'shown' : 'missing, and so was the view button'}`));
@@ -554,6 +562,24 @@ function checkEdits(adapter, src, label) {
   if (r.error) bad(`${label}: patchSource refused: ${r.error}`);
   else if (!r.out.includes(adapter.MARK)) bad(`${label}: patched output carries no marker`);
   else ok(`${label}: patched output parses and is marked`);
+  if (adapter.name === 'Claude Code panel') checkReplyShape(src, label);
+}
+
+/* What a reply holds, read out of the real bundle (test/reply-shape.js says why the stand-in panel cannot tell). The
+   page script puts a reply's figures on its first block, behind any row of the panel's own; a child of a kind not seen
+   before is a change in the panel nobody has checked that against, so it fails here - before the version record can
+   call the build verified, and in the scheduled run against the marketplace before the update arrives. */
+const replyShape = require('./reply-shape');
+const KNOWN_REPLY_CHILDREN = ['time line', 'blocks', 'actions'];
+function checkReplyShape(src, label) {
+  const r = replyShape.replyChildren(src);
+  if (r.error) { bad(`${label}: what a reply holds could not be read: ${r.error}`); return; }
+  const kinds = r.children.map((c) => c.kind);
+  const strange = r.children.filter((c) => !KNOWN_REPLY_CHILDREN.includes(c.kind));
+  if (kinds.filter((k) => k === 'blocks').length !== 1) bad(`${label}: a reply's blocks are not one child of it any more (${kinds.join(', ')})`);
+  else if (strange.length) bad(`${label}: a reply holds a child not seen before - check where the figures land: `
+    + strange.map((c) => c.code.slice(0, 120)).join(' | '));
+  else ok(`${label}: a reply holds ${kinds.join(', ')}, all of them known`);
 }
 
 /* Not a failure: a shape kept for older builds is expected to go unused once those builds are gone from this machine.
@@ -566,6 +592,23 @@ function reportUnusedShapes() {
     const note = s.edit.shapes && s.edit.shapes[s.index] && s.edit.shapes[s.index].note;
     console.log(`  note  ${s.adapter.name}: "${s.edit.name}" shape ${s.index + 1}${note ? ' (' + note + ')' : ''}`);
   }
+}
+
+console.log('\nwhat a reply holds, read from a bundle');
+{
+  const rs = require('./reply-shape');
+  const stamp = 'function sA({message:$,context:J,placement:Z,busy:X}){if(!J.on)return null;return F(sB,{at:1})}'
+    + 'function sB({at:$}){return F("div",{"data-message-stamp":"",children:$})}';
+  const reply = (kids) => stamp + 'var M=function({message:Z,context:X}){return R("div",{"data-testid":"assistant-message",role:"article",'
+    + 'children:[' + kids + ']})};';
+  const known = rs.replyChildren(reply('F(sA,{message:Z,context:X,placement:"response",busy:J.busy}),Z.content.map((W)=>F(B,{content:W,s:"a,]b"})),'
+    + 'H&&R("div",{className:k0.assistantActions,children:[1]})'));
+  const extra = rs.replyChildren(reply('F(sA,{message:Z,context:X,placement:"response",busy:J.busy}),F(Q9,{message:Z}),Z.content.map((W)=>F(B,{content:W}))'));
+  const kinds = (r) => (r.children || []).map((c) => c.kind).join(', ');
+  if (kinds(known) === 'time line, blocks, actions') ok('a time line ahead of the blocks and an action bar after them are each named, past a bracket inside a string');
+  else bad(`the known shape read as "${kinds(known)}"${known.error ? ' - ' + known.error : ''}`);
+  if (kinds(extra) === 'time line, unknown, blocks') ok('a child of a kind not seen before is named unknown');
+  else bad(`an unseen child read as "${kinds(extra)}"`);
 }
 
 console.log('\nedits');

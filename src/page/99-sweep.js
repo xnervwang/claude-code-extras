@@ -114,7 +114,7 @@
         }
       }
       fullMsgs++;
-      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '';
+      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '', figured = false;
       blocks += rows.length;
       for (var r = 0; r < rows.length; r++) {
         var row = rows[r], cx = ctxOf(row), v = '';
@@ -142,7 +142,11 @@
           if (v && (t === 'tool_use' || t === 'server_tool_use') && typeof cx.block.cceResultAt === 'number') v += '\u2192' + fmt(cx.block.cceResultAt).replace(/^\d\d\/\d\d /, '');
         }
         if (annot && !isOff('subAgentTags')) v += agentTag(agentOf(cx.message));
-        if (annot && r === 0) {
+        /* The figures go on the first row that is a block, not on the first child: Claude Code puts a time line of its own
+           ahead of the blocks of a reply that has text, and that row carries no block, so "the first child" left a
+           reply with text without its figures while every tool call kept them. */
+        if (annot && !figured) {
+          figured = true;
           var bits = [];
           var t0 = turnStartFor(promptTs, cx.message.timestamp);
           if (t0 !== null && !isOff('replyDuration')) { var d = dur(cx.message.timestamp - t0); if (d) bits.push(d); }
