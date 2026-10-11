@@ -214,6 +214,11 @@ function liveCss(opts = {}) {
   /* Kept whenever anything is on: this one rule renders the attribute that carries the time, the sub-agent tag, the
      duration and the figures, so dropping it would switch off four things instead of one. */
   if (on) css += STAMP_CSS + '\n';
+  /* Claude Code (2.1.284 and later) draws its own time on your messages and on replies with text: at the top right, in
+     its own format, and on those two kinds only. Shown beside this script's, the same message carried two times in two
+     places, and a reply's tool calls a third format - so while this script's times are on, Claude Code's are hidden and
+     one kind of time is shown everywhere. Its date line where the day changes is another element and stays. */
+  if (on && !off.includes('timestamps')) css += '[data-message-stamp] time{display:none !important;}\n';
   if (color) css += `${USER_SELECTOR},${USER_SELECTOR} *{color:${color} !important;}\n`;
   /* The bar itself is in the injected script; this is only the switch that turns it off, written as nothing at all when
      it is on so that a stylesheet carries no trace of a setting left at its default. */

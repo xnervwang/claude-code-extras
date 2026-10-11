@@ -103,7 +103,7 @@ const SETUP = String.raw`
   };
   // What the panel hands its components as \`context\`, reduced to the part the button uses. A build without Focus view
   // has none, which is what \`focusCtx: false\` stands for.
-  var focusCtx = { on: !!CFG.focus, calls: [], showMessageTimestamps: CFG.panelStamp === 'time', get focusViewEnabled(){ return this.on; },
+  var focusCtx = { on: !!CFG.focus, calls: [], get focusViewEnabled(){ return this.on; },
     setFocusView: function(v){ this.calls.push(v); this.on = v; return Promise.resolve(); } };
   // Not 'top': that is the window's own read-only property, and a global of that name is silently left as the window.
   var sessionFiber = { memoizedProps: CFG.focusCtx === false ? { session: session } : { session: session, context: focusCtx },
@@ -295,16 +295,7 @@ const PHASES = String.raw`
     R.rebuildSweeps = b.n - a.n; R.rebuildCdp = b.cdp - a.cdp;
     R.prompts = CFG.turns + 1; R.compactions = compactions;
     if (CFG.clickFocus) return clickFocus();
-    if (CFG.flipStamps) return flipStamps();
     finish();
-  };
-  /* Claude Code's own times switched off: its stamps go from the page and every reply and prompt, settled or not,
-     shows this script's time again. */
-  var flipStamps = function(){
-    focusCtx.showMessageTimestamps = false;
-    var ts = document.querySelectorAll('[data-message-stamp] time');
-    for (var i = 0; i < ts.length; i++) ts[i].parentNode.removeChild(ts[i]);
-    later(1200, function(){ readTimes('After'); finish(); });
   };
   /* The button pressed once: what it asked of the panel, and what it says afterwards. */
   var clickFocus = function(){

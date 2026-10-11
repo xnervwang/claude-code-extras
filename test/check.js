@@ -208,19 +208,14 @@ console.log('\nwhat the page costs, in a browser');
         ok('each reply\'s figures go on its first block, also behind a time line Claude Code draws ahead of the blocks');
       } else bad('where the figures went, by child of each reply: plain ' + JSON.stringify(short.figuresAt).slice(0, 80)
         + ', behind a time line ' + (stamped.error || JSON.stringify(stamped.figuresAt).slice(0, 80)));
-      /* Claude Code's own time, where it is on screen, is not shown twice: a prompt and a reply's text row then carry no
-         time of this script's, while thinking and tool calls keep theirs and the figures stay. Switching Claude Code's
-         times off brings this script's back everywhere, settled replies and recalled prompts included - 30 turns is
-         more replies than the sweep keeps live. An empty stamp, the one held while a reply is still streaming, takes
-         nothing away. */
-      const own = harness.run(browser, { turns: 30, panelStamp: 'time', flipStamps: true });
-      const ti = own.times || {}, after = own.timesAfter || {};
-      if (!own.error && ti.replies === 90 && ti.text === 0 && ti.prompt === 0 && ti.first === ti.replies && ti.firstFigures === ti.replies) {
-        ok('where Claude Code shows its own time, prompts and reply text carry none of ours; thinking, tool calls and the figures keep theirs');
-      } else bad('with Claude Code\'s own times on: ' + (own.error || JSON.stringify(ti)));
-      if (!own.error && after.text === after.replies && after.prompt === after.prompts && after.replies >= 90) {
-        ok('switching Claude Code\'s times off brings ours back on every reply and prompt, settled ones included');
-      } else bad('after Claude Code\'s times were switched off: ' + (own.error || JSON.stringify(after)));
+      /* Claude Code's own times are hidden by the live stylesheet, not by leaving ours out: with them on the page, every
+         prompt and every reply still carries a time of this script's, in one place and one format. */
+      const own = harness.run(browser, { turns: 30, panelStamp: 'time' });
+      const ti = own.times || {};
+      if (!own.error && ti.replies === 90 && ti.text === ti.replies && ti.prompt === ti.prompts && ti.first === ti.replies
+          && ti.firstFigures === ti.replies) {
+        ok('with Claude Code\'s own times on the page, every prompt and reply still carries ours, figures on the first block');
+      } else bad('with Claude Code\'s own times on the page: ' + (own.error || JSON.stringify(ti)));
       if (!stamped.error && stamped.times && stamped.times.text === stamped.times.replies) {
         ok('an empty stamp line, as held while a reply streams, leaves our time in place');
       } else bad('with an empty stamp line: ' + (stamped.error || JSON.stringify(stamped.times)));
@@ -1378,6 +1373,14 @@ console.log('\nbackground sessions');
   if (!bg.collect({ dir: plans, jobs }).some((e) => e.id === '77777777')) ok('a session whose record is gone drops out');
   else bad('a session with no record left was still listed');
 
+  {
+    const HIDE = '[data-message-stamp] time{display:none !important;}';
+    const dflt = webview.liveCss({ enabled: true }), noTimes = webview.liveCss({ enabled: true, off: ['timestamps'] });
+    const allOff = webview.liveCss({ enabled: false });
+    if (dflt.includes(HIDE) && !noTimes.includes(HIDE) && !allOff.includes(HIDE)) {
+      ok('Claude Code\'s own message times are hidden while ours are on, and come back when ours or the whole extension is off');
+    } else bad(`the rule hiding Claude Code's times: on ${dflt.includes(HIDE)}, times off ${noTimes.includes(HIDE)}, all off ${allOff.includes(HIDE)}`);
+  }
   const css = webview.liveCss({ enabled: true, background: list });
   const off = webview.liveCss({ enabled: true, background: list, off: ['backgroundSessions'] });
   if (/--cce-background:"[A-Za-z0-9+/=]+"/.test(css) && !off.includes('--cce-background')) {

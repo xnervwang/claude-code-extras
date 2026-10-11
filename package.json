@@ -176,7 +176,7 @@
         "claudeCodeWorkPlan.show.timestamps": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "The time in front of your messages and every block of a reply. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+          "markdownDescription": "The time in front of your messages and every block of a reply. While it is on, Claude Code's own message times are hidden, so one kind of time shows everywhere. Turning it off stops the work, not only the drawing, brings Claude Code's times back, and takes effect without a reload."
         },
         "claudeCodeWorkPlan.show.replyDuration": {
           "type": "boolean",
