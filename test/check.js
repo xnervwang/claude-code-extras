@@ -3463,6 +3463,92 @@ console.log('\nthe name a person sees');
   else bad('the README still uses an old name: ' + old.map((l) => l.trim().slice(0, 80)).join(' | '));
 }
 
+console.log('\nthe latest tool call, on the working line while Focus view folds the tool calls');
+{
+  const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '88-tool-clock.js'), 'utf8');
+  let searches = 0, busy = false, prompts = 0, focusOn = true, off = false;
+  const session = { messages: { value: [] } };
+  const box = {
+    out: {},
+    isOff: () => off,
+    fmt: (ms) => 'T' + ms,
+    dur: (ms) => (ms > 0 ? Math.round(ms / 1000) + 's' : ''),
+    agentOf: (m) => m.parentToolUseId || '',
+    setStyle() {},
+    sigOn: (name) => name === 'visiblyBusy' && busy,
+    sigLen: (name) => (name === 'permissionRequests' ? prompts : 0),
+    panelContext: () => ({ focusViewEnabled: focusOn }),
+    sessionRef: session,
+    window: { innerHeight: 800 },
+    document: { querySelector: () => null, querySelectorAll: () => { searches++; return []; } },
+  };
+  new vm.Script(`(function(){${fragment}\n;out.state = toolState; out.text = toolClockText; out.paint = paintToolClock;})()`,
+    { filename: '88-tool-clock.js' }).runInNewContext(box);
+  const o = box.out, T = 1000000;
+  const prompt = (at, extra) => Object.assign({ type: 'user', timestamp: at, content: [{ content: { type: 'text' } }] }, extra);
+  const results = (at, extra) => Object.assign({ type: 'user', timestamp: at, content: [{ content: { type: 'tool_result' } }] }, extra);
+  const call = (at, name, doneAt, type = 'tool_use', returned) => ({ type: 'assistant', timestamp: at,
+    content: [{ content: { type, name }, cceResultAt: doneAt, toolResult: { value: returned } }] });
+  const expect = (got, want, label) => (got === want ? ok(label) : bad(`${label}: got "${got}", expected "${want}"`));
+  const says = (msgs, now, short) => o.text(o.state(msgs), now, !!short);
+
+  const turn = [prompt(T), call(T + 1000, 'Read', T + 2000), results(T + 2000), call(T + 3000, 'Bash')];
+  expect(says(turn, T + 8000), `Bash running for 5s (since T${T + 3000})`, 'a call with no result yet reads as running, with its start');
+  expect(says(turn, T + 8000, true), 'Bash 5s', 'and has a short form for a narrow panel');
+  expect(says([prompt(T), call(T + 1000, 'Read', T + 2000), call(T + 3000, 'Bash', T + 9000)], T + 12000),
+    `last tool Bash finished 3s ago (T${T + 9000})`, 'once it is back, how long ago it finished');
+  expect(says([prompt(T), call(T + 3000, 'Bash'), prompt(T + 20000)], T + 25000),
+    'no tool call yet this turn (5s since your message)', 'a new turn with no call says so, timed from your message');
+  expect(o.state([call(T + 3000, 'Bash'), prompt(T + 20000)]).open, 0, 'a call from an earlier turn that never came back is not running');
+  expect(says([prompt(T), call(T + 1000, 'Read'), call(T + 2000, 'Grep')], T + 6000),
+    `2 tools running for 5s (since T${T + 1000})`, 'two open calls are counted, timed from the first');
+  expect(o.state([prompt(T), call(T + 1000, 'web_search', undefined, 'server_tool_use')]).open, 0,
+    'a server tool, whose result time is not recorded, is never counted as running');
+  expect(o.state([prompt(T), call(T + 1000, 'Read', undefined, 'tool_use', { content: 'x' })]).open, 0,
+    'a call whose result has arrived is not running, even with no time recorded for it');
+  const nested = [prompt(T), call(T + 1000, 'Agent'), prompt(T + 2000, { parentToolUseId: 'a1' }), call(T + 3000, 'Grep', T + 4000)];
+  expect(o.state(nested).turnAt, T, "a sub-agent's prompt does not start a new turn");
+  expect(o.state(nested).open, 1, 'so the call that started the sub-agent is still running');
+  expect(o.state(turn).turnAt, T, 'tool results do not start a new turn either');
+
+  // When it looks at the page at all.
+  busy = false; o.paint(); o.paint();
+  expect(searches, 0, 'not busy: the page is not searched at all');
+  busy = true; prompts = 1; o.paint();
+  expect(searches, 0, 'busy but waiting on a permission prompt, which hides the indicator: not searched either');
+  prompts = 0; focusOn = false; o.paint();
+  expect(searches, 0, 'busy with the tool calls on screen: nothing to add, not searched');
+  focusOn = true; off = true; o.paint();
+  expect(searches, 0, 'switched off: not searched');
+  off = false; o.paint(); o.paint(); o.paint();
+  expect(searches, 1, 'busy in Focus view with no indicator found: searched once, then not again within a few seconds');
+
+  // Where the indicator is drawn: two rows the panel can draw it in, found by the words a screen reader hears.
+  let clock = 1e6, pageRows = [];
+  const span = (b) => ({ textContent: 'Claude is working', parentElement: b });
+  const row = (getSpans) => ({ isConnected: true, querySelectorAll: () => getSpans(), contains: (x) => getSpans().some((s) => s.parentElement === x) });
+  let boxB = { isConnected: true }, spansB = [span(boxB)];
+  const rowA = row(() => []), rowB = row(() => spansB);
+  const box2 = Object.assign({}, box, { out: {}, Date: { now: () => clock },
+    document: { querySelector: () => null, querySelectorAll: () => { searches++; return pageRows; } } });
+  searches = 0;
+  new vm.Script(`(function(){${fragment}\n;out.find = findWorking;})()`, { filename: '88-tool-clock.js' }).runInNewContext(box2);
+  const find = box2.out.find;
+  pageRows = [rowA];
+  expect(find(), null, 'an indicator not yet drawn is not found');
+  pageRows = [rowA, rowB]; clock += 1000;
+  expect(find() === null && searches === 1, true, 'and the page is not searched again within a few seconds');
+  clock += 3000;
+  expect(find(), rowB, 'after that it is found in whichever row it is drawn');
+  expect(find() === rowB && searches === 2, true, 'and kept: finding it again searches nothing');
+  boxB.isConnected = false; boxB = { isConnected: true }; spansB = [span(boxB)];
+  expect(find() === rowB && searches === 2, true, 'a new turn draws a new indicator in the same row, found without searching the page');
+
+  const sweep = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '99-sweep.js'), 'utf8');
+  if (/setInterval\(function\(\)\{[^\n]*try \{ paintToolClock\(\); \} catch \(e\) \{\}[^\n]*\}, 700\)/.test(sweep)) ok('the label is repainted on the 700ms timer');
+  else bad('99-sweep.js no longer calls paintToolClock from its timer, so the label is never drawn');
+}
+
 console.log('\na window whose install was replaced by a rebuild of the same version');
 {
   const removal = require('../src/removal');
