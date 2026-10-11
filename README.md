@@ -42,7 +42,7 @@ edge, and the footer controls. Thinking and tool calls shown, which is the defau
 
 | What it shows | Where it appears |
 | --- | --- |
-| **Timestamps:** transcript times; `start→result` for tool calls; clock today; day and month for older entries; original times in reopened history | Messages, reply blocks, tool calls |
+| **Timestamps:** transcript times on thinking and tool calls, with `start→result` spans; on your messages and reply text only while Claude Code's own message times are off; clock today; day and month for older entries; original times in reopened history | Messages, reply blocks, tool calls |
 | **Reply figures:** `2m10s · ctx 33% · cost $0.42 · opus-5 high`; turn duration, context-window use, running spend, and the model and effort the reply was sent with | Each reply, including closed turns |
 | **Sub-agent tags and filters:** spawn descriptions, such as `#look up tomorrow's weather`; `All`, `Main`, and individual sub-agent filters; table of contents follows filter | Tags on rows; filters in footer |
 | **Conversation navigation:** message times, opening words, compaction points; filter box; click-to-scroll; message stepping with arrows, `,`, and `.`; top and bottom jumps | Right-edge table of contents; buttons |

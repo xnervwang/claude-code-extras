@@ -15,8 +15,34 @@
    */
   var PROMPT_OF = new WeakMap();
 
+  /*
+   * Claude Code (2.1.295 and later) draws a time of its own on your messages, and on a reply with text once the reply
+   * has finished, while its showMessageTimestamps is on. Where that time is on screen this script leaves its own out and
+   * keeps only what Claude Code does not show: the figures and the agent tag. Thinking, each tool call and the span it
+   * took keep their times, since nothing else gives them one.
+   *
+   * Whether a message carries that time is read off the page rather than guessed from a version. The switch behind it
+   * is read off the panel's own object, and when it turns over every mark already settled is made again once - a
+   * settled reply and a recalled prompt are otherwise never looked at again.
+   */
+  var STAMP_TIME = '[data-message-stamp] time';
+  var hasOwnTime = function(holder){ return !!(holder && holder.querySelector(STAMP_TIME)); };
+  var officialTimesWas = null;
+  var watchOfficialTimes = function(){
+    var c = panelContext(), on = !!(c && c.showMessageTimestamps);
+    if (officialTimesWas !== null && on !== officialTimesWas) {
+      PROMPT_OF = new WeakMap();
+      var all = document.querySelectorAll(ASSIST);
+      for (var i = 0; i < all.length; i++) { all[i].removeAttribute(OWNER_ATTR); all[i].removeAttribute(SETTLED_ATTR); }
+    }
+    officialTimesWas = on;
+  };
+  // A line that begins with what used to follow the time: the tag's or the figures' own leading space goes with it.
+  var lead = function(v){ return v ? v.replace(/^\s+/, '') : v; };
+
   var stamp = function(){
     if (!isOn()) { sweep(); return; }
+    try { watchOfficialTimes(); } catch (e) {}
     var tA = clock(), wF = WALK.fiber, wT = WALK.text;
     var bubbles = document.querySelectorAll(USER), groups = new Map();
     // The footer is the seed of last resort, and the only one a conversation with no messages in it has: the session
@@ -58,13 +84,15 @@
           var line = textOf(b, b === lastBubble);
           // An attachment or an image carries no line, so it gets no row - and a message that is only an attachment
           // keeps its mark through the block below rather than being skipped altogether.
-          row = { node: b, top: b, ts: m.timestamp, text: line, mark: '' };
+          // null until made: a mark can rightly be empty, and an empty one must not be made again on every sweep.
+          row = { node: b, top: b, ts: m.timestamp, text: line, mark: null };
           if (!live) PROMPT_OF.set(b, row);
         }
-        if (live || !row.mark) {
-          if (!mark) {
-            mark = isOff('timestamps') ? '' : fmt(m.timestamp);
+        if (live || row.mark === null) {
+          if (mark === '') {
+            mark = isOff('timestamps') || hasOwnTime(b.closest('[data-transcript-message]')) ? '' : fmt(m.timestamp);
             if (!isOff('subAgentTags')) mark += agentTag(agentOf(m));
+            mark = lead(mark);
           }
           row.mark = mark;
         }
@@ -114,7 +142,7 @@
         }
       }
       fullMsgs++;
-      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '', figured = false;
+      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '', figured = false, ownTime = null;
       blocks += rows.length;
       for (var r = 0; r < rows.length; r++) {
         var row = rows[r], cx = ctxOf(row), v = '';
@@ -134,8 +162,9 @@
            itself switchable that test would have made one switch turn four things off, so it is now asked directly. */
         var annot = !!(cx.block && cx.message && cx.message.uuid);
         if (annot) {
-          v = isOff('timestamps') ? '' : fmt(cx.message.timestamp);
           var t = cx.block.content && cx.block.content.type;
+          if (t === 'text' && ownTime === null) ownTime = hasOwnTime(msgs[j]);
+          v = isOff('timestamps') || (t === 'text' && ownTime) ? '' : fmt(cx.message.timestamp);
           if (agentView && own === VIEW && (t === 'tool_use' || t === 'server_tool_use')) {
             acts.push({ node: row, ts: cx.message.timestamp, text: toolLabel(cx.block.content) });
           }
@@ -155,7 +184,7 @@
           if (!effHere && cx.message.model) effortPending.add(msgs[j]);
           if (bits.length) v += '  ' + bits.join(' ' + String.fromCharCode(183) + ' ');
         }
-        set(row, v);
+        set(row, lead(v));
       }
       if (uus.length) UUIDS_OF.set(msgs[j], uus);
     }

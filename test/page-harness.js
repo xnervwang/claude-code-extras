@@ -103,7 +103,7 @@ const SETUP = String.raw`
   };
   // What the panel hands its components as \`context\`, reduced to the part the button uses. A build without Focus view
   // has none, which is what \`focusCtx: false\` stands for.
-  var focusCtx = { on: !!CFG.focus, calls: [], get focusViewEnabled(){ return this.on; },
+  var focusCtx = { on: !!CFG.focus, calls: [], showMessageTimestamps: CFG.panelStamp === 'time', get focusViewEnabled(){ return this.on; },
     setFocusView: function(v){ this.calls.push(v); this.on = v; return Promise.resolve(); } };
   // Not 'top': that is the window's own read-only property, and a global of that name is silently left as the window.
   var sessionFiber = { memoizedProps: CFG.focusCtx === false ? { session: session } : { session: session, context: focusCtx },
@@ -121,7 +121,14 @@ const SETUP = String.raw`
     u.className = 'userMessage_k3j2';
     u.innerHTML = '<div class="content_c1"><span>question ' + i + ' about the hooks</span></div>';
     hang(u, { content: { type: 'text', text: 'question ' + i } }, { uuid: 'u' + (++uuid), timestamp: ts });
-    list.appendChild(u);
+    // Claude Code's own time on a prompt sits in the message's container, ahead of the box this script marks.
+    if (CFG.panelStamp === 'time') {
+      var holder = document.createElement('div');
+      holder.setAttribute('data-transcript-message', '');
+      holder.innerHTML = '<div data-message-stamp=""><time>12:13 PM</time></div>';
+      holder.appendChild(u);
+      list.appendChild(holder);
+    } else list.appendChild(u);
   };
   var KINDS = ['thinking', 'tool_use', 'text'];
   var reply = function(ts, owner){
@@ -130,7 +137,14 @@ const SETUP = String.raw`
     var message = { uuid: replyId(++replies), timestamp: ts, model: 'claude-opus-5-5' };
     if (owner) message.parentToolUseId = owner;
     // Claude Code's own time line, drawn ahead of the blocks and carrying none of them.
-    if (CFG.panelStamp) { var stamp = document.createElement('div'); stamp.setAttribute('data-message-stamp', ''); m.appendChild(stamp); }
+    // 'time' is the stamp as drawn once Claude Code has a time to show; otherwise it is the empty line it holds meanwhile.
+    var stampLine = function(){
+      var st = document.createElement('div');
+      st.setAttribute('data-message-stamp', '');
+      if (CFG.panelStamp === 'time') st.innerHTML = '<time>12:13 PM</time>';
+      return st;
+    };
+    if (CFG.panelStamp) m.appendChild(stampLine());
     for (var r = 0; r < KINDS.length; r++) {
       var row = document.createElement('div');
       row.className = 'timelineMessage_ab12';
@@ -181,6 +195,21 @@ const PHASES = String.raw`
     }
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
   var a, b;
+  /* Which rows show a time of this script's own: every reply's text row and first block, and every prompt. */
+  var TIME = /\d\d:\d\d:\d\d/;
+  var labelOf = function(el){ var l = el && (el.hasAttribute('data-cce-ts') ? el : el.querySelector('[data-cce-ts]')); return l ? l.getAttribute('data-cce-ts') : ''; };
+  var readTimes = function(suffix){
+    var rs = document.querySelectorAll('[data-testid="assistant-message"]'), text = 0, first = 0, firstFigures = 0;
+    for (var i = 0; i < rs.length; i++) {
+      var kids = rs[i].children, firstBlock = kids[CFG.panelStamp ? 1 : 0];
+      if (TIME.test(labelOf(kids[kids.length - 1]))) text++;
+      if (TIME.test(labelOf(firstBlock))) first++;
+      if (/\u00b7|opus/.test(labelOf(firstBlock))) firstFigures++;
+    }
+    var us = document.querySelectorAll('[class*="userMessage_"]'), prompt = 0;
+    for (var k = 0; k < us.length; k++) if (TIME.test(labelOf(us[k]))) prompt++;
+    R['times' + suffix] = { replies: rs.length, text: text, first: first, firstFigures: firstFigures, prompts: us.length, prompt: prompt };
+  };
   /* Idle starts once the boot has finished, judged by the sweep count holding still for a second after the first sweep
      - a fixed moment would sometimes land before the script had put its controls in, and a count still at zero is a
      script that has not started rather than one that has stopped. A page that never holds still starts at the cap
@@ -219,6 +248,7 @@ const PHASES = String.raw`
         }
         R.figuresAt.push(at);
       }
+      readTimes('');
       R.viewButton = !!document.querySelector('[data-cce-view]');
       var fb = document.querySelector('[data-cce-focus-btn]');
       R.focusButton = !!fb;
@@ -265,7 +295,16 @@ const PHASES = String.raw`
     R.rebuildSweeps = b.n - a.n; R.rebuildCdp = b.cdp - a.cdp;
     R.prompts = CFG.turns + 1; R.compactions = compactions;
     if (CFG.clickFocus) return clickFocus();
+    if (CFG.flipStamps) return flipStamps();
     finish();
+  };
+  /* Claude Code's own times switched off: its stamps go from the page and every reply and prompt, settled or not,
+     shows this script's time again. */
+  var flipStamps = function(){
+    focusCtx.showMessageTimestamps = false;
+    var ts = document.querySelectorAll('[data-message-stamp] time');
+    for (var i = 0; i < ts.length; i++) ts[i].parentNode.removeChild(ts[i]);
+    later(1200, function(){ readTimes('After'); finish(); });
   };
   /* The button pressed once: what it asked of the panel, and what it says afterwards. */
   var clickFocus = function(){

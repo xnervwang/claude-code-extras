@@ -23,7 +23,7 @@
 
   /* The panel hands that object to its root and to many components under it as a `context` prop, so walking up from
      the send button reaches it. It lives as long as the page, so it is looked for until found and then kept. */
-  var findFocusCtx = function(){
+  var panelContext = function(){
     if (focusCtx) return focusCtx;
     var now = Date.now();
     if (now - focusLookedAt < FOCUS_LOOK_MS) return null;
@@ -90,7 +90,7 @@
   // React may replace that row, so this is re-checked on the timer rather than wired once.
   var ensureFocusControl = function(){
     if (isOff('footerPlainView')) return;
-    var ctx = findFocusCtx();
+    var ctx = panelContext();
     if (!ctx) return;
     if (FOCUSBTN && FOCUSBTN.isConnected) { paintFocus(!!ctx.focusViewEnabled); return; }
     var send = document.querySelector(SEND);
@@ -110,7 +110,7 @@
     }
     FOCUSBTN.addEventListener('click', function(ev){
       ev.preventDefault(); ev.stopPropagation();
-      var c = findFocusCtx();
+      var c = panelContext();
       if (!c) return;
       var next = !c.focusViewEnabled;
       // The panel updates its own copy of the setting before the editor has written it, so the repaint can follow.
