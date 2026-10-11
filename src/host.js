@@ -24,7 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 8;
+const VERSION = 9;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
@@ -39,6 +39,10 @@ if (/<\/script/i.test(LOAD_WATCH)) throw new Error('panel-load-watch.js must not
    setting: it is what lets a panel that earlier builds left blank come back. */
 const CACHE_CLEAR = fs.readFileSync(path.join(__dirname, 'panel-cache-clear.js'), 'utf8');
 if (/<\/script/i.test(CACHE_CLEAR)) throw new Error('panel-cache-clear.js must not contain a closing script tag');
+/* The panel's time zone, sent to the host so the work plan's tree can show the reader's local time
+   (src/panel-tz.js says why). Not behind any setting: without it the tree's times are in the remote machine's zone. */
+const PANEL_TZ = fs.readFileSync(path.join(__dirname, 'panel-tz.js'), 'utf8');
+if (/<\/script/i.test(PANEL_TZ)) throw new Error('panel-tz.js must not contain a closing script tag');
 /* Read by the host at the moment a panel's HTML is built, so the setting reaches every panel opened after it changes.
    Unset counts as on: a panel restored before this extension has activated still gets the watch. */
 const LOAD_WATCH_OFF = '__cceNoLoadWatch';
@@ -84,9 +88,24 @@ const EDITS = [
     re: /(script-src 'nonce-\$\{([\w$]+)\}';[\s\S]{0,600}?)(<link href="\$\{[\w$]+\}" rel="stylesheet">)/g,
     to: (m, before, nonce, link) => before
       + '${\'<script nonce="\'+' + nonce + '+\'">\'+' + JSON.stringify(CACHE_CLEAR) + '+\'</script>\'}'
+      + '${\'<script nonce="\'+' + nonce + '+\'">\'+' + JSON.stringify(PANEL_TZ) + '+\'</script>\'}'
       + '${globalThis.' + LOAD_WATCH_OFF + '?"":\'<script nonce="\'+' + nonce + '+\'">\'+'
       + JSON.stringify(LOAD_WATCH) + '+\'</script>\'}'
       + link,
+  },
+  /*
+   * The panel's time zone, kept where this extension can read it.
+   *
+   * Every message a panel sends passes through the one function that logs it, before anything decides what the message
+   * is; the panel's time zone arrives as one of those messages, and Claude Code itself ignores the type. A global is how
+   * it reaches this extension - both run in one extension host process, the same way the active conversation does.
+   */
+  {
+    name: 'panel time zone',
+    re: /function ([\w$]+)\(([\w$]+),([\w$]+)\)\{(let [\w$]+=`Received message from webview: )/g,
+    to: (m, fn, log, msg, rest) => `function ${fn}(${log},${msg}){try{if(${msg}&&${msg}.type==="cce_client_tz"`
+      + `&&typeof ${msg}.timeZone==="string"){globalThis.__cceClientTimeZone=${msg}.timeZone;`
+      + `globalThis.__cceTzHook&&globalThis.__cceTzHook(${msg}.timeZone)}}catch(e){}${rest}`,
   },
 ];
 
@@ -154,7 +173,7 @@ function restore(claudeExtensionPath) {
 
 module.exports = {
   id: 'anthropic.claude-code', name: 'Claude Code host',
-  VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, LOAD_WATCH, LOAD_WATCH_OFF, CACHE_CLEAR,
+  VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, LOAD_WATCH, LOAD_WATCH_OFF, CACHE_CLEAR, PANEL_TZ,
   patchSource, status, apply, restore, hostFile, targetFile: hostFile,
   findInstalls: require('./webview').findInstalls,
 };

@@ -587,8 +587,14 @@ function start(context, renamed) {
     const live = liveSessions();
     if (live) for (const dir of installs(webview)) webview.pruneEfforts(dir, live);
   };
+  /* The reader's time zone as a panel of this window last reported it (src/panel-tz.js), or empty until one has. */
+  const clientZone = () => {
+    const v = globalThis.__cceClientTimeZone;
+    return typeof v === 'string' ? v : '';
+  };
   const refreshPlans = () => {
     sweepPlans().catch((e) => log.appendLine('orphan work plans: ' + e.message));
+    workplan.setTimeZone(clientZone());
     const moved = workplan.setFocus(activeChat());
     if (workplan.refresh() || moved) paintBadge();
   };
@@ -669,6 +675,12 @@ function start(context, renamed) {
   context.subscriptions.push({
     dispose: () => { stopPolling(); if (globalThis.__cceChatHook) delete globalThis.__cceChatHook; },
   });
+  /* A panel reports its time zone as it opens, which is usually after this has activated; the rows are redrawn then
+     rather than at the next periodic refresh. */
+  globalThis.__cceTzHook = () => {
+    try { if (workplan.setTimeZone(clientZone())) workplan.refresh(); } catch (e) { /* never break the host's own message handling */ }
+  };
+  context.subscriptions.push({ dispose: () => { if (globalThis.__cceTzHook) delete globalThis.__cceTzHook; } });
   refreshPlans();
   paintBadge();
   watchEffort();

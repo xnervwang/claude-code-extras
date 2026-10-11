@@ -3105,6 +3105,34 @@ console.log('\nhow a row being worked on, or waiting, is drawn');
     else bad(`waitingIcon gave ${wrong.map(([v]) => `${v}: ${pick(v)}`).join(', ')}`);
   }
   {
+    /* A row's time is written in the reader's zone once a panel has reported it, and in the host's own before that. */
+    const ms = (iso) => Date.parse(iso);
+    const now = ms('2026-10-11T18:00:00Z');
+    const st = (a, b, zone) => viewMod.stamp(a && ms(a), b && ms(b), zone, now);
+    const local = (iso) => { const d = new Date(ms(iso)); const p = (n) => (n < 10 ? '0' : '') + n;
+      return p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); };
+    const want = [
+      [st('2026-10-11T17:39:00Z', 0, 'America/Los_Angeles'), '10/11 10:39', 'a moment in the reader\'s zone'],
+      [st('2026-10-11T17:39:00Z', '2026-10-12T02:00:00Z', 'America/Los_Angeles'), '10/11 10:39 → 19:00',
+        'one local day is one day, though the host\'s zone has crossed midnight'],
+      [st('2026-10-11T17:39:00Z', '2026-10-12T02:00:00Z', 'UTC'), '10/11 17:39 → 10/12 02:00', 'and two days in a zone where it has'],
+      [st('2025-12-31T23:30:00Z', 0, 'Asia/Tokyo'), '01/01 08:30', 'the year is judged in that zone too'],
+      [st('2025-12-31T23:30:00Z', 0, 'America/Los_Angeles'), '2025/12/31 15:30', 'and written when it is not the current one'],
+      [st('2026-10-11T17:39:00Z', 0, ''), local('2026-10-11T17:39:00Z'), 'no zone reported: the host\'s own'],
+      [st('2026-10-11T17:39:00Z', 0, 'Not/AZone'), local('2026-10-11T17:39:00Z'), 'a zone this runtime does not know: the host\'s own'],
+    ];
+    for (const [got, exp, label] of want) {
+      if (got === exp) ok('plan times: ' + label);
+      else bad(`plan times, ${label}: got "${got}", expected "${exp}"`);
+    }
+    const p = new viewMod.WorkPlanProvider();
+    p.refresh();
+    const same = p.refresh();
+    const moved = p.setTimeZone('America/Los_Angeles'), again = p.setTimeZone('America/Los_Angeles');
+    if (!same && moved && !again && p.refresh()) ok('a newly reported zone redraws the tree, though no plan file changed');
+    else bad(`zone change: unchanged refresh ${same}, set ${moved}, set again ${again}`);
+  }
+  {
     const now = Date.now();
     const at = (s, state = 'doing') => viewMod.held({ state, since: now - s * 1000 }, now);
     const got = [at(30), at(61 * 60), at(49 * 3600), at(3600, 'todo'), viewMod.held({ state: 'doing', since: 0 }, now),
@@ -3773,13 +3801,18 @@ console.log('\na panel whose bundle never arrives says so');
     const c = on.indexOf(clear);
     if (c > csp && c < i) ok('the cache clearing goes in ahead of the watch, with the same nonce');
     else bad('the cache clearing is not ahead of the watch in the generated HTML');
+    const zone = '<script nonce="n0nce">' + host.PANEL_TZ + '</script>';
+    const z = on.indexOf(zone);
+    if (z > c && z < i) ok('the time zone report goes in after the cache clearing and ahead of the watch, with the same nonce');
+    else bad('the time zone report is not between the cache clearing and the watch in the generated HTML');
     globalThis[host.LOAD_WATCH_OFF] = true;
     const off = html('n0nce', 'style.css', false, 'worker-src x');
     delete globalThis[host.LOAD_WATCH_OFF];
     const own = new Function('U', 'K', 'X', 'j', tpl)('n0nce', 'style.css', false, 'worker-src x');
-    if (off.replace(clear, '') === own && off.includes(clear)) {
-      ok('with the recording turned off the HTML is Claude Code\'s own plus the cache clearing, which is not behind that setting');
-    } else bad('with the recording turned off the HTML is not Claude Code\'s own plus the cache clearing');
+    if (off.replace(clear, '').replace(zone, '') === own && off.includes(clear) && off.includes(zone)) {
+      ok('with the recording turned off the HTML is Claude Code\'s own plus the cache clearing and the time zone report, '
+        + 'which are not behind that setting');
+    } else bad('with the recording turned off the HTML is not Claude Code\'s own plus the cache clearing and the time zone report');
   }
 
   /* The clearing itself: the editor's resource caches and nothing else, once per origin, and again if it did not finish.
@@ -3818,7 +3851,46 @@ console.log('\na panel whose bundle never arrives says so');
     if (!('cce.resourceCacheCleared' in failed.store)) ok('a clearing that fails is not remembered, so the next panel tries again');
     else bad('a failed clearing was remembered as done');
   }
+  /* The panel's time zone: sent once from the panel, kept by the patched host, read by this extension. */
+  {
+    const posted = [];
+    let made = 0;
+    const handle = { postMessage: (m) => posted.push(m) };
+    const env = { acquireVsCodeApi: () => { made++; return handle; } };
+    env.globalThis = env;
+    vm.createContext(env);
+    vm.runInContext(host.PANEL_TZ, env, { filename: 'panel-tz.js' });
+    const later = env.acquireVsCodeApi();
+    const m = posted[0] || {};
+    if (posted.length === 1 && m.type === 'cce_client_tz' && typeof m.timeZone === 'string' && m.timeZone) {
+      ok('the panel sends its time zone once, as it starts');
+    } else bad(`the panel sent ${JSON.stringify(posted)}`);
+    if (later === handle && made === 1) ok('and the panel\'s own bundle still gets the one handle the editor allows');
+    else bad(`the bundle got ${later === handle ? 'the same' : 'another'} handle, the editor was asked ${made} time(s)`);
+  }
+  {
+    const edit = host.EDITS.find((e) => e.name === 'panel time zone');
+    const fn = 'function eT($,J){let Q=`Received message from webview: ${bl0(J)}`;$.info(Q)}';
+    const r = edit ? applyEdits(fn, [edit]) : { error: 'no such edit' };
+    if (r.error) bad('the time zone edit did not apply to the logging function\'s shape: ' + r.error);
+    else {
+      const logged = [], heard = [];
+      const env = { bl0: (m) => JSON.stringify(m), out: null };
+      env.globalThis = env;
+      env.__cceTzHook = (z) => heard.push(z);
+      vm.createContext(env);
+      vm.runInContext(r.out + ';eT({info:(q)=>out=q},{type:"other"});var a=globalThis.__cceClientTimeZone;'
+        + 'eT({info:(q)=>out=q},{type:"cce_client_tz",timeZone:"America/Los_Angeles"});', env);
+      if (env.a === undefined && env.__cceClientTimeZone === 'America/Los_Angeles' && JSON.stringify(heard) === '["America/Los_Angeles"]'
+        && /^Received message from webview: /.test(env.out)) {
+        ok('the patched host keeps the zone a panel reports, calls this extension, and still logs the message');
+      } else bad(`after the time zone message: kept ${env.__cceClientTimeZone}, heard ${JSON.stringify(heard)}, logged ${env.out}`);
+    }
+  }
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/globalThis\.__cceTzHook = /.test(ext) && /workplan\.setTimeZone\(clientZone\(\)\);\s*const moved = workplan\.setFocus/.test(ext)) {
+    ok('the extension redraws on a reported zone and picks it up on every refresh');
+  } else bad('extension.js does not read the reported time zone');
   if (/globalThis\[host\.LOAD_WATCH_OFF\] = !cfg\(\)\.get\(LATENCY_ON_SETTING, true\)/.test(ext)
     && /affectsConfiguration\(LATENCY_ON_SETTING\)\) loadWatchOff\(\)/.test(ext)) {
     ok('the latency setting drives the watch, at activation and whenever it changes');

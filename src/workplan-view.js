@@ -86,6 +86,37 @@ function heldAll(nodes, now = Date.now(), out = []) {
 const p2 = (n) => (n < 10 ? '0' : '') + n;
 
 /*
+ * A moment's calendar fields in the reader's time zone.
+ *
+ * This file runs in the extension host, which in a remote window is on the remote machine, so its own clock is in that
+ * machine's zone while the conversation beside the tree is drawn in the reader's. The panel reports the reader's zone
+ * (src/panel-tz.js); until it has, or when the name is not one this runtime knows, the host's own zone is used.
+ */
+const ZONES = new Map();
+function zoned(timeZone) {
+  if (!timeZone) return null;
+  if (!ZONES.has(timeZone)) {
+    let f = null;
+    try {
+      f = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', hourCycle: 'h23' });
+    } catch (_) { f = null; }
+    ZONES.set(timeZone, f);
+  }
+  return ZONES.get(timeZone);
+}
+function fields(ms, timeZone) {
+  const f = zoned(timeZone);
+  if (!f) {
+    const d = new Date(ms);
+    return { y: d.getFullYear(), mo: d.getMonth() + 1, d: d.getDate(), h: d.getHours(), mi: d.getMinutes() };
+  }
+  const out = {};
+  for (const p of f.formatToParts(new Date(ms))) if (p.type !== 'literal') out[p.type] = Number(p.value);
+  return { y: out.year, mo: out.month, d: out.day, h: out.hour % 24, mi: out.minute };
+}
+
+/*
  * When a row was opened, and for a closed one the range up to when it ended.
  *
  * The shape follows the session list this extension already draws in the panel: month before day, an arrow between the
@@ -96,19 +127,20 @@ const p2 = (n) => (n < 10 ? '0' : '') + n;
  * order - which is the only reason the time is on the row at all. For the same reason the date is not repeated on the
  * far end of a range that begins and ends on one day; the clock is the part that distinguishes them.
  */
-function stamp(opened, closed) {
+function stamp(opened, closed, timeZone = '', now = Date.now()) {
   if (!opened && !closed) return '';
-  const thisYear = new Date().getFullYear();
+  const thisYear = fields(now, timeZone).y;
   const part = (ms, withDate) => {
-    const d = new Date(ms);
-    const clock = p2(d.getHours()) + ':' + p2(d.getMinutes());
+    const t = fields(ms, timeZone);
+    const clock = p2(t.h) + ':' + p2(t.mi);
     if (!withDate) return clock;
-    const md = p2(d.getMonth() + 1) + '/' + p2(d.getDate());
-    return (d.getFullYear() === thisYear ? md : d.getFullYear() + '/' + md) + ' ' + clock;
+    const md = p2(t.mo) + '/' + p2(t.d);
+    return (t.y === thisYear ? md : t.y + '/' + md) + ' ' + clock;
   };
   if (!closed) return part(opened, true);
   if (!opened) return part(closed, true);
-  const sameDay = new Date(opened).toDateString() === new Date(closed).toDateString();
+  const a = fields(opened, timeZone), b = fields(closed, timeZone);
+  const sameDay = a.y === b.y && a.mo === b.mo && a.d === b.d;
   return part(opened, true) + ' → ' + part(closed, !sameDay);
 }
 
@@ -136,6 +168,8 @@ class WorkPlanProvider {
        conversation's plan is shown. Empty means the host has not said - no conversation open yet, or a build this
        extension could not patch - and then every plan is shown, since listing them is honest where picking one is not. */
     this.focus = '';
+    /* The reader's time zone as the panel reports it, or empty for the host's own. */
+    this.timeZone = '';
     /* What went wrong installing the plugin that writes the plans, if anything. It is shown as a row rather than in the
        view's welcome text because the welcome text is fixed in the manifest and cannot carry what a command said - and
        a failure that cannot say what failed leaves the reader nothing to act on. */
@@ -154,6 +188,14 @@ class WorkPlanProvider {
     const next = String(session || '');
     if (next === this.focus) return false;
     this.focus = next;
+    return true;
+  }
+
+  /* Records the zone the rows' times are written in and says whether it moved; refresh() redraws. */
+  setTimeZone(zone) {
+    const next = typeof zone === 'string' ? zone : '';
+    if (next === this.timeZone) return false;
+    this.timeZone = next;
     return true;
   }
 
@@ -178,9 +220,10 @@ class WorkPlanProvider {
        Comparing only the content would then find no change and leave the previous conversation's tree on screen. The
        time a row has been `doing` or `waiting` is part of it for the opposite reason: the figure changes while the file
        does not, and the periodic refresh is the only thing that will ever redraw it. Its steps are minutes at the finest,
-       so this redraws at most once a minute. */
+       so this redraws at most once a minute. The time zone is part of it for the same reason: every row's time changes
+       when the panel reports the reader's zone, and the file does not. */
     const now = Date.now();
-    const signature = JSON.stringify([this.focus,
+    const signature = JSON.stringify([this.focus, this.timeZone,
       plans.map((p) => [p.session, p.title, p.error, p.nodes, heldAll(p.nodes, now)])]);
     if (signature === this.signature) return false;
     this.plans = plans;
@@ -276,7 +319,7 @@ class WorkPlanProvider {
       ? (hasOpen(node) ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed)
       : vscode.TreeItemCollapsibleState.None);
     item.id = element.key;
-    const times = stamp(node.opened, node.closed);
+    const times = stamp(node.opened, node.closed, this.timeZone);
     const lasted = held(node);
     const word = look.word + (lasted ? ' for ' + lasted : '');
     /*
