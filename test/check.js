@@ -3908,10 +3908,42 @@ console.log('\na panel whose bundle never arrives says so');
       } else bad(`after the time zone message: kept ${env.__cceClientTimeZone}, heard ${JSON.stringify(heard)}, logged ${env.out}`);
     }
   }
+  /* The unread dot after a tab's title: the host hands over the state it picked the icon for, this extension writes the
+     title. The title the host set is the base, so a dot of ours never piles up and goes when the state moves on. */
+  {
+    const { withDot, DOT } = require('../src/tabdot');
+    const got = [withDot('Fix the build', 'done', true), withDot('Fix the build' + DOT, 'done', true),
+      withDot('Fix the build' + DOT, 'plain', true), withDot('Fix the build', 'pending', true),
+      withDot('Fix the build' + DOT, 'done', false), withDot(undefined, 'plain', true)];
+    const want = ['Fix the build' + DOT, 'Fix the build' + DOT, 'Fix the build', 'Fix the build', 'Fix the build', ''];
+    if (JSON.stringify(got) === JSON.stringify(want)) ok('a finished, unseen conversation gets one dot after its tab title, and loses it after');
+    else bad(`tab titles: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+
+    const edit = host.EDITS.find((e) => e.name === 'tab unread dot');
+    const method = 'class T{applyTabIcon(){if(!this.panelTab)return;let $=pick();'
+      + 'this.panelTab.iconPath=N1.Uri.file(z5.join(this.context.extensionPath,"resources",Pa1[$]))}}';
+    const r = edit ? applyEdits(method, [edit]) : { error: 'no such edit' };
+    if (r.error) bad('the tab dot edit did not apply to the icon method\'s shape: ' + r.error);
+    else {
+      const heard = [];
+      const env = { pick: () => 'done', Pa1: { done: 'd.svg' }, N1: { Uri: { file: (f) => ({ f }) } }, z5: { join: (a, b, c) => [a, b, c].join('/') } };
+      env.globalThis = env;
+      env.__cceTabDot = (panel, state) => heard.push([panel.title, state]);
+      vm.createContext(env);
+      vm.runInContext(r.out + ';var t=new T();t.panelTab={title:"Fix the build"};t.context={extensionPath:"/x"};t.applyTabIcon();'
+        + 'var icon=t.panelTab.iconPath.f;', env);
+      if (JSON.stringify(heard) === '[["Fix the build","done"]]' && env.icon === '/x/resources/d.svg') {
+        ok('the patched host still sets the icon, then hands this extension the tab and its state');
+      } else bad(`after the icon update: heard ${JSON.stringify(heard)}, icon ${env.icon}`);
+    }
+  }
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   if (/globalThis\.__cceTzHook = /.test(ext) && /workplan\.setTimeZone\(clientZone\(\)\);\s*const moved = workplan\.setFocus/.test(ext)) {
     ok('the extension redraws on a reported zone and picks it up on every refresh');
   } else bad('extension.js does not read the reported time zone');
+  if (/globalThis\.__cceTabDot = \(panel, state\) =>/.test(ext) && /tabdot\.withDot\(panel\.title, state, enabled\(\) && !removed\(\)\)/.test(ext)) {
+    ok('the extension writes the tab dot, and only while it is on and not removed');
+  } else bad('extension.js does not handle the tab dot');
   if (/globalThis\[host\.LOAD_WATCH_OFF\] = !cfg\(\)\.get\(LATENCY_ON_SETTING, true\)/.test(ext)
     && /affectsConfiguration\(LATENCY_ON_SETTING\)\) loadWatchOff\(\)/.test(ext)) {
     ok('the latency setting drives the watch, at activation and whenever it changes');

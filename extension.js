@@ -28,6 +28,7 @@ const { countOpen, sweepOrphans, liveSessions, planDir, DATA_ROOT, PLAN_DIR } = 
 const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
+const tabdot = require('./src/tabdot');
 const ADAPTERS = require('./src/adapters');
 const removal = require('./src/removal');
 const PACKAGE = require('./package.json');
@@ -681,6 +682,15 @@ function start(context, renamed) {
     try { if (workplan.setTimeZone(clientZone())) workplan.refresh(); } catch (e) { /* never break the host's own message handling */ }
   };
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTzHook) delete globalThis.__cceTzHook; } });
+  /* The patched host hands over each editor tab's state as it picks the tab's icon; a conversation that finished
+     unseen gets a dot after its title (src/tabdot.js). */
+  globalThis.__cceTabDot = (panel, state) => {
+    try {
+      const want = tabdot.withDot(panel.title, state, enabled() && !removed());
+      if (panel.title !== want) panel.title = want;
+    } catch (e) { /* never break the host's own icon update */ }
+  };
+  context.subscriptions.push({ dispose: () => { if (globalThis.__cceTabDot) delete globalThis.__cceTabDot; } });
   refreshPlans();
   paintBadge();
   watchEffort();

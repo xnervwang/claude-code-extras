@@ -24,7 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 9;
+const VERSION = 10;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
@@ -106,6 +106,18 @@ const EDITS = [
     to: (m, fn, log, msg, rest) => `function ${fn}(${log},${msg}){try{if(${msg}&&${msg}.type==="cce_client_tz"`
       + `&&typeof ${msg}.timeZone==="string"){globalThis.__cceClientTimeZone=${msg}.timeZone;`
       + `globalThis.__cceTzHook&&globalThis.__cceTzHook(${msg}.timeZone)}}catch(e){}${rest}`,
+  },
+  /*
+   * The tab's unread dot (src/tabdot.js says what it is for).
+   *
+   * The host picks a tab's icon in one method, each time the state behind it can change, and that state is all the dot
+   * needs. So the method hands it over right after setting the icon, through a global this extension shares with the
+   * host - both run in one extension host process, the same way the active conversation and the time zone do.
+   */
+  {
+    name: 'tab unread dot',
+    re: /(this\.panelTab\.iconPath=[\w$]+\.Uri\.file\([\w$]+\.join\(this\.context\.extensionPath,"resources",[\w$]+\[([\w$]+)\]\)\))\}/g,
+    to: (m, set, state) => `${set};try{globalThis.__cceTabDot&&globalThis.__cceTabDot(this.panelTab,${state})}catch(e){}}`,
   },
 ];
 
