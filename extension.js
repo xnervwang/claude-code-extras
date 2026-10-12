@@ -682,8 +682,8 @@ function start(context, renamed) {
     try { if (workplan.setTimeZone(clientZone())) workplan.refresh(); } catch (e) { /* never break the host's own message handling */ }
   };
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTzHook) delete globalThis.__cceTzHook; } });
-  /* The patched host hands over each editor tab's state as it picks the tab's icon; a conversation that finished
-     unseen gets a dot after its title (src/tabdot.js). */
+  /* The patched host hands over each editor tab's state as it picks the tab's icon; the title gets the same coloured
+     dot the icon carries (src/tabdot.js). */
   globalThis.__cceTabDot = (panel, state) => {
     try {
       const want = tabdot.withDot(panel.title, state, enabled() && !removed());

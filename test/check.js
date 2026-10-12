@@ -3911,15 +3911,17 @@ console.log('\na panel whose bundle never arrives says so');
   /* The unread dot after a tab's title: the host hands over the state it picked the icon for, this extension writes the
      title. The title the host set is the base, so a dot of ours never piles up and goes when the state moves on. */
   {
-    const { withDot, DOT } = require('../src/tabdot');
-    const got = [withDot('Fix the build', 'done', true), withDot('Fix the build' + DOT, 'done', true),
-      withDot('Fix the build' + DOT, 'plain', true), withDot('Fix the build', 'pending', true),
-      withDot('Fix the build' + DOT, 'done', false), withDot(undefined, 'plain', true)];
-    const want = ['Fix the build' + DOT, 'Fix the build' + DOT, 'Fix the build', 'Fix the build', 'Fix the build', ''];
-    if (JSON.stringify(got) === JSON.stringify(want)) ok('a finished, unseen conversation gets one dot after its tab title, and loses it after');
-    else bad(`tab titles: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+    const { withDot, MARKS } = require('../src/tabdot');
+    const T = 'Fix the build';
+    const got = [withDot(T, 'done', true), withDot(T + MARKS.done, 'done', true), withDot(T + MARKS.done, 'pending', true),
+      withDot(T + MARKS.pending, 'plain', true), withDot(T + ' \u25CF', 'plain', true), withDot(T + MARKS.done, 'done', false),
+      withDot(undefined, 'plain', true)];
+    const want = [T + MARKS.done, T + MARKS.done, T + MARKS.pending, T, T, T, ''];
+    if (JSON.stringify(got) === JSON.stringify(want) && MARKS.done !== MARKS.pending) {
+      ok('a tab gets one dot after its title in the colour of the dot on its icon, and loses it when the state moves on');
+    } else bad(`tab titles: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
 
-    const edit = host.EDITS.find((e) => e.name === 'tab unread dot');
+    const edit = host.EDITS.find((e) => e.name === 'tab dot');
     const method = 'class T{applyTabIcon(){if(!this.panelTab)return;let $=pick();'
       + 'this.panelTab.iconPath=N1.Uri.file(z5.join(this.context.extensionPath,"resources",Pa1[$]))}}';
     const r = edit ? applyEdits(method, [edit]) : { error: 'no such edit' };
