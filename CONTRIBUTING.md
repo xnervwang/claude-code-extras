@@ -40,12 +40,13 @@ Keep the early exit in the injected script's React fiber tree loop. It runs for 
 ## Publishing
 
 - Package for the marketplaces with vsce, not `build/pack.sh`. `pack.sh` copies `images/` whole, so the README screenshots (about 1.2 MB) ship too, and it leaves the README's relative links as they are. Nothing reports either difference.
-- Commit and push first, then package against that commit so the README's images resolve:
+- Commit and push first, then package against that commit so the README's images and links point at it:
 
   ```sh
   SHA=$(git rev-parse HEAD)
   npx --yes @vscode/vsce@latest package --out xnervwang.claude-code-extras-<version>.vsix \
-    --baseImagesUrl "https://github.com/xnervwang/claude-code-extras/raw/$SHA/"
+    --baseImagesUrl "https://github.com/xnervwang/claude-code-extras/raw/$SHA/" \
+    --baseContentUrl "https://github.com/xnervwang/claude-code-extras/blob/$SHA/"
   ```
 
 - On Node 22.11, vsce needs `NODE_OPTIONS=--experimental-require-module`.
