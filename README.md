@@ -100,7 +100,7 @@ See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, th
 | **Background sessions:** See this conversation's `claude --bg` sessions as running, waiting for you, done, stopped or failed, with what each waits for and its final result; copy the attach or logs command. | Agents button in the footer and its map |
 | **Scheduled prompts:** See timers this conversation set through Claude Code's scheduled tasks, with each schedule, last-fired time and prompt. | Agents button in the footer and its map |
 | **Background commands:** See a count such as `1 task` while a background build, test run or `sleep` timer runs, with the list one click away. | Footer |
-| **Dots on tabs:** A coloured dot after a Claude Code tab's title, matching the one on its icon: 🔵 while Claude waits for your permission or answer, 🟠 when the conversation finished and you have not looked at it yet. | Editor tab titles |
+| **Marks on tabs:** A coloured mark after a Claude Code tab's title, in the colour of the dot on its icon: 🔹 while Claude waits for your permission or answer, 🔸 when the conversation finished and you have not looked at it yet. | Editor tab titles |
 | **Session information:** See the session ID, starting directory, transcript location and size; click a value to copy it. | Footer button |
 
 ## Settings
