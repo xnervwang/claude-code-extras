@@ -38,6 +38,10 @@ edge, and the footer controls. Thinking and tool calls shown, which is the defau
 
 ![Chat panel with thinking and tool calls shown](images/tools-expanded.png)
 
+The same conversation with the tool calls folded:
+
+![Chat panel with the tool calls folded](images/tools-folded.png)
+
 ## Features
 
 | What it shows | Where it appears |
