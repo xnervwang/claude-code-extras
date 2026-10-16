@@ -4242,9 +4242,12 @@ console.log('\nconversations pinned in the session list');
   if (/const pinsOn = \(\) => !removed\(\) && cfg\(\)\.get\(PINS_SETTING, true\) !== false;/.test(extSrc)
     && /globalThis\.__ccePinHook = /.test(extSrc) && /globalThis\.__ccePinnedIds = \(\) => \{\s*try \{ return pinsOn\(\) \?/.test(extSrc)
     && /if \(keeping \|\| !pinsOn\(\)\) return;/.test(extSrc) && /pins: pinsOn\(\) \?/.test(extSrc)
+    && /if \(replaced\(\) && !toldStale\) \{[\s\S]{0,80}offerReload\('The pin is saved/.test(extSrc)
+    && /fs\.watch\(dir, \{ persistent: false \}, \(event, name\) => \{\s*if \(name && name !== sessionPins\.FILE\) return;/.test(extSrc)
     && manifest['claudeCodeWorkPlan.sessionPins'] && manifest['claudeCodeWorkPlan.sessionPins'].default === true
     && !manifest['claudeCodeWorkPlan.keepGroupedSessions']) {
     ok('one setting, on by default, decides whether pins are drawn, files are kept and pinned conversations escape the archive');
+    ok('a pin made in a window that can no longer write the stylesheet is saved and the reader told to reload, and every window redraws when the pins change');
   } else bad('extension.js or the manifest does not wire the pins to their setting');
 }
 

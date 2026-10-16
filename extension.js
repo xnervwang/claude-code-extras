@@ -721,19 +721,45 @@ function start(context, renamed) {
       log.appendLine('pinned conversations: ' + ((e && e.message) || e));
     } finally { keeping = false; }
   };
-  let keepSoon = 0;
-  /* Called by the patched host from inside its own message handling, so the work is put off rather than done there. */
+  let keepSoon = 0, toldStale = false;
+  /*
+   * Called by the patched host from inside its own message handling, so the work is put off rather than done there.
+   *
+   * A window whose copy of this extension has been installed again over itself still records the pin - keeping the files
+   * and the exemption from the archive both read the record - but it leaves the shared stylesheet alone, and that is the
+   * only way a pin reaches the panel. Without a word the pin would show as pinned for a few seconds and then go back, so
+   * the first time this happens the reader is told why and offered the reload.
+   */
   globalThis.__ccePinHook = (id, on) => {
     setTimeout(() => {
       try {
         if (!pinsOn()) return;
         if (!sessionPins.setPinned(pinsFile(), id, on)) return;
         log.appendLine(`pinned conversations: ${on ? 'pinned' : 'unpinned'} ${id}`);
+        if (replaced() && !toldStale) {
+          toldStale = true;
+          offerReload('The pin is saved, but this window is running an earlier build of Work Plan for Claude Code than '
+            + 'the one now installed, so the session list here cannot show it. Reload the window to see it.');
+        }
         writeLiveNow();
         if (on && !keepSoon) keepSoon = setTimeout(() => { keepSoon = 0; keepPinned(); }, 5000);
       } catch (e) { log.appendLine('pinned conversations: ' + ((e && e.message) || e)); }
     }, 0);
   };
+  /* A pin made in another window - one that may not be able to write the stylesheet itself - reaches this one's panels
+     as soon as its file changes, rather than at the next periodic refresh. The file is replaced rather than written in
+     place, so the folder is what is watched. */
+  let pinsWatch = null, pinsSettle = 0;
+  try {
+    const dir = context.globalStorageUri.fsPath;
+    fs.mkdirSync(dir, { recursive: true });
+    pinsWatch = fs.watch(dir, { persistent: false }, (event, name) => {
+      if (name && name !== sessionPins.FILE) return;
+      if (pinsSettle) clearTimeout(pinsSettle);
+      pinsSettle = setTimeout(() => { pinsSettle = 0; if (pinsOn()) writeLiveNow(); }, 300);
+    });
+    pinsWatch.on('error', () => { try { pinsWatch.close(); } catch (_) { /* closed */ } pinsWatch = null; });
+  } catch (_) { /* the periodic refresh still carries a change across */ }
   /* Read by the patched host each time it works out which conversations are in use and so not to be archived. */
   globalThis.__ccePinnedIds = () => {
     try { return pinsOn() ? sessionPins.read(pinsFile()).pinned : []; } catch (_) { return []; }
@@ -741,7 +767,8 @@ function start(context, renamed) {
   const keepFirst = setTimeout(keepPinned, 60000);
   const keepTimer = setInterval(keepPinned, 30 * 60000);
   context.subscriptions.push({ dispose: () => {
-    clearTimeout(keepFirst); clearInterval(keepTimer); if (keepSoon) clearTimeout(keepSoon);
+    clearTimeout(keepFirst); clearInterval(keepTimer); if (keepSoon) clearTimeout(keepSoon); if (pinsSettle) clearTimeout(pinsSettle);
+    if (pinsWatch) { try { pinsWatch.close(); } catch (_) { /* closed */ } }
     if (globalThis.__ccePinHook) delete globalThis.__ccePinHook;
     if (globalThis.__ccePinnedIds) delete globalThis.__ccePinnedIds;
   } });
