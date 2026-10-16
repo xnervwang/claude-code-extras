@@ -144,7 +144,7 @@
           if (agentView && own === VIEW && (t === 'tool_use' || t === 'server_tool_use')) {
             acts.push({ node: row, ts: cx.message.timestamp, text: toolLabel(cx.block.content) });
           }
-          if (v && (t === 'tool_use' || t === 'server_tool_use') && typeof cx.block.cceResultAt === 'number') v += '\u2192' + fmt(cx.block.cceResultAt).replace(/^\d\d\/\d\d /, '');
+          if (v && (t === 'tool_use' || t === 'server_tool_use') && typeof cx.block.cceResultAt === 'number') v += '\u2192' + fmt(cx.block.cceResultAt).replace(/^(\d{4}\/)?\d\d\/\d\d /, '');
         }
         if (annot && !isOff('subAgentTags')) v += agentTag(agentOf(cx.message));
         /* The figures go on the first row that is a block, not on the first child: Claude Code puts a time line of its own

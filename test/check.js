@@ -3964,6 +3964,34 @@ console.log('\na panel whose bundle never arrives says so');
   } else bad('extension.js does not set the watch flag from the latency setting');
 }
 
+console.log('\nthe date on a message or reply from before today');
+{
+  /* The same order as the session list and the plan tree: month before day, the year only when it is not this one. */
+  const FIXED = new Date(2026, 9, 16, 12, 0, 0).getTime();
+  class FixedDate extends Date { constructor(...a) { if (a.length) super(...a); else super(FIXED); } }
+  const env = { Date: FixedDate, window: {}, isOff: () => false };
+  vm.createContext(env);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '15-format.js'), 'utf8') + ';this.fmt = fmt;', env);
+  const at = (...a) => new Date(...a).getTime();
+  const want = [
+    [at(2026, 9, 16, 9, 5, 7), '09:05:07', 'today: the clock alone'],
+    [at(2026, 9, 1, 21, 9, 33), '10/01 21:09:33', 'an earlier day this year: month, then day'],
+    [at(2026, 0, 10, 8, 0, 0), '01/10 08:00:00', 'so 10 January is 01/10'],
+    [at(2025, 11, 31, 23, 30, 0), '2025/12/31 23:30:00', 'another year: the year in front'],
+  ];
+  for (const [ms, exp, label] of want) {
+    const got = env.fmt(ms);
+    if (got === exp) ok('message dates: ' + label);
+    else bad(`message dates, ${label}: got "${got}", expected "${exp}"`);
+  }
+  const sweep = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '99-sweep.js'), 'utf8');
+  const lit = /fmt\(cx\.block\.cceResultAt\)\.replace\((\/.+?\/), ''\)/.exec(sweep);
+  const strip = lit ? new Function('return ' + lit[1])() : null;
+  const ends = ['10/01 21:09:33', '2025/12/31 23:30:00'].map((s) => strip ? s.replace(strip, '') : null);
+  if (ends[0] === '21:09:33' && ends[1] === '23:30:00') ok('a tool call\'s result time drops the date in either form');
+  else bad(`the result time kept ${JSON.stringify(ends)}`);
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

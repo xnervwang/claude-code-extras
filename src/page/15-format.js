@@ -6,10 +6,14 @@
 // Fragment of the in-page script - see README.md in this folder.
 
   var p2 = function(n){ return (n < 10 ? '0' : '') + n; };
+  // Month before day, and the year only when it is not the current one: the session list and the work plan tree write
+  // dates this way, and a second order for the same kind of value makes 01/10 readable as two different days.
   var fmt = function(ms){
     if (typeof ms !== 'number' || !isFinite(ms)) return '';
     var d = new Date(ms), now = new Date(), t = p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds());
-    return d.toDateString() === now.toDateString() ? t : p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + ' ' + t;
+    if (d.toDateString() === now.toDateString()) return t;
+    var md = p2(d.getMonth() + 1) + '/' + p2(d.getDate());
+    return (d.getFullYear() === now.getFullYear() ? md : d.getFullYear() + '/' + md) + ' ' + t;
   };
   // Session list: absolute dates next to the compact relative time. On window because the call site
   // lives in the official component code, outside this closure. Pure ASCII source, no encoding risk.
