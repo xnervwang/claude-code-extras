@@ -4012,18 +4012,20 @@ console.log('\nconversations pinned in the session list');
     }
   }
 
-  /* The pin goes in ahead of the time, the time element stays as it was so the next edit still finds it, and the page is
-     handed the factory, the row and the row's class names. */
+  /* The pin goes in first among the buttons a row shows on hover, ahead of Rename, and the page is handed the factory,
+     the row and the row's class names; the time gets the row's id and the panel's relative-time function. */
   {
     const editPin = webview.EDITS.find((e) => e.name === 'session list pin');
     const editTime = webview.EDITS.find((e) => e.name === 'session list time render');
     const row = 'L("span",{className:B5.sessionMeta,children:[F("span",{className:B5.sessionTime,children:O_5(J.lastModifiedTime.value)}),'
-      + 'L("span",{className:B5.sessionActions,children:[]})]})';
-    const r = editPin && editTime ? applyEdits(row, [editPin, editTime]) : { error: 'no such edit' };
+      + '!z&&(M||N)&&L("span",{className:B5.sessionActions,children:[M&&J.sessionId.value&&F("span",{role:"button",title:"Rename session"}),'
+      + 'N&&F("span",{role:"button",title:"Archive session"})]})]})';
+    const r = editPin && editTime ? applyEdits(row, [editTime, editPin]) : { error: 'no such edit' };
     if (r.error) bad('the pin and time edits did not both apply to the shape of a row: ' + r.error);
-    else if (/children:\[\(typeof window\.__ccePin==="function"\?window\.__ccePin\(F,J,B5\):null\),F\("span",\{className:B5\.sessionTime,/.test(r.out)
+    else if (r.out.includes('className:B5.sessionActions,children:[(typeof window.__ccePin==="function"?window.__ccePin(F,J,B5):null),'
+        + 'M&&J.sessionId.value&&F("span",{role:"button",title:"Rename session"})')
       && /window\.__cceSpan\(O_5\(J\.lastModifiedTime\.value\),J\.lastModifiedTime\.value,J\.cceCreatedAt,J\.sessionId&&J\.sessionId\.value,O_5\)/.test(r.out)) {
-      ok('the pin is drawn ahead of the time with the panel\'s own factory and class names, and the time gets the row\'s id and the relative-time function');
+      ok('the pin is drawn first among the hover buttons, with the panel\'s own factory and class names, and the time gets the row\'s id and the relative-time function');
     } else bad('after the pin and time edits the row reads: ' + r.out);
   }
 

@@ -18,7 +18,8 @@
  *   session createdAt  Carry the session's creation time into the session-list model.
  *   session time       Wrap the relative time in the list with the absolute date range, and for a pinned
  *                      conversation whose files were given a later time, the time it was really last active.
- *   session pin        A pin on each row of the session list (src/sessionpins.js says what pinning does).
+ *   session pin        A pin among the buttons a row of the session list shows on hover (src/sessionpins.js
+ *                      says what pinning does).
  *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and drop the guard
  *                      that hides the meter while more than half the window is still free.
  *   agent map          Three: a section for this session's scheduled prompts, the footer button opening for a
@@ -329,21 +330,21 @@ const EDITS = [
     to: (m, y, s) => `${y}.sessionId.value=${s}.id,${y}.transcriptOnDisk=!0,${y}.cceCreatedAt=${s}.createdAt,${y}.lastModifiedTime.value=`,
   },
   {
-    /* The pin goes ahead of the time, in the part of the row that holds the time and the actions shown on hover. The
-       page is handed the element factory, the row and the row's style names, and renders the pin with the same class
-       as the panel's own Rename and Archive buttons. The time element is written back unchanged for the next edit. */
-    name: 'session list pin',
-    re: /([\w$]+)\("span",\{className:([\w$]+)\.sessionMeta,children:\[([\w$]+)\("span",\{className:\2\.sessionTime,children:([\w$]+)\(([\w$]+)\.lastModifiedTime\.value\)\}\)/g,
-    to: (m, jsxs, cls, jsx, f, j) => `${jsxs}("span",{className:${cls}.sessionMeta,children:[`
-      + `(typeof window.__ccePin==="function"?window.__ccePin(${jsx},${j},${cls}):null),`
-      + `${jsx}("span",{className:${cls}.sessionTime,children:${f}(${j}.lastModifiedTime.value)})`,
-  },
-  {
     /* The row's id and the panel's own relative-time function go along, so a pinned row can show its real time in the
        panel's own form. */
     name: 'session list time render',
     re: /children:([\w$]+)\(([\w$]+)\.lastModifiedTime\.value\)/g,
     to: (m, f, j) => `children:(typeof window.__cceSpan==="function"?window.__cceSpan(${f}(${j}.lastModifiedTime.value),${j}.lastModifiedTime.value,${j}.cceCreatedAt,${j}.sessionId&&${j}.sessionId.value,${f}):${f}(${j}.lastModifiedTime.value))`,
+  },
+  {
+    /* The pin is the first of the buttons a row shows on hover, ahead of Rename and Archive, so the three come and go
+       together and sit together. The page is handed the element factory, the row and the row's class names, and renders
+       it with the same class as those two. The anchor is the start of that group and the Rename button that opens it,
+       which is also where the factory and the row are named. */
+    name: 'session list pin',
+    re: /(\{className:([\w$]+)\.sessionActions,children:\[)(([\w$]+)&&([\w$]+)\.sessionId\.value&&([\w$]+)\("span",\{role:"button")/g,
+    to: (m, open, cls, rename, gate, j, jsx) =>
+      `${open}(typeof window.__ccePin==="function"?window.__ccePin(${jsx},${j},${cls}):null),${rename}`,
   },
   {
     // The three artwork states cover half, three quarters and almost all of the circle, but the component picks

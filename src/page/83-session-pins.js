@@ -21,16 +21,22 @@
   var PIN_BODY = 'M9.75 3.75h4.5v5.25l3 4.5h-10.5l3-4.5z';
   var PIN_LINES = 'M8.25 3.75h7.5M12 13.5v6.75';
   /*
-   * Next to the time on the right of a row, in a column of its own ahead of the cell where the panel puts the time and,
-   * on hover, its Rename and Archive buttons. Shown with those buttons on hover, and always once pinned. The panel's
-   * selector for a row in the hover state is the one used here, so the pin and its buttons come and go together.
+   * The pin sits in the group of buttons the panel shows on hover, so it comes and goes with Rename and Archive and sits
+   * beside them. Once pinned, a small pin is also drawn in front of the time, which is what a row shows when it is not
+   * hovered; the panel hides the time on hover, and that pin with it, when the buttons take its place. The row is found
+   * pinned through the button inside it, so nothing has to be put into the time element itself.
    */
-  var PIN_CSS = 'span[data-cce-pin]{display:none;grid-row:1;grid-column:1;margin-right:2px}'
-    + 'span[data-cce-pin]~[class]{grid-column:2}'
-    + '[class*="sessionItem_"]:where(:hover,:focus-visible,:has(:focus-visible),[data-highlighted]) span[data-cce-pin]{display:flex}'
-    + 'span[data-cce-pin][data-cce-pinned="1"]{display:flex;color:var(--vscode-textLink-foreground,var(--app-primary-foreground))}'
-    + 'span[data-cce-pin][data-cce-pinned="1"] [data-cce-pin-body]{fill:currentColor}'
-    + 'span[data-cce-pin][data-cce-pin-off]{display:none !important}';
+  var PIN_MASK = 'url("data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+    + 'fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<path fill="#000" d="' + PIN_BODY + '"/><path d="' + PIN_LINES + '"/></svg>') + '")';
+  var PIN_ON = 'span[data-cce-pin][data-cce-pinned="1"]:not([data-cce-pin-off])';
+  var PIN_CSS = PIN_ON + '{color:var(--vscode-textLink-foreground,var(--app-primary-foreground))}'
+    + PIN_ON + ' [data-cce-pin-body]{fill:currentColor}'
+    + 'span[data-cce-pin][data-cce-pin-off]{display:none !important}'
+    + '[class*="sessionMeta_"]:has(' + PIN_ON + ')>[class*="sessionTime_"]::before{content:"";display:inline-block;'
+    + 'width:12px;height:12px;margin-right:3px;vertical-align:-1px;'
+    + 'background-color:var(--vscode-textLink-foreground,currentColor);'
+    + '-webkit-mask:' + PIN_MASK + ' center/contain no-repeat;mask:' + PIN_MASK + ' center/contain no-repeat}';
   var pinStyle = null;
   var pinsNow = function(){
     if (pinsCache !== null) return pinsCache;
