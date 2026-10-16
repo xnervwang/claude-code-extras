@@ -21,17 +21,24 @@
   var PIN_BODY = 'M9.75 3.75h4.5v5.25l3 4.5h-10.5l3-4.5z';
   var PIN_LINES = 'M8.25 3.75h7.5M12 13.5v6.75';
   /*
-   * The pin is the last of the buttons the panel shows on hover, after Rename and Archive, so it sits beside them at the
-   * right end of the row. Once pinned it stays visible while the other two are hidden, and the time moves left by its
-   * width - so the pin is in the same place whether or not the row is hovered, and nothing in the row shifts when it is.
-   * The time and the buttons share one cell, which is why the room has to be made on the time rather than beside it.
+   * Two places, for the two things a pin is. The button is the first of those the panel shows on hover, ahead of Rename
+   * and Archive: an action, so it comes and goes with them. Being pinned is a property of the conversation, like the
+   * dot the panel draws for one that is running or unread, so a pinned row also carries a small mark in front of its
+   * title, in the panel's muted colour - where that dot goes, and taking no room from rows that are not pinned. The
+   * time column is left as the panel lays it out. The row is found pinned through the button inside it, so nothing has
+   * to be put into the title element itself.
    */
+  var PIN_MASK = 'url("data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+    + 'fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
+    + '<path fill="#000" d="' + PIN_BODY + '"/><path d="' + PIN_LINES + '"/></svg>') + '")';
   var PIN_ON = 'span[data-cce-pin][data-cce-pinned="1"]:not([data-cce-pin-off])';
-  var PIN_CSS = 'span[data-cce-pin]{order:1;flex:none}'
-    + PIN_ON + '{visibility:visible;color:var(--vscode-textLink-foreground,var(--app-primary-foreground))}'
+  var PIN_CSS = 'span[data-cce-pin]{flex:none}'
     + PIN_ON + ' [data-cce-pin-body]{fill:currentColor}'
     + 'span[data-cce-pin][data-cce-pin-off]{display:none !important}'
-    + '[class*="sessionMeta_"]:has(' + PIN_ON + ')>[class*="sessionTime_"]{margin-right:28px}';
+    + '[class*="sessionItem_"]:has(' + PIN_ON + ')>[class*="sessionName_"]::before{content:"";display:inline-block;'
+    + 'width:12px;height:12px;margin-right:5px;vertical-align:-1px;'
+    + 'background-color:var(--app-secondary-foreground,currentColor);'
+    + '-webkit-mask:' + PIN_MASK + ' center/contain no-repeat;mask:' + PIN_MASK + ' center/contain no-repeat}';
   var pinStyle = null;
   var pinsNow = function(){
     if (pinsCache !== null) return pinsCache;
