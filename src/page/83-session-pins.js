@@ -22,19 +22,21 @@
   var PIN_LINES = 'M8.25 3.75h7.5M12 13.5v6.75';
   /*
    * One pin on every row, in front of the status dot the panel draws for a conversation that is running or unread, so
-   * the pins of all rows line up down the left edge. It shows its state and is what is clicked: dim and hollow while
-   * not pinned, filled and in the text colour once pinned. Always there rather than only on hover, so a row never moves
-   * under the pointer and the feature can be found without knowing it exists.
+   * the pins of all rows line up down the left edge. It shows its state and is what is clicked: hollow and in the
+   * panel's muted colour while not pinned, about as bright as the time beside it so it can be found; filled and purple
+   * once pinned. Purple because the dot already uses green, blue, orange and red for a conversation's state, and a pin
+   * in one of those would read as one more state. Always there rather than only on hover, so a row never moves under
+   * the pointer and the feature can be found without knowing it exists.
    */
   var PIN_ON = 'span[data-cce-pin][data-cce-pinned="1"]:not([data-cce-pin-off])';
   var PIN_CSS = 'span[data-cce-pin]{order:-1;flex:none;display:inline-flex;align-items:center;justify-content:center;'
     + 'width:18px;height:18px;margin:0 -2px;border-radius:4px;cursor:pointer;'
-    + 'color:var(--app-secondary-foreground,currentColor);opacity:.45}'
+    + 'color:var(--app-secondary-foreground,currentColor);opacity:.65}'
     + 'span[data-cce-pin] svg{width:15px;height:15px}'
-    + '[class*="sessionItem_"]:where(:hover,:focus-visible,:has(:focus-visible),[data-highlighted]) span[data-cce-pin]{opacity:.75}'
+    + '[class*="sessionItem_"]:where(:hover,:focus-visible,:has(:focus-visible),[data-highlighted]) span[data-cce-pin]{opacity:.9}'
     + 'span[data-cce-pin]:hover,span[data-cce-pin]:focus-visible{opacity:1;color:var(--app-primary-foreground,currentColor);'
     + 'background:var(--app-ghost-button-hover-background,transparent)}'
-    + PIN_ON + '{opacity:1;color:var(--app-primary-foreground,currentColor)}'
+    + PIN_ON + ',' + PIN_ON + ':hover{opacity:1;color:var(--vscode-charts-purple,#b180d7)}'
     + PIN_ON + ' [data-cce-pin-body]{fill:currentColor}'
     + 'span[data-cce-pin][data-cce-pin-off]{display:none !important}';
   var pinStyle = null;
