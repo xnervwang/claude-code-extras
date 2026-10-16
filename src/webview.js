@@ -16,7 +16,9 @@
  *                      message falls back to Date.now() and reopened history would read "now". Pass the real time.
  *   tool result        When a tool result arrives, record its time on the tool row, so a call can show start and end.
  *   session createdAt  Carry the session's creation time into the session-list model.
- *   session time       Wrap the relative time in the list with the absolute date range.
+ *   session time       Wrap the relative time in the list with the absolute date range, and for a pinned
+ *                      conversation whose files were given a later time, the time it was really last active.
+ *   session pin        A pin on each row of the session list (src/sessionpins.js says what pinning does).
  *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and drop the guard
  *                      that hides the meter while more than half the window is still free.
  *   agent map          Three: a section for this session's scheduled prompts, the footer button opening for a
@@ -144,6 +146,16 @@ function backgroundProperty(list) {
 }
 
 /*
+ * The pinned conversations, for the pins on the session list - same encoding. Written while pinning is on, even with
+ * nothing pinned, because its presence is what tells the page to draw the pins: a stylesheet without it comes from a
+ * host that would not act on a click.
+ */
+function pinsProperty(data) {
+  if (!Array.isArray(data)) return '';
+  return `:root{--cce-pins:"${Buffer.from(JSON.stringify(data), 'utf8').toString('base64')}";}\n`;
+}
+
+/*
  * This extension's own version and id, taken from its manifest rather than passed in by a caller, so that forgetting to
  * thread them through could not quietly disable the rule in writeLive that depends on them.
  */
@@ -229,6 +241,8 @@ function liveCss(opts = {}) {
   if (on && off.length) css += ':root{' + off.map((k) => `--cce-off-${k}:1;`).join('') + '}\n';
   if (on) css += scheduleProperty(opts.tasks);
   if (on && !off.includes('backgroundSessions')) css += backgroundProperty(opts.background);
+  /* Not behind the switch for the other additions: turning those off must not quietly stop keeping what is pinned. */
+  css += pinsProperty(opts.pins);
   return css;
 }
 
@@ -315,9 +329,21 @@ const EDITS = [
     to: (m, y, s) => `${y}.sessionId.value=${s}.id,${y}.transcriptOnDisk=!0,${y}.cceCreatedAt=${s}.createdAt,${y}.lastModifiedTime.value=`,
   },
   {
+    /* The pin goes ahead of the time, in the part of the row that holds the time and the actions shown on hover. The
+       page is handed the element factory, the row and the row's style names, and renders the pin with the same class
+       as the panel's own Rename and Archive buttons. The time element is written back unchanged for the next edit. */
+    name: 'session list pin',
+    re: /([\w$]+)\("span",\{className:([\w$]+)\.sessionMeta,children:\[([\w$]+)\("span",\{className:\2\.sessionTime,children:([\w$]+)\(([\w$]+)\.lastModifiedTime\.value\)\}\)/g,
+    to: (m, jsxs, cls, jsx, f, j) => `${jsxs}("span",{className:${cls}.sessionMeta,children:[`
+      + `(typeof window.__ccePin==="function"?window.__ccePin(${jsx},${j},${cls}):null),`
+      + `${jsx}("span",{className:${cls}.sessionTime,children:${f}(${j}.lastModifiedTime.value)})`,
+  },
+  {
+    /* The row's id and the panel's own relative-time function go along, so a pinned row can show its real time in the
+       panel's own form. */
     name: 'session list time render',
     re: /children:([\w$]+)\(([\w$]+)\.lastModifiedTime\.value\)/g,
-    to: (m, f, j) => `children:(typeof window.__cceSpan==="function"?window.__cceSpan(${f}(${j}.lastModifiedTime.value),${j}.lastModifiedTime.value,${j}.cceCreatedAt):${f}(${j}.lastModifiedTime.value))`,
+    to: (m, f, j) => `children:(typeof window.__cceSpan==="function"?window.__cceSpan(${f}(${j}.lastModifiedTime.value),${j}.lastModifiedTime.value,${j}.cceCreatedAt,${j}.sessionId&&${j}.sessionId.value,${f}):${f}(${j}.lastModifiedTime.value))`,
   },
   {
     // The three artwork states cover half, three quarters and almost all of the circle, but the component picks
@@ -583,5 +609,5 @@ module.exports = {
   id: 'anthropic.claude-code', name: 'Claude Code panel',
   VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, SCRIPT,
   safeColor, patchSource, status, apply, restore, findInstalls, webviewFile, targetFile: webviewFile, writeLive, liveCss,
-  writeEffort, pruneEfforts, EFFORT_PREFIX,
+  writeEffort, pruneEfforts, EFFORT_PREFIX, pinsProperty,
 };

@@ -90,7 +90,7 @@ const PAGE_GLOBALS = new Set(['window', 'document', 'console', 'navigator', 'per
   'parseInt', 'parseFloat', 'String', 'Number', 'Boolean', 'Array', 'Object', 'JSON', 'Math', 'Date', 'RegExp',
   'Error', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Promise', 'Symbol', 'Image', 'MutationObserver', 'AudioContext',
   'TextDecoder', 'TextEncoder', 'Range', 'Node', 'Element', 'HTMLElement', 'CustomEvent', 'Event', 'URL',
-  'structuredClone', 'queueMicrotask', 'Uint8Array', 'Uint16Array', 'Float32Array', 'ArrayBuffer']);
+  'structuredClone', 'queueMicrotask', 'Uint8Array', 'Uint16Array', 'Float32Array', 'ArrayBuffer', 'acquireVsCodeApi']);
 
 /* Comments and string literals have to go first, or the scan reports the prose and the CSS: `content:attr(...)` and
    `rgba(...)` and `var(--vscode-…)` are stylesheet text, and a sentence like "call __cceStats() any time" is a hint
@@ -3902,12 +3902,12 @@ console.log('\na panel whose bundle never arrives says so');
     else bad(`the bundle got ${later === handle ? 'the same' : 'another'} handle, the editor was asked ${made} time(s)`);
   }
   {
-    const edit = host.EDITS.find((e) => e.name === 'panel time zone');
+    const edit = host.EDITS.find((e) => e.name === 'panel messages');
     const fn = 'function eT($,J){let Q=`Received message from webview: ${bl0(J)}`;$.info(Q)}';
     const r = edit ? applyEdits(fn, [edit]) : { error: 'no such edit' };
-    if (r.error) bad('the time zone edit did not apply to the logging function\'s shape: ' + r.error);
+    if (r.error) bad('the panel messages edit did not apply to the logging function\'s shape: ' + r.error);
     else {
-      const logged = [], heard = [];
+      const heard = [], pins = [];
       const env = { bl0: (m) => JSON.stringify(m), out: null };
       env.globalThis = env;
       env.__cceTzHook = (z) => heard.push(z);
@@ -3918,6 +3918,18 @@ console.log('\na panel whose bundle never arrives says so');
         && /^Received message from webview: /.test(env.out)) {
         ok('the patched host keeps the zone a panel reports, calls this extension, and still logs the message');
       } else bad(`after the time zone message: kept ${env.__cceClientTimeZone}, heard ${JSON.stringify(heard)}, logged ${env.out}`);
+      env.out = null;
+      vm.runInContext('eT({info:(q)=>out=q},{type:"cce_session_pin",sessionId:"s1",pinned:true});', env);
+      const unheard = env.out;
+      env.__ccePinHook = (id, on) => pins.push([id, on]);
+      vm.runInContext('eT({info:(q)=>out=q},{type:"cce_session_pin",sessionId:"s1",pinned:true});'
+        + 'eT({info:(q)=>out=q},{type:"cce_session_pin",sessionId:"s2",pinned:"yes"});'
+        + 'eT({info:(q)=>out=q},{type:"cce_session_pin",sessionId:7,pinned:true});'
+        + 'eT({info:(q)=>out=q},{type:"cce_client_tz",timeZone:"Asia/Tokyo"});', env);
+      if (JSON.stringify(pins) === '[["s1",true],["s2",false]]' && /^Received message from webview: /.test(unheard)
+        && JSON.stringify(heard) === '["America/Los_Angeles","Asia/Tokyo"]') {
+        ok('a pin from the session list reaches this extension as an id and a yes or no, and the zone is still kept');
+      } else bad(`after the pin messages: heard pins ${JSON.stringify(pins)}, zones ${JSON.stringify(heard)}, logged without a hook: ${unheard}`);
     }
   }
   /* The unread dot after a tab's title: the host hands over the state it picked the icon for, this extension writes the
@@ -3964,46 +3976,210 @@ console.log('\na panel whose bundle never arrives says so');
   } else bad('extension.js does not set the watch flag from the latency setting');
 }
 
-console.log('\nconversations in a group, kept from the transcript cleanup');
+console.log('\nconversations pinned in the session list');
 {
-  /* The patched host hands over the state it reads the groups from, and still returns the groups as it did. */
   const { applyEdits } = require('../src/edits');
-  const edit = host.EDITS.find((e) => e.name === 'session groups');
-  const cls = 'class pn{context;constructor($){this.context=$}sessionGroupsKey(){return"sessionGroups:/w"}'
-    + 'getSessionGroups(){return bV(this.context.globalState.get(this.sessionGroupsKey()))}}';
-  const r = edit ? applyEdits(cls, [edit]) : { error: 'no such edit' };
-  if (r.error) bad('the session groups edit did not apply to the settings method\'s shape: ' + r.error);
-  else {
-    const env = { bV: (v) => (Array.isArray(v) ? v : []) };
-    env.globalThis = env;
-    vm.createContext(env);
-    vm.runInContext(r.out + ';var gs={get:(k)=>k==="sessionGroups:/w"?[{id:"g",sessionIds:["x"]}]:void 0,keys:()=>[]};'
-      + 'var got=new pn({globalState:gs}).getSessionGroups();', env);
-    if (env.__cceClaudeState === env.gs && JSON.stringify(env.got) === '[{"id":"g","sessionIds":["x"]}]') {
-      ok('reading the groups hands over Claude Code\'s state, and the groups come back as before');
-    } else bad(`after reading the groups: state ${env.__cceClaudeState === env.gs ? 'handed over' : 'not handed over'}, `
-      + `groups ${JSON.stringify(env.got)}`);
-  }
-  const keep = require('../src/keepgrouped');
+  const pins = require('../src/sessionpins');
   const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
   const C = '33333333-3333-4333-8333-333333333333', D = '44444444-4444-4444-8444-444444444444';
-  const groups = { 'sessionGroups:/a': [{ sessionIds: [A, 'remote:abc'] }, { sessionIds: [B] }], 'sessionGroups:/b': [{ sessionIds: [C] }],
-    'sessionGroups:/c': 'not a list', other: [{ sessionIds: [D] }] };
-  const ids = keep.groupedIds({ keys: () => Object.keys(groups), get: (k) => groups[k] });
-  if ([...ids].sort().join() === [A, B, C].sort().join()) ok('the ids in every folder\'s groups, and nothing that is not a session id');
-  else bad(`grouped ids read as ${JSON.stringify([...ids])}`);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-keep-'));
+
+  /* The automatic archive skips a session the host counts as in use, and the pinned ones join the set the grouped ones
+     are in. Run on the shape of the code that builds the set and the test that reads it. */
+  {
+    const edit = host.EDITS.find((e) => e.name === 'pinned conversations not archived');
+    const code = 'function uG($,J){return J.openSessionIds.has($)||J.groupedSessionKeys.has($)}'
+      + 'class S{constructor(g){this.settings={getSessionGroups:()=>g}}arm(){let Y={openSessionIds:new Set(["o"]),'
+      + 'groupedSessionKeys:new Set(this.settings.getSessionGroups().flatMap((W)=>W.sessionIds)),liveElsewhereSessionIds:new Set};'
+      + 'return(W)=>uG(W,Y)}}';
+    const r = edit ? applyEdits(code, [edit]) : { error: 'no such edit' };
+    if (r.error) bad('the archive edit did not apply to the shape of the in-use set: ' + r.error);
+    else {
+      const run = (pinned) => {
+        const env = {};
+        env.globalThis = env;
+        if (pinned !== undefined) env.__ccePinnedIds = pinned;
+        vm.createContext(env);
+        vm.runInContext(r.out + `;var inUse=new S([{sessionIds:["${B}"]}]).arm();`
+          + `var got=["${A}","${B}","${C}","o"].map((x)=>inUse(x));`, env);
+        return JSON.stringify(env.got);
+      };
+      const got = [run(() => [A]), run(undefined), run(() => { throw new Error('x'); }), run(() => 'not a list'), run(() => [A, 5])];
+      const want = ['[true,true,false,true]', '[false,true,false,true]', '[false,true,false,true]', '[false,true,false,true]', '[true,true,false,true]'];
+      if (JSON.stringify(got) === JSON.stringify(want)) {
+        ok('a pinned conversation counts as in use and is not archived; a grouped one still is in use, and one neither pinned nor grouped is not');
+        ok('with no pins to read, or a list that throws or is not a list, the set is what Claude Code built');
+      } else bad(`in use after the archive edit: ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+    }
+  }
+
+  /* The pin goes in ahead of the time, the time element stays as it was so the next edit still finds it, and the page is
+     handed the factory, the row and the row's class names. */
+  {
+    const editPin = webview.EDITS.find((e) => e.name === 'session list pin');
+    const editTime = webview.EDITS.find((e) => e.name === 'session list time render');
+    const row = 'L("span",{className:B5.sessionMeta,children:[F("span",{className:B5.sessionTime,children:O_5(J.lastModifiedTime.value)}),'
+      + 'L("span",{className:B5.sessionActions,children:[]})]})';
+    const r = editPin && editTime ? applyEdits(row, [editPin, editTime]) : { error: 'no such edit' };
+    if (r.error) bad('the pin and time edits did not both apply to the shape of a row: ' + r.error);
+    else if (/children:\[\(typeof window\.__ccePin==="function"\?window\.__ccePin\(F,J,B5\):null\),F\("span",\{className:B5\.sessionTime,/.test(r.out)
+      && /window\.__cceSpan\(O_5\(J\.lastModifiedTime\.value\),J\.lastModifiedTime\.value,J\.cceCreatedAt,J\.sessionId&&J\.sessionId\.value,O_5\)/.test(r.out)) {
+      ok('the pin is drawn ahead of the time with the panel\'s own factory and class names, and the time gets the row\'s id and the relative-time function');
+    } else bad('after the pin and time edits the row reads: ' + r.out);
+  }
+
+  /* The page's half, run on a stand-in for the panel: what a pin is, what clicking it does, and the real time of a
+     pinned row. */
+  {
+    const frag = (n) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', n), 'utf8');
+    const NOW = new Date(2026, 9, 16, 12, 0, 0).getTime(), DAY = 86400000;
+    class FixedDate extends Date { constructor(...a) { if (a.length) super(...a); else super(NOW); } static now() { return NOW; } }
+    const pack = (v) => '"' + Buffer.from(JSON.stringify(v), 'utf8').toString('base64') + '"';
+    const real = NOW - 120 * DAY, given = NOW - 76 * DAY;
+    const env = {
+      Date: FixedDate, window: {}, console, Buffer, TextDecoder,
+      atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+      prop: '', posted: [], hidden: 0, shown: 0, timers: [], appended: [],
+      sessionDates: false,
+    };
+    env.getComputedStyle = () => ({ getPropertyValue: (n) => (n === '--cce-pins' ? env.prop : '') });
+    env.document = { documentElement: {}, createElement: (t) => ({ tag: t, setAttribute() {} }), querySelectorAll: () => env.rows || [] };
+    env.head = { appendChild: (el) => env.appended.push(el) };
+    env.acquireVsCodeApi = () => ({ postMessage: (m) => env.posted.push(m) });
+    env.setTimeout = (f, ms) => { env.timers.push([f, ms]); return env.timers.length; };
+    env.showLabel = () => { env.shown++; };
+    env.hideLabel = () => { env.hidden++; };
+    env.isOff = (k) => (k === 'sessionDates' ? !env.sessionDates : false);
+    vm.createContext(env);
+    vm.runInContext('var pinsCache = null;' + frag('15-format.js') + frag('82-scheduled-tasks.js') + frag('83-session-pins.js')
+      + ';this.reset = function(){ pinsCache = null; };', env);
+    const h = (type, props, key) => ({ type, props, key });
+    const cls = { actionButton: 'actionButton_x', actionIcon: 'actionIcon_x' };
+    const rowOf = (id, onDisk = true) => ({ sessionId: { value: id }, transcriptOnDisk: onDisk });
+    const draw = (id, onDisk) => env.window.__ccePin(h, rowOf(id, onDisk), cls);
+    const set = (v) => { env.prop = v === null ? '' : pack(v); env.reset(); };
+
+    set(null);
+    const early = draw(A);
+    if (early && early.props['data-cce-pin-off'] === '1') ok('before the stylesheet says pinning is on, a row gets a pin that is hidden, to be shown when it does');
+    else bad(`with no pins in the stylesheet the row got ${JSON.stringify(early && early.props)}`);
+
+    set([[A], { [A]: [real, given] }, 14]);
+    const pinned = draw(A), plain = draw(B);
+    const p = pinned && pinned.props, q = plain && plain.props;
+    const okShape = p && q && p.role === 'button' && p.tabIndex === 0 && p.className === 'actionButton_x'
+      && p['data-cce-pin'] === A && p['data-cce-pin-off'] === undefined && pinned.key === 'cce-pin'
+      && p.children[0].type === 'svg' && p.children[0].props.className === 'actionIcon_x';
+    if (okShape) ok('a pin is a button with the panel\'s own action class, keyed, with its icon inside');
+    else bad(`the pin was drawn as ${JSON.stringify(p)}`);
+    if (p && q && p['data-cce-pinned'] === '1' && p['aria-pressed'] === 'true' && q['data-cce-pinned'] === '0' && q['aria-pressed'] === 'false') {
+      ok('a pinned row and an unpinned one carry different states');
+    } else bad(`pinned state ${p && p['data-cce-pinned']}, unpinned state ${q && q['data-cce-pinned']}`);
+    const label = (p && p['aria-label']) || '', other = (q && q['aria-label']) || '';
+    const says = (t) => /transcript cleanup will not delete/.test(t) || /transcript cleanup does not delete/.test(t);
+    if (says(label) && says(other) && /Archived sessions/.test(label) && /Archived sessions/.test(other)
+      && /Click to unpin/.test(label) && /Click again to unpin/.test(other) && /within about 14 days/.test(label) && /within about 14 days/.test(other)) {
+      ok('the hover text says it is not deleted by the cleanup, not moved to Archived sessions, how to unpin, and what happens after');
+    } else bad(`hover text pinned: "${label}" / unpinned: "${other}"`);
+    if (draw(C, false) === null && env.window.__ccePin(h, { sessionId: { value: 'remote:1' }, transcriptOnDisk: true }, cls) === null) {
+      ok('no pin on a row with no transcript on disk, or one whose id is not a session id');
+    } else bad('a row with nothing on disk to keep got a pin');
+
+    let stopped = 0;
+    const target = { attrs: {}, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+      setAttribute(k, v) { this.attrs[k] = String(v); }, hasAttribute(k) { return k in this.attrs; }, removeAttribute(k) { delete this.attrs[k]; } };
+    q.onClick({ stopPropagation: () => { stopped++; }, currentTarget: target });
+    const sent = env.posted[0] || {};
+    if (stopped === 1 && sent.type === 'cce_session_pin' && sent.sessionId === B && sent.pinned === true && target.attrs['data-cce-pinned'] === '1'
+      && /^Pinned:/.test(target.attrs['aria-label'] || '') && env.hidden > 0) {
+      ok('clicking a pin stops the click reaching the row, tells the host, and shows it pinned at once');
+    } else bad(`after clicking: stopped ${stopped}, sent ${JSON.stringify(env.posted)}, attributes ${JSON.stringify(target.attrs)}`);
+    const again = draw(B);
+    if (again && again.props['data-cce-pinned'] === '1') ok('until the host answers, the row is drawn as the click left it');
+    else bad('drawn again before the host answered, the row lost the click');
+    let keyed = 0;
+    p.onKeyDown({ key: 'Enter', preventDefault: () => { keyed++; }, stopPropagation: () => { keyed++; }, currentTarget: target });
+    const sent2 = env.posted[1] || {};
+    if (keyed === 2 && sent2.sessionId === A && sent2.pinned === false) ok('Enter on a pin unpins it, and goes no further than the pin');
+    else bad(`after Enter: ${keyed} calls stopped, sent ${JSON.stringify(env.posted)}`);
+
+    const spanOf = (last, id) => env.window.__cceSpan('rel', last, real - DAY, id, (ms) => 'rel(' + Math.round((NOW - ms) / DAY) + 'd)');
+    env.sessionDates = true;
+    const withDates = spanOf(given + 500, A);
+    env.sessionDates = false;
+    const without = spanOf(given + 500, A);
+    const written = spanOf(NOW - 60000, A);
+    const unrecorded = spanOf(given, B);
+    const md = (ms) => { const d = new Date(ms); return String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0'); };
+    if (withDates === `rel(120d) · ${md(real - DAY)}→${md(real)}` && without === 'rel(120d)') {
+      ok('a pinned row whose file was given a later time shows when it was really last active, with the dates on and with them off');
+    } else bad(`a pinned row's time read "${withDates}" with the dates on and "${without}" with them off`);
+    if (written === 'rel' && unrecorded === 'rel') ok('once somebody writes to it, or for a row with no record, the list\'s own time stands');
+    else bad(`after a write the row read "${written}", and one without a record "${unrecorded}"`);
+
+    const rows = [target];
+    target.attrs['data-cce-pin'] = B;
+    env.rows = rows;
+    set(null);
+    vm.runInContext('repaintPins()', env);
+    if (target.attrs['data-cce-pin-off'] === '1') ok('a stylesheet with pinning off hides the pins already drawn');
+    else bad('pinning was turned off and the pins drawn stayed');
+    set([[A, B], {}, 5]);
+    vm.runInContext('repaintPins()', env);
+    if (!('data-cce-pin-off' in target.attrs) && target.attrs['data-cce-pinned'] === '1' && /within about 5 days/.test(target.attrs['aria-label'])) {
+      ok('and turning it on again shows them, in the state and with the margin the stylesheet carries');
+    } else bad(`after pinning came back the pin read ${JSON.stringify(target.attrs)}`);
+  }
+
+  /* The host's half: the file of pins, the margin, and what goes into the stylesheet. */
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-pins-'));
   try {
     const f = (name, v) => { const p = path.join(tmp, name); fs.writeFileSync(p, JSON.stringify(v)); return p; };
-    const days = [keep.retentionDays([f('u.json', { cleanupPeriodDays: 90 }), f('m.json', { cleanupPeriodDays: 60 })]),
-      keep.retentionDays([path.join(tmp, 'missing.json')]),
-      keep.retentionDays([f('z.json', { cleanupPeriodDays: 0 }), f('s.json', { cleanupPeriodDays: '7' }), f('k.json', { cleanupPeriodDays: 45 })])];
+    const days = [pins.retentionDays([f('u.json', { cleanupPeriodDays: 90 }), f('m.json', { cleanupPeriodDays: 60 })]),
+      pins.retentionDays([path.join(tmp, 'missing.json')]),
+      pins.retentionDays([f('z.json', { cleanupPeriodDays: 0 }), f('s.json', { cleanupPeriodDays: '7' }), f('k.json', { cleanupPeriodDays: 45 })])];
     if (JSON.stringify(days) === '[60,30,45]') ok('the retention is the smallest one set, 30 days when none is, and only a whole number of days counts');
     else bad(`retention read as ${JSON.stringify(days)}`);
+
+    const file = path.join(tmp, 'store', pins.FILE);
+    const steps = [pins.setPinned(file, A, true), pins.setPinned(file, A, true), pins.setPinned(file, B, true),
+      pins.setPinned(file, 'not-a-session', true), pins.setPinned(file, A, false)];
+    const after = pins.read(file);
+    if (JSON.stringify(steps) === '[true,false,true,false,true]' && JSON.stringify(after.pinned) === JSON.stringify([B])
+      && !fs.readdirSync(path.dirname(file)).some((n) => n.endsWith('.tmp'))) {
+      ok('pinning and unpinning are written to the file at once, a repeat changes nothing, and only session ids are pinned');
+    } else bad(`pins after the steps: ${JSON.stringify(steps)} -> ${JSON.stringify(after)}`);
+    fs.writeFileSync(file, JSON.stringify({ pinned: [A, A, 'x', 3], times: { [A]: { real: 1, set: 2 }, [B]: { real: 'x', set: 2 }, y: { real: 1, set: 2 } } }));
+    const messy = pins.read(file);
+    fs.writeFileSync(file, '{ not json');
+    const broken = pins.read(file);
+    if (JSON.stringify(messy) === JSON.stringify({ pinned: [A], times: { [A]: { real: 1, set: 2 } } })
+      && JSON.stringify(broken) === '{"pinned":[],"times":{}}') {
+      ok('a pins file with duplicates or malformed entries keeps only what is sound, and an unreadable one reads as no pins');
+    } else bad(`read back ${JSON.stringify(messy)} and ${JSON.stringify(broken)}`);
+
+    fs.writeFileSync(file, JSON.stringify({ pinned: [A, B, C], times: { [A]: { real: 1, set: 2 }, [D]: { real: 3, set: 4 } } }));
+    const changed = pins.applyPass(file, { updates: { [B]: { real: 10, set: 20 }, [D]: null }, gone: [C] });
+    const unchanged = pins.applyPass(file, { updates: { [B]: { real: 10, set: 20 } }, gone: [] });
+    if (changed && !unchanged && JSON.stringify(pins.read(file)) === JSON.stringify({ pinned: [A, B], times: { [A]: { real: 1, set: 2 }, [B]: { real: 10, set: 20 } } })) {
+      ok('a pass\'s findings are folded into the file as it is then: records set and dropped, conversations no longer on disk unpinned');
+    } else bad(`after folding in a pass: ${JSON.stringify(pins.read(file))}, changed ${changed}/${unchanged}`);
+
+    const data = pins.pageData({ pinned: [B, A], times: { [B]: { real: 10.4, set: 20 }, [A]: { real: 1, set: 2 } } }, 90);
+    const css = webview.liveCss({ enabled: false, pins: data });
+    const packed = (css.match(/--cce-pins:"([^"]+)"/) || [])[1];
+    const back = packed ? JSON.parse(Buffer.from(packed, 'base64').toString('utf8')) : null;
+    const none = webview.liveCss({ enabled: true, pins: null });
+    const empty = webview.liveCss({ enabled: true, pins: pins.pageData({ pinned: [], times: {} }, 10) });
+    if (JSON.stringify(back) === JSON.stringify([[A, B], { [A]: [1, 2], [B]: [10, 20] }, 14]) && !/--cce-pins/.test(none) && /--cce-pins:"/.test(empty)
+      && pins.marginDays(10) === 5) {
+      ok('the stylesheet carries the pins, sorted, while pinning is on - with nothing pinned and with the other additions off - and nothing while it is off');
+    } else bad(`pins in the stylesheet: ${JSON.stringify(back)}; off: ${/--cce-pins/.test(none)}; empty: ${/--cce-pins/.test(empty)}`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+
+  /* Keeping the files: in a child process, since the pass is asynchronous and this suite is not. */
   const script = `
     const fs = require('fs'), os = require('os'), path = require('path');
-    const keep = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'keepgrouped.js'))});
+    const pins = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'sessionpins.js'))});
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-keep-'));
     const DAY = 86400000, now = Date.UTC(2026, 9, 16, 12);
     const put = (rel, ageDays) => { const p = path.join(root, rel); fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -4011,35 +4187,63 @@ console.log('\nconversations in a group, kept from the transcript cleanup');
     const age = (rel) => Math.round((now - fs.statSync(path.join(root, rel)).mtimeMs) / DAY * 10) / 10;
     (async () => {
       try {
-        put('p1/${A}.jsonl', 100); put('p1/${A}/tool-results/a.txt', 100); put('p1/${A}/tool-results/s/b.txt', 85);
-        put('p1/${A}/tool-results/s/d/c.txt', 100); put('p1/${A}/subagents/agent-1.jsonl', 100);
-        put('p2/${B}.jsonl', 10); put('p2/${D}.jsonl', 100);
-        const first = await keep.keep({ ids: new Set(['${A}', '${B}', '${C}']), days: 90, projectsDir: root, now });
-        const ages = ['p1/${A}.jsonl', 'p1/${A}/tool-results/a.txt', 'p1/${A}/tool-results/s/b.txt', 'p1/${A}/tool-results/s/d/c.txt',
-          'p1/${A}/subagents/agent-1.jsonl', 'p2/${B}.jsonl', 'p2/${D}.jsonl'].map(age);
-        put('q/${A}.jsonl', 100);
-        const short = await keep.keep({ ids: new Set(['${A}']), days: 10, projectsDir: path.join(root, 'q', '..'), now });
-        process.stdout.write(JSON.stringify({ first, ages, short: age('q/${A}.jsonl') }));
+        put('p/p1/${A}.jsonl', 100); put('p/p1/${A}/tool-results/a.txt', 100); put('p/p1/${A}/tool-results/s/b.txt', 85);
+        put('p/p1/${A}/tool-results/s/d/c.txt', 100); put('p/p1/${A}/subagents/agent-1.jsonl', 100);
+        put('p/p2/${B}.jsonl', 10); put('p/p2/${D}.jsonl', 100);
+        const first = await pins.keep({ ids: new Set(['${A}', '${B}', '${C}']), days: 90, projectsDir: path.join(root, 'p'), now });
+        const ages = ['p/p1/${A}.jsonl', 'p/p1/${A}/tool-results/a.txt', 'p/p1/${A}/tool-results/s/b.txt', 'p/p1/${A}/tool-results/s/d/c.txt',
+          'p/p1/${A}/subagents/agent-1.jsonl', 'p/p2/${B}.jsonl', 'p/p2/${D}.jsonl'].map(age);
+        const times = { '${A}': first.updates['${A}'] };
+        const later = now + DAY;
+        const second = await pins.keep({ ids: new Set(['${A}']), times, days: 90, projectsDir: path.join(root, 'p'), now: later });
+        put('p/p1/${A}.jsonl', 0);
+        const written = await pins.keep({ ids: new Set(), times: { '${A}': second.updates['${A}'] }, days: 90, projectsDir: path.join(root, 'p'), now: later });
+        put('q/one/${A}.jsonl', 100);
+        const short = await pins.keep({ ids: new Set(['${A}']), days: 10, projectsDir: path.join(root, 'q'), now });
+        const empty = await pins.keep({ ids: new Set(['${A}']), days: 90, projectsDir: path.join(root, 'none'), now });
+        fs.mkdirSync(path.join(root, 'r', 'locked'), { recursive: true }); put('r/open/${B}.jsonl', 1);
+        fs.chmodSync(path.join(root, 'r', 'locked'), 0);
+        const partial = await pins.keep({ ids: new Set(['${A}']), days: 90, projectsDir: path.join(root, 'r'), now });
+        fs.chmodSync(path.join(root, 'r', 'locked'), 0o755);
+        process.stdout.write(JSON.stringify({ first, ages, second, written, short: age('q/one/${A}.jsonl'), empty, partial,
+          root: process.getuid ? process.getuid() === 0 : false }));
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
   let k;
   try { k = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); }
   catch (e) { k = { error: e.message }; }
-  if (k.error) bad('keeping grouped conversations failed: ' + k.error);
+  if (k.error) bad('keeping pinned conversations failed: ' + k.error);
   else {
+    const NOW = Date.UTC(2026, 9, 16, 12), DAY = 86400000;
     const want = [76, 76, 76, 100, 100, 10, 100];
     if (JSON.stringify(k.ages) === JSON.stringify(want) && k.first.found === 2 && k.first.touched === 3 && k.first.errors === 0) {
-      ok('a grouped transcript and its tool outputs past the margin are set to 14 days inside a 90-day cleanup; '
+      ok('a pinned transcript and its tool outputs past the margin are set to 14 days inside a 90-day cleanup; '
         + 'fresh ones, other conversations, and what the cleanup does not reach are left alone');
     } else bad(`ages after keeping: ${JSON.stringify(k.ages)} (expected ${JSON.stringify(want)}), counts ${JSON.stringify(k.first)}`);
+    const rec = k.first.updates[A] || {}, rec2 = (k.second.updates || {})[A] || {};
+    if (Math.round((NOW - rec.real) / DAY) === 100 && rec.set === NOW - 76 * DAY && !(B in k.first.updates)
+      && rec2.real === rec.real && rec2.set === NOW + DAY - 76 * DAY) {
+      ok('the first move records the time the transcript had, and the next keeps that time while recording the new one');
+    } else bad(`records: first ${JSON.stringify(k.first.updates)}, second ${JSON.stringify(k.second.updates)}`);
+    if (k.written.updates[A] === null && k.written.touched === 0) ok('once the transcript is written to, its record goes');
+    else bad(`after a write the pass returned ${JSON.stringify(k.written)}`);
+    if (JSON.stringify(k.first.gone) === JSON.stringify([C])) ok('a pinned conversation with no transcript left is reported gone');
+    else bad(`gone after the first pass: ${JSON.stringify(k.first.gone)}`);
     if (k.short === 5) ok('with a 10-day cleanup, the margin is half of it');
     else bad(`with a 10-day cleanup the transcript was left ${k.short} days old`);
+    if (!k.empty.gone.length && (k.root || !k.partial.gone.length)) {
+      ok('nothing is reported gone when no transcript at all was found, or a project folder could not be read');
+    } else bad(`gone with nothing found: ${JSON.stringify(k.empty.gone)}; with a folder unreadable: ${JSON.stringify(k.partial.gone)}`);
   }
   const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
-  if (/globalThis\.__cceClaudeState/.test(extSrc) && /cfg\(\)\.get\(KEEP_GROUPED_SETTING, true\)/.test(extSrc)
-    && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.keepGroupedSessions']) {
-    ok('the extension keeps them while its setting is on, from the state the host handed over');
-  } else bad('extension.js or the manifest does not wire up keeping grouped conversations');
+  const manifest = require('../package.json').contributes.configuration.properties;
+  if (/const pinsOn = \(\) => !removed\(\) && cfg\(\)\.get\(PINS_SETTING, true\) !== false;/.test(extSrc)
+    && /globalThis\.__ccePinHook = /.test(extSrc) && /globalThis\.__ccePinnedIds = \(\) => \{\s*try \{ return pinsOn\(\) \?/.test(extSrc)
+    && /if \(keeping \|\| !pinsOn\(\)\) return;/.test(extSrc) && /pins: pinsOn\(\) \?/.test(extSrc)
+    && manifest['claudeCodeWorkPlan.sessionPins'] && manifest['claudeCodeWorkPlan.sessionPins'].default === true
+    && !manifest['claudeCodeWorkPlan.keepGroupedSessions']) {
+    ok('one setting, on by default, decides whether pins are drawn, files are kept and pinned conversations escape the archive');
+  } else bad('extension.js or the manifest does not wire the pins to their setting');
 }
 
 console.log('\nthe date on a message or reply from before today');

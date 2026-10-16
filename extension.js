@@ -29,7 +29,7 @@ const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
-const keepgrouped = require('./src/keepgrouped');
+const sessionPins = require('./src/sessionpins');
 const ADAPTERS = require('./src/adapters');
 const removal = require('./src/removal');
 const PACKAGE = require('./package.json');
@@ -53,7 +53,7 @@ const SWEEP_KEY = 'claudeCodeExtras.lastOrphanSweep';
 const LATENCY_KEY = 'claudeCodeExtras.latencyOffset';
 const THRESHOLD_SETTING = PREFIX + 'latencyThresholdSeconds';
 const LATENCY_ON_SETTING = PREFIX + 'recordOpenLatency';
-const KEEP_GROUPED_SETTING = PREFIX + 'keepGroupedSessions';
+const PINS_SETTING = PREFIX + 'sessionPins';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
   enabled: PREFIX + 'workPlan',
@@ -210,6 +210,10 @@ function start(context, renamed) {
   /* One setting per switchable addition, named after it. Reading them here rather than in src/webview.js keeps that
      file free of the editor's API, which is what lets the tests run it. */
   const switchedOff = () => webview.SWITCHES.filter((k) => cfg().get(PREFIX + 'show.' + k, true) === false);
+  /* The conversations pinned in the session list (src/sessionpins.js). The file is in this extension's storage on the
+     machine that holds the transcripts, and every window reads and writes the same one. */
+  const pinsFile = () => path.join(context.globalStorageUri.fsPath, sessionPins.FILE);
+  const pinsOn = () => !removed() && cfg().get(PINS_SETTING, true) !== false;
   const options = () => {
     const off = switchedOff();
     return {
@@ -217,6 +221,7 @@ function start(context, renamed) {
       off,
       tasks: readTasks(knownDirs()),
       background: off.includes('backgroundSessions') ? [] : background.collect(),
+      pins: pinsOn() ? sessionPins.pageData(sessionPins.read(pinsFile()), sessionPins.retentionDays()) : null,
     };
   };
   const writeLiveNow = () => {
@@ -375,7 +380,7 @@ function start(context, renamed) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();
       /* A switch has to reach the panel the moment it is flipped, which is what writing the stylesheet does. */
-      const touched = [SETTING, COLOR_SETTING, EDGE_SETTING]
+      const touched = [SETTING, COLOR_SETTING, EDGE_SETTING, PINS_SETTING]
         .concat(webview.SWITCHES.map((k) => PREFIX + 'show.' + k));
       if (!touched.some((k) => e.affectsConfiguration(k))) return;
       const c = cfg().get(COLOR_SETTING, '');
@@ -693,27 +698,53 @@ function start(context, renamed) {
     } catch (e) { /* never break the host's own icon update */ }
   };
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTabDot) delete globalThis.__cceTabDot; } });
-  /* Conversations in a session-list group, kept from Claude Code's transcript cleanup (src/keepgrouped.js). The groups
-     come from the state the patched host hands over the first time it reads them, so a pass before that does nothing.
-     The margin it keeps is days, so once every half hour is far more often than it needs. */
+  /*
+   * Conversations pinned in the session list, kept from Claude Code's transcript cleanup (src/sessionpins.js). The
+   * margin it keeps is days, so once every half hour is far more often than it needs; a pin gets a pass of its own a
+   * few seconds later, so an old conversation pinned close to its age is not left waiting for the next one.
+   */
   let keeping = false;
-  const keepGrouped = async () => {
-    const state = globalThis.__cceClaudeState;
-    if (keeping || !state || removed() || !cfg().get(KEEP_GROUPED_SETTING, true)) return;
+  const keepPinned = async () => {
+    if (keeping || !pinsOn()) return;
     keeping = true;
     try {
-      const r = await keepgrouped.keep({ ids: keepgrouped.groupedIds(state), days: keepgrouped.retentionDays() });
-      if (r.touched || r.errors) {
-        log.appendLine(`grouped conversations: ${r.found} of ${r.grouped} found, ${r.touched} file(s) given a later `
-          + `modification time to stay ahead of the transcript cleanup, ${r.errors} error(s)`);
+      const file = pinsFile();
+      const now = sessionPins.read(file);
+      const r = await sessionPins.keep({ ids: new Set(now.pinned), times: now.times, days: sessionPins.retentionDays() });
+      const changed = sessionPins.applyPass(file, r);
+      if (r.touched || r.errors || r.gone.length) {
+        log.appendLine(`pinned conversations: ${r.found} of ${r.pinned} found, ${r.touched} file(s) given a later `
+          + `modification time to stay ahead of the transcript cleanup, ${r.gone.length} no longer on disk, ${r.errors} error(s)`);
       }
+      if (changed) writeLiveNow();
     } catch (e) {
-      log.appendLine('grouped conversations: ' + ((e && e.message) || e));
+      log.appendLine('pinned conversations: ' + ((e && e.message) || e));
     } finally { keeping = false; }
   };
-  const keepFirst = setTimeout(keepGrouped, 60000);
-  const keepTimer = setInterval(keepGrouped, 30 * 60000);
-  context.subscriptions.push({ dispose: () => { clearTimeout(keepFirst); clearInterval(keepTimer); } });
+  let keepSoon = 0;
+  /* Called by the patched host from inside its own message handling, so the work is put off rather than done there. */
+  globalThis.__ccePinHook = (id, on) => {
+    setTimeout(() => {
+      try {
+        if (!pinsOn()) return;
+        if (!sessionPins.setPinned(pinsFile(), id, on)) return;
+        log.appendLine(`pinned conversations: ${on ? 'pinned' : 'unpinned'} ${id}`);
+        writeLiveNow();
+        if (on && !keepSoon) keepSoon = setTimeout(() => { keepSoon = 0; keepPinned(); }, 5000);
+      } catch (e) { log.appendLine('pinned conversations: ' + ((e && e.message) || e)); }
+    }, 0);
+  };
+  /* Read by the patched host each time it works out which conversations are in use and so not to be archived. */
+  globalThis.__ccePinnedIds = () => {
+    try { return pinsOn() ? sessionPins.read(pinsFile()).pinned : []; } catch (_) { return []; }
+  };
+  const keepFirst = setTimeout(keepPinned, 60000);
+  const keepTimer = setInterval(keepPinned, 30 * 60000);
+  context.subscriptions.push({ dispose: () => {
+    clearTimeout(keepFirst); clearInterval(keepTimer); if (keepSoon) clearTimeout(keepSoon);
+    if (globalThis.__ccePinHook) delete globalThis.__ccePinHook;
+    if (globalThis.__ccePinnedIds) delete globalThis.__ccePinnedIds;
+  } });
   refreshPlans();
   paintBadge();
   watchEffort();

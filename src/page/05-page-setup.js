@@ -192,14 +192,15 @@
         if (sheet.href !== l.href) forget(sheet.href);
         if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
       }
-      sheet = l; loadedOnce = true; onCache = null; offCache = {};
+      sheet = l; loadedOnce = true; onCache = null; offCache = {}; pinsCache = null;
       if (fallback && fallback.parentNode) { fallback.parentNode.removeChild(fallback); fallback = null; }
+      try { repaintPins(); } catch (e) { /* the next render of the list draws them anyway */ }
       schedule();
     };
     l.onerror = function(){
       if (loading === l) loading = null;
       if (l.parentNode) l.parentNode.removeChild(l);
-      useFallback(); onCache = null; offCache = {}; schedule();
+      useFallback(); onCache = null; offCache = {}; pinsCache = null; schedule();
     };
     loading = l;
     head.appendChild(l);
@@ -305,6 +306,8 @@
    * computing it every refresh is the one outcome a switch must not have.
    */
   var offCache = {};
+  /* The pins the stylesheet carries (83-session-pins.js), decoded once per stylesheet like the two above. */
+  var pinsCache = null;
   var isOff = function(key){
     if (Object.prototype.hasOwnProperty.call(offCache, key)) return offCache[key];
     var v = false;

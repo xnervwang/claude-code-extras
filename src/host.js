@@ -24,7 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 11;
+const VERSION = 12;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
@@ -94,18 +94,21 @@ const EDITS = [
       + link,
   },
   /*
-   * The panel's time zone, kept where this extension can read it.
+   * Messages from a panel meant for this extension: the panel's time zone, and a conversation pinned or unpinned in the
+   * session list.
    *
    * Every message a panel sends passes through the one function that logs it, before anything decides what the message
-   * is; the panel's time zone arrives as one of those messages, and Claude Code itself ignores the type. A global is how
-   * it reaches this extension - both run in one extension host process, the same way the active conversation does.
+   * is, and Claude Code itself ignores both types. A global is how each reaches this extension - both run in one
+   * extension host process, the same way the active conversation does.
    */
   {
-    name: 'panel time zone',
+    name: 'panel messages',
     re: /function ([\w$]+)\(([\w$]+),([\w$]+)\)\{(let [\w$]+=`Received message from webview: )/g,
     to: (m, fn, log, msg, rest) => `function ${fn}(${log},${msg}){try{if(${msg}&&${msg}.type==="cce_client_tz"`
       + `&&typeof ${msg}.timeZone==="string"){globalThis.__cceClientTimeZone=${msg}.timeZone;`
-      + `globalThis.__cceTzHook&&globalThis.__cceTzHook(${msg}.timeZone)}}catch(e){}${rest}`,
+      + `globalThis.__cceTzHook&&globalThis.__cceTzHook(${msg}.timeZone)}`
+      + `else if(${msg}&&${msg}.type==="cce_session_pin"&&typeof ${msg}.sessionId==="string"){`
+      + `globalThis.__ccePinHook&&globalThis.__ccePinHook(${msg}.sessionId,${msg}.pinned===true)}}catch(e){}${rest}`,
   },
   /*
    * The dot after a tab's title (src/tabdot.js says what it is for).
@@ -120,17 +123,17 @@ const EDITS = [
     to: (m, set, state) => `${set};try{globalThis.__cceTabDot&&globalThis.__cceTabDot(this.panelTab,${state})}catch(e){}}`,
   },
   /*
-   * Claude Code's own state, where the session list keeps its groups (src/keepgrouped.js says what they are needed for).
+   * Pinned conversations are not archived for being inactive (src/sessionpins.js says how they are pinned).
    *
-   * Another extension's state is not reachable through the editor's API, and in a remote window it is not on the remote
-   * machine's disk either. So the method that reads the groups hands over the state it reads them from, through a global
-   * this extension shares with the host - both run in one extension host process, as with the active conversation.
+   * The automatic archive skips every session it counts as in use, and a session in a group of the list is one of them.
+   * Pinned ones join that same set, so they are skipped for the same reason and by the same test; the ids come from this
+   * extension through a global, read each time the set is built. Anything going wrong there leaves the set as it was.
    */
   {
-    name: 'session groups',
-    re: /getSessionGroups\(\)\{return ([\w$]+)\(this\.context\.globalState\.get\(this\.sessionGroupsKey\(\)\)\)\}/g,
-    to: (m, parse) => 'getSessionGroups(){try{globalThis.__cceClaudeState=this.context.globalState}catch(e){}'
-      + `return ${parse}(this.context.globalState.get(this.sessionGroupsKey()))}`,
+    name: 'pinned conversations not archived',
+    re: /groupedSessionKeys:new Set\(([\w$.]+\.getSessionGroups\(\)\.flatMap\(\(([\w$]+)\)=>\2\.sessionIds\))\)/g,
+    to: (m, groups) => `groupedSessionKeys:new Set([...${groups},...(()=>{try{let p=globalThis.__ccePinnedIds,`
+      + 'r=typeof p==="function"?p():[];return Array.isArray(r)?r.filter((x)=>typeof x==="string"):[]}catch(e){return[]}})()])',
   },
 ];
 

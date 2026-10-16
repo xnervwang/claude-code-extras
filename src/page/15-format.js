@@ -24,7 +24,14 @@
       var d = new Date(ms);
       return { y: d.getFullYear(), md: p2(d.getMonth() + 1) + '/' + p2(d.getDate()) };
     };
-    window.__cceSpan = function(rel, last, created){
+    window.__cceSpan = function(rel, last, created, id, relOf){
+      /* A pinned conversation whose files were given a later time shows when it was really last active, in the panel's
+         own relative form, whether or not the dates are on: the time the list was given is not one anybody chose. */
+      var real = realTime(id, last);
+      if (real !== null) {
+        last = real;
+        if (typeof relOf === 'function') { try { rel = relOf(real); } catch (e) { /* keep the panel's own text */ } }
+      }
       /* Called from the official component, so returning what it passed in leaves its own text untouched. */
       if (isOff('sessionDates')) return rel;
       var now = new Date().getFullYear();

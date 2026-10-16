@@ -29,7 +29,7 @@ Work Plan for Claude Code edits files inside the installed Claude Code extension
 by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
 alone with a warning.
 
-Verified against Claude Code 2.1.300; compatibility with other builds unknown.
+Verified against Claude Code 2.1.300 and 2.1.301; compatibility with other builds unknown.
 
 ## Work plan
 
@@ -96,7 +96,7 @@ See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, th
 | **Focus view button:** Toggle Claude Code's own Focus view; while it is on and Claude works, the working line shows the latest tool call and elapsed time, such as `Bash running for 2m55s (since 11:11:18)`. Only available with Claude Code builds that have Focus view. | Footer button; working line |
 | **Context meter:** Keep the meter visible, outline it when 15% of the window remains, and hover for a breakdown by category, memory files and custom agents. | Panel's context meter |
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
-| **Grouped conversations kept:** A conversation in a group of the session list is not deleted by Claude Code's transcript cleanup (`cleanupPeriodDays`). Before it would be, its files get a later modification time, so the list shows it as last active up to 14 days short of that age. | Session list; transcripts on disk |
+| **Pinned conversations:** Pin a conversation on the session list, with the pin shown on hover, and Claude Code's transcript cleanup (`cleanupPeriodDays`) does not delete it and it is not moved to Archived sessions. Before it would be deleted, its files get a later modification time; the list still shows when it was really last active. | Session list; transcripts on disk |
 | **Chimes:** Hear a short synthesized sound when a turn finishes, permission is requested or Claude asks a question; mute it in the footer. Sound plays on the machine showing the panel, including with Remote SSH. | Footer; machine showing the panel |
 | **Background sessions:** See this conversation's `claude --bg` sessions as running, waiting for you, done, stopped or failed, with what each waits for and its final result; copy the attach or logs command. | Agents button in the footer and its map |
 | **Scheduled prompts:** See timers this conversation set through Claude Code's scheduled tasks, with each schedule, last-fired time and prompt. | Agents button in the footer and its map |
@@ -115,7 +115,7 @@ Open `Work Plan for Claude Code: Settings` for all 25 settings. Most apply witho
 | Panel additions | Set `claudeCodeWorkPlan.enabled` to off. The patch stays and its scripts keep running. |
 | Work plan | Set `claudeCodeWorkPlan.workPlan` to off. The view goes, nothing is added to turns, and writes to plan files are refused. |
 | Plugin's skill description too | Run `Work Plan for Claude Code: Stop Loading the Work Plan Plugin`. |
-| Keeping grouped conversations | Set `claudeCodeWorkPlan.keepGroupedSessions` to off. |
+| Pins on the session list | Set `claudeCodeWorkPlan.sessionPins` to off. Pinned conversations are then cleaned up and archived as usual; the pins are kept for turning it on again. |
 | Patch and restore Claude Code's files | Run `Work Plan for Claude Code: Remove from Claude Code (restore original files)`, or uninstall. |
 
 **Work plan settings**
@@ -164,7 +164,8 @@ Settings named `claudeCodeExtras.*` by earlier versions are copied to the same n
 - Uninstalling tries to copy plans to `~/.claude/agent-work-plan-plans-<timestamp>/` before unregistering the plugin, which deletes its data directory. Uninstalling continues if the copy fails, so keep your own copy of a plan that matters.
 - Disabling the extension leaves the patch in place. Run `Work Plan for Claude Code: Remove from Claude Code (restore original files)` first.
 - Versions up to 1.0.8 left an entry in VS Code's webview cache every three seconds; after weeks, Claude Code panels in editor tabs could stay blank in every window. Version 1.0.9 clears that cache the first time a panel opens. If panels stay blank after uninstalling 1.0.8 or earlier, quit VS Code and delete the `CacheStorage` folders under `WebStorage` in VS Code's data folder: `~/Library/Application Support/Code` on macOS, `%APPDATA%\Code` on Windows, `~/.config/Code` on Linux.
-- A plan file is deleted once its conversation's transcript is gone and the file has not been written for a week. Claude Code removes old transcripts.
+- A plan file is deleted once its conversation's transcript is gone and the file has not been written for a week. Claude Code removes old transcripts, apart from those of conversations pinned on the session list.
+- A pinned conversation that the cleanup would have reached is sorted in the session list by the later time its files were given; the time shown is still when it was really last active. Pins are kept in this extension's own storage, which VS Code deletes when the extension is uninstalled.
 
 ## Contributing
 
