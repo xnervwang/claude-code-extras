@@ -208,6 +208,12 @@ console.log('\nwhat the page costs, in a browser');
         ok('each reply\'s figures go on its first block, also behind a time line Claude Code draws ahead of the blocks');
       } else bad('where the figures went, by child of each reply: plain ' + JSON.stringify(short.figuresAt).slice(0, 80)
         + ', behind a time line ' + (stamped.error || JSON.stringify(stamped.figuresAt).slice(0, 80)));
+      /* From 2.1.300 a mod can draw rows of its own between the time line and the blocks; they sit under the reply's
+         message like the blocks do, but hold none. */
+      const modded = harness.run(browser, { turns: 10, panelStamp: true, modRow: true });
+      if (!modded.error && modded.figuresAt.length && modded.figuresAt.every((i) => i === 2)) {
+        ok('and behind the rows a Claude Code mod draws for the reply');
+      } else bad('where the figures went behind a mod\'s rows: ' + (modded.error || JSON.stringify(modded.figuresAt).slice(0, 80)));
       /* Claude Code's own times are hidden by the live stylesheet, not by leaving ours out: with them on the page, every
          prompt and every reply still carries a time of this script's, in one place and one format. */
       const own = harness.run(browser, { turns: 30, panelStamp: 'time' });
@@ -581,7 +587,7 @@ function checkEdits(adapter, src, label) {
    before is a change in the panel nobody has checked that against, so it fails here - before the version record can
    call the build verified, and in the scheduled run against the marketplace before the update arrives. */
 const replyShape = require('./reply-shape');
-const KNOWN_REPLY_CHILDREN = ['time line', 'blocks', 'actions'];
+const KNOWN_REPLY_CHILDREN = ['time line', 'mod rows', 'blocks', 'actions'];
 function checkReplyShape(src, label) {
   const r = replyShape.replyChildren(src);
   if (r.error) { bad(`${label}: what a reply holds could not be read: ${r.error}`); return; }
@@ -620,6 +626,12 @@ console.log('\nwhat a reply holds, read from a bundle');
   else bad(`the known shape read as "${kinds(known)}"${known.error ? ' - ' + known.error : ''}`);
   if (kinds(extra) === 'time line, unknown, blocks') ok('a child of a kind not seen before is named unknown');
   else bad(`an unseen child read as "${kinds(extra)}"`);
+  const modded = (prop) => stamp + 'var M=function({message:Z,context:X,engineRow:V}){return R("div",{"data-testid":"assistant-message",'
+    + 'children:[F(sA,{message:Z,context:X,placement:"response",busy:J.busy}),' + prop + '?.ink(!1),Z.content.map((W)=>F(B,{content:W}))]})};';
+  if (kinds(rs.replyChildren(modded('V'))) === 'time line, mod rows, blocks') ok('the rows a mod draws for the reply are named');
+  else bad(`a mod's rows read as "${kinds(rs.replyChildren(modded('V')))}"`);
+  if (kinds(rs.replyChildren(modded('U'))) === 'time line, unknown, blocks') ok('but only when they come from the engineRow prop');
+  else bad(`an ink call on another prop read as "${kinds(rs.replyChildren(modded('U')))}"`);
 }
 
 console.log('\nedits');

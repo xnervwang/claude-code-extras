@@ -145,6 +145,14 @@ const SETUP = String.raw`
       return st;
     };
     if (CFG.panelStamp) m.appendChild(stampLine());
+    // What a Claude Code mod draws for a reply, as 2.1.300 does: a row under the reply's message that holds no block.
+    if (CFG.modRow) {
+      var mod = document.createElement('div');
+      mod.setAttribute('data-engine-site', 'AssistantMessage');
+      mod.innerHTML = '<span>Edited by a mod</span>';
+      mod[FIBER] = { memoizedProps: { plugins: [], lead: 'Edited by' }, return: { memoizedProps: { message: message }, return: sessionFiber } };
+      m.appendChild(mod);
+    }
     for (var r = 0; r < KINDS.length; r++) {
       var row = document.createElement('div');
       row.className = 'timelineMessage_ab12';
