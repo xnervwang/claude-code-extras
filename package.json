@@ -226,7 +226,7 @@
         "claudeCodeWorkPlan.sessionPins": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "A pin on each row of the session list, shown on hover and kept on once clicked. A pinned conversation is not deleted by Claude Code's transcript cleanup (`cleanupPeriodDays`) and is not moved to Archived sessions. Off hides the pins and stops both, and keeps what was pinned for when it is turned on again."
+          "markdownDescription": "A pin at the start of each row of the session list, hollow until clicked. A pinned conversation is not deleted by Claude Code's transcript cleanup (`cleanupPeriodDays`) and is not moved to Archived sessions. Off hides the pins and stops both, and keeps what was pinned for when it is turned on again."
         },
         "claudeCodeWorkPlan.show.footerInfo": {
           "type": "boolean",

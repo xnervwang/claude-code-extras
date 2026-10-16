@@ -18,8 +18,8 @@
  *   session createdAt  Carry the session's creation time into the session-list model.
  *   session time       Wrap the relative time in the list with the absolute date range, and for a pinned
  *                      conversation whose files were given a later time, the time it was really last active.
- *   session pin        A pin among the buttons a row of the session list shows on hover, and a mark in front
- *                      of a pinned row's title (src/sessionpins.js says what pinning does).
+ *   session pin        A pin at the start of every row of the session list (src/sessionpins.js says what
+ *                      pinning does).
  *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and drop the guard
  *                      that hides the meter while more than half the window is still free.
  *   agent map          Three: a section for this session's scheduled prompts, the footer button opening for a
@@ -337,14 +337,12 @@ const EDITS = [
     to: (m, f, j) => `children:(typeof window.__cceSpan==="function"?window.__cceSpan(${f}(${j}.lastModifiedTime.value),${j}.lastModifiedTime.value,${j}.cceCreatedAt,${j}.sessionId&&${j}.sessionId.value,${f}):${f}(${j}.lastModifiedTime.value))`,
   },
   {
-    /* The pin is the first of the buttons a row shows on hover, ahead of Rename and Archive, so the three come and go
-       together and sit together. The page is handed the element factory, the row and the row's class names, and renders
-       it with the same class as those two. The anchor is the start of that group and the Rename button that opens it,
-       which is also where the factory and the row are named. */
+    /* The pin, at the start of every row of the session list. It goes into the row right after the title - the one place
+       where the element factory and the row are both named - and the page's stylesheet moves it in front of the status
+       dot, so the pins of all rows line up. */
     name: 'session list pin',
-    re: /(\{className:([\w$]+)\.sessionActions,children:\[)(([\w$]+)&&([\w$]+)\.sessionId\.value&&([\w$]+)\("span",\{role:"button")/g,
-    to: (m, open, cls, rename, gate, j, jsx) =>
-      `${open}(typeof window.__ccePin==="function"?window.__ccePin(${jsx},${j},${cls}):null),${rename}`,
+    re: /(([\w$]+)\("span",\{className:([\w$]+)\.sessionName,children:[\w$]+\([\w$]+\(([\w$]+)\),[\w$]+\)\},"view"\))/g,
+    to: (m, title, jsx, cls, j) => `${title},(typeof window.__ccePin==="function"?window.__ccePin(${jsx},${j}):null)`,
   },
   {
     // The three artwork states cover half, three quarters and almost all of the circle, but the component picks

@@ -21,24 +21,22 @@
   var PIN_BODY = 'M9.75 3.75h4.5v5.25l3 4.5h-10.5l3-4.5z';
   var PIN_LINES = 'M8.25 3.75h7.5M12 13.5v6.75';
   /*
-   * Two places, for the two things a pin is. The button is the first of those the panel shows on hover, ahead of Rename
-   * and Archive: an action, so it comes and goes with them. Being pinned is a property of the conversation, like the
-   * dot the panel draws for one that is running or unread, so a pinned row also carries a small mark in front of its
-   * title, in the panel's muted colour - where that dot goes, and taking no room from rows that are not pinned. The
-   * time column is left as the panel lays it out. The row is found pinned through the button inside it, so nothing has
-   * to be put into the title element itself.
+   * One pin on every row, in front of the status dot the panel draws for a conversation that is running or unread, so
+   * the pins of all rows line up down the left edge. It shows its state and is what is clicked: dim and hollow while
+   * not pinned, filled and in the text colour once pinned. Always there rather than only on hover, so a row never moves
+   * under the pointer and the feature can be found without knowing it exists.
    */
-  var PIN_MASK = 'url("data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
-    + 'fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path fill="#000" d="' + PIN_BODY + '"/><path d="' + PIN_LINES + '"/></svg>') + '")';
   var PIN_ON = 'span[data-cce-pin][data-cce-pinned="1"]:not([data-cce-pin-off])';
-  var PIN_CSS = 'span[data-cce-pin]{flex:none}'
+  var PIN_CSS = 'span[data-cce-pin]{order:-1;flex:none;display:inline-flex;align-items:center;justify-content:center;'
+    + 'width:18px;height:18px;margin:0 -2px;border-radius:4px;cursor:pointer;'
+    + 'color:var(--app-secondary-foreground,currentColor);opacity:.45}'
+    + 'span[data-cce-pin] svg{width:15px;height:15px}'
+    + '[class*="sessionItem_"]:where(:hover,:focus-visible,:has(:focus-visible),[data-highlighted]) span[data-cce-pin]{opacity:.75}'
+    + 'span[data-cce-pin]:hover,span[data-cce-pin]:focus-visible{opacity:1;color:var(--app-primary-foreground,currentColor);'
+    + 'background:var(--app-ghost-button-hover-background,transparent)}'
+    + PIN_ON + '{opacity:1;color:var(--app-primary-foreground,currentColor)}'
     + PIN_ON + ' [data-cce-pin-body]{fill:currentColor}'
-    + 'span[data-cce-pin][data-cce-pin-off]{display:none !important}'
-    + '[class*="sessionItem_"]:has(' + PIN_ON + ')>[class*="sessionName_"]::before{content:"";display:inline-block;'
-    + 'width:12px;height:12px;margin-right:5px;vertical-align:-1px;'
-    + 'background-color:var(--app-secondary-foreground,currentColor);'
-    + '-webkit-mask:' + PIN_MASK + ' center/contain no-repeat;mask:' + PIN_MASK + ' center/contain no-repeat}';
+    + 'span[data-cce-pin][data-cce-pin-off]{display:none !important}';
   var pinStyle = null;
   var pinsNow = function(){
     if (pinsCache !== null) return pinsCache;
@@ -111,7 +109,7 @@
     if (el) paintPin(el, on, d);
     setTimeout(function(){ try { repaintPins(); } catch (e) { /* the next render of the list does it */ } }, PIN_WAIT_MS + 100);
   };
-  window.__ccePin = function(h, row, cls){
+  window.__ccePin = function(h, row){
     try {
       if (!row || row.transcriptOnDisk !== true) return null;
       var id = row.sessionId && row.sessionId.value;
@@ -125,7 +123,7 @@
       var d = pinsNow(), on = isPinned(id, d);
       var act = function(e){ e.stopPropagation(); togglePin(id, e.currentTarget); };
       return h('span', {
-        role: 'button', tabIndex: 0, className: (cls && cls.actionButton) || void 0,
+        role: 'button', tabIndex: 0,
         'data-cce-pin': id, 'data-cce-pin-off': d ? void 0 : '1',
         'data-cce-pinned': on ? '1' : '0', 'aria-pressed': on ? 'true' : 'false', 'aria-label': pinLabel(on, d),
         onClick: act,
@@ -133,8 +131,8 @@
         onMouseEnter: function(e){ showLabel(e.currentTarget); },
         onMouseLeave: function(){ hideLabel(); },
         children: [h('svg', {
-          width: '20', height: '20', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5,
-          strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', className: (cls && cls.actionIcon) || void 0,
+          width: '15', height: '15', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7,
+          strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',
           children: [h('path', { 'data-cce-pin-body': '1', d: PIN_BODY }, 'b'), h('path', { d: PIN_LINES }, 'l')],
         }, 's')],
       }, 'cce-pin');

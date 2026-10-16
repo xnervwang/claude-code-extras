@@ -4012,21 +4012,24 @@ console.log('\nconversations pinned in the session list');
     }
   }
 
-  /* The pin goes in first among the buttons a row shows on hover, ahead of Rename, and the page is handed the factory,
-     the row and the row's class names; the time gets the row's id and the panel's relative-time function. */
+  /* The pin goes into every row right after the title, where the factory and the row are named, and the title itself is
+     left as it was; the time gets the row's id and the panel's relative-time function. */
   {
     const editPin = webview.EDITS.find((e) => e.name === 'session list pin');
     const editTime = webview.EDITS.find((e) => e.name === 'session list time render');
-    const row = 'L("span",{className:B5.sessionMeta,children:[F("span",{className:B5.sessionTime,children:O_5(J.lastModifiedTime.value)}),'
-      + '!z&&(M||N)&&L("span",{className:B5.sessionActions,children:[M&&J.sessionId.value&&F("span",{role:"button",title:"Rename session"}),'
-      + 'N&&F("span",{role:"button",title:"Archive session"})]})]})';
+    const row = 'L("button",{className:B5.sessionItem,children:[R&&F(xQ,{state:R}),z?F("span",{ref:b,children:db(J)},"edit")'
+      + ':F("span",{className:B5.sessionName,children:vE0(db(J),G)},"view"),w&&J.worktree.value&&F("span",{}),'
+      + 'L("span",{className:B5.sessionMeta,children:[F("span",{className:B5.sessionTime,children:O_5(J.lastModifiedTime.value)})]})]})';
     const r = editPin && editTime ? applyEdits(row, [editTime, editPin]) : { error: 'no such edit' };
     if (r.error) bad('the pin and time edits did not both apply to the shape of a row: ' + r.error);
-    else if (r.out.includes('className:B5.sessionActions,children:[(typeof window.__ccePin==="function"?window.__ccePin(F,J,B5):null),'
-        + 'M&&J.sessionId.value&&F("span",{role:"button",title:"Rename session"})')
+    else if (r.out.includes(':F("span",{className:B5.sessionName,children:vE0(db(J),G)},"view"),'
+        + '(typeof window.__ccePin==="function"?window.__ccePin(F,J):null),w&&J.worktree.value')
       && /window\.__cceSpan\(O_5\(J\.lastModifiedTime\.value\),J\.lastModifiedTime\.value,J\.cceCreatedAt,J\.sessionId&&J\.sessionId\.value,O_5\)/.test(r.out)) {
-      ok('the pin is drawn first among the hover buttons, with the panel\'s own factory and class names, and the time gets the row\'s id and the relative-time function');
+      ok('the pin goes into every row after its title, with the panel\'s own factory, and the time gets the row\'s id and the relative-time function');
     } else bad('after the pin and time edits the row reads: ' + r.out);
+    const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '83-session-pins.js'), 'utf8');
+    if (/span\[data-cce-pin\]\{order:-1;/.test(css) && !/sessionActions_/.test(css)) ok('and the page\'s stylesheet moves it to the front of the row, not among the hover buttons');
+    else bad('the pin is not moved to the front of the row by the page\'s stylesheet');
   }
 
   /* The page's half, run on a stand-in for the panel: what a pin is, what clicking it does, and the real time of a
@@ -4055,9 +4058,8 @@ console.log('\nconversations pinned in the session list');
     vm.runInContext('var pinsCache = null;' + frag('15-format.js') + frag('82-scheduled-tasks.js') + frag('83-session-pins.js')
       + ';this.reset = function(){ pinsCache = null; };', env);
     const h = (type, props, key) => ({ type, props, key });
-    const cls = { actionButton: 'actionButton_x', actionIcon: 'actionIcon_x' };
     const rowOf = (id, onDisk = true) => ({ sessionId: { value: id }, transcriptOnDisk: onDisk });
-    const draw = (id, onDisk) => env.window.__ccePin(h, rowOf(id, onDisk), cls);
+    const draw = (id, onDisk) => env.window.__ccePin(h, rowOf(id, onDisk));
     const set = (v) => { env.prop = v === null ? '' : pack(v); env.reset(); };
 
     set(null);
@@ -4068,10 +4070,10 @@ console.log('\nconversations pinned in the session list');
     set([[A], { [A]: [real, given] }, 14]);
     const pinned = draw(A), plain = draw(B);
     const p = pinned && pinned.props, q = plain && plain.props;
-    const okShape = p && q && p.role === 'button' && p.tabIndex === 0 && p.className === 'actionButton_x'
+    const okShape = p && q && p.role === 'button' && p.tabIndex === 0
       && p['data-cce-pin'] === A && p['data-cce-pin-off'] === undefined && pinned.key === 'cce-pin'
-      && p.children[0].type === 'svg' && p.children[0].props.className === 'actionIcon_x';
-    if (okShape) ok('a pin is a button with the panel\'s own action class, keyed, with its icon inside');
+      && p.children[0].type === 'svg' && p.children[0].props.children[0].props['data-cce-pin-body'] === '1';
+    if (okShape) ok('a pin is a keyed button with its icon inside, the part that fills when pinned marked');
     else bad(`the pin was drawn as ${JSON.stringify(p)}`);
     if (p && q && p['data-cce-pinned'] === '1' && p['aria-pressed'] === 'true' && q['data-cce-pinned'] === '0' && q['aria-pressed'] === 'false') {
       ok('a pinned row and an unpinned one carry different states');
@@ -4082,7 +4084,7 @@ console.log('\nconversations pinned in the session list');
       && /Click to unpin/.test(label) && /Click again to unpin/.test(other) && /within about 14 days/.test(label) && /within about 14 days/.test(other)) {
       ok('the hover text says it is not deleted by the cleanup, not moved to Archived sessions, how to unpin, and what happens after');
     } else bad(`hover text pinned: "${label}" / unpinned: "${other}"`);
-    if (draw(C, false) === null && env.window.__ccePin(h, { sessionId: { value: 'remote:1' }, transcriptOnDisk: true }, cls) === null) {
+    if (draw(C, false) === null && env.window.__ccePin(h, { sessionId: { value: 'remote:1' }, transcriptOnDisk: true }) === null) {
       ok('no pin on a row with no transcript on disk, or one whose id is not a session id');
     } else bad('a row with nothing on disk to keep got a pin');
 
