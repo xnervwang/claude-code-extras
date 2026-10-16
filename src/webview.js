@@ -18,8 +18,8 @@
  *   session createdAt  Carry the session's creation time into the session-list model.
  *   session time       Wrap the relative time in the list with the absolute date range, and for a pinned
  *                      conversation whose files were given a later time, the time it was really last active.
- *   session pin        A pin among the buttons a row of the session list shows on hover (src/sessionpins.js
- *                      says what pinning does).
+ *   session pin        A pin at the right end of the buttons a row of the session list shows on hover
+ *                      (src/sessionpins.js says what pinning does).
  *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and drop the guard
  *                      that hides the meter while more than half the window is still free.
  *   agent map          Three: a section for this session's scheduled prompts, the footer button opening for a
@@ -337,10 +337,10 @@ const EDITS = [
     to: (m, f, j) => `children:(typeof window.__cceSpan==="function"?window.__cceSpan(${f}(${j}.lastModifiedTime.value),${j}.lastModifiedTime.value,${j}.cceCreatedAt,${j}.sessionId&&${j}.sessionId.value,${f}):${f}(${j}.lastModifiedTime.value))`,
   },
   {
-    /* The pin is the first of the buttons a row shows on hover, ahead of Rename and Archive, so the three come and go
-       together and sit together. The page is handed the element factory, the row and the row's class names, and renders
-       it with the same class as those two. The anchor is the start of that group and the Rename button that opens it,
-       which is also where the factory and the row are named. */
+    /* The pin goes into the group of buttons a row shows on hover, with Rename and Archive, so the three come and go
+       together and sit together; the page's stylesheet puts it last. The page is handed the element factory, the row and
+       the row's class names, and renders it with the same class as those two. The anchor is the start of that group and
+       the Rename button that opens it, which is also where the factory and the row are named. */
     name: 'session list pin',
     re: /(\{className:([\w$]+)\.sessionActions,children:\[)(([\w$]+)&&([\w$]+)\.sessionId\.value&&([\w$]+)\("span",\{role:"button")/g,
     to: (m, open, cls, rename, gate, j, jsx) =>
