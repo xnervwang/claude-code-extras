@@ -3964,6 +3964,84 @@ console.log('\na panel whose bundle never arrives says so');
   } else bad('extension.js does not set the watch flag from the latency setting');
 }
 
+console.log('\nconversations in a group, kept from the transcript cleanup');
+{
+  /* The patched host hands over the state it reads the groups from, and still returns the groups as it did. */
+  const { applyEdits } = require('../src/edits');
+  const edit = host.EDITS.find((e) => e.name === 'session groups');
+  const cls = 'class pn{context;constructor($){this.context=$}sessionGroupsKey(){return"sessionGroups:/w"}'
+    + 'getSessionGroups(){return bV(this.context.globalState.get(this.sessionGroupsKey()))}}';
+  const r = edit ? applyEdits(cls, [edit]) : { error: 'no such edit' };
+  if (r.error) bad('the session groups edit did not apply to the settings method\'s shape: ' + r.error);
+  else {
+    const env = { bV: (v) => (Array.isArray(v) ? v : []) };
+    env.globalThis = env;
+    vm.createContext(env);
+    vm.runInContext(r.out + ';var gs={get:(k)=>k==="sessionGroups:/w"?[{id:"g",sessionIds:["x"]}]:void 0,keys:()=>[]};'
+      + 'var got=new pn({globalState:gs}).getSessionGroups();', env);
+    if (env.__cceClaudeState === env.gs && JSON.stringify(env.got) === '[{"id":"g","sessionIds":["x"]}]') {
+      ok('reading the groups hands over Claude Code\'s state, and the groups come back as before');
+    } else bad(`after reading the groups: state ${env.__cceClaudeState === env.gs ? 'handed over' : 'not handed over'}, `
+      + `groups ${JSON.stringify(env.got)}`);
+  }
+  const keep = require('../src/keepgrouped');
+  const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222';
+  const C = '33333333-3333-4333-8333-333333333333', D = '44444444-4444-4444-8444-444444444444';
+  const groups = { 'sessionGroups:/a': [{ sessionIds: [A, 'remote:abc'] }, { sessionIds: [B] }], 'sessionGroups:/b': [{ sessionIds: [C] }],
+    'sessionGroups:/c': 'not a list', other: [{ sessionIds: [D] }] };
+  const ids = keep.groupedIds({ keys: () => Object.keys(groups), get: (k) => groups[k] });
+  if ([...ids].sort().join() === [A, B, C].sort().join()) ok('the ids in every folder\'s groups, and nothing that is not a session id');
+  else bad(`grouped ids read as ${JSON.stringify([...ids])}`);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-keep-'));
+  try {
+    const f = (name, v) => { const p = path.join(tmp, name); fs.writeFileSync(p, JSON.stringify(v)); return p; };
+    const days = [keep.retentionDays([f('u.json', { cleanupPeriodDays: 90 }), f('m.json', { cleanupPeriodDays: 60 })]),
+      keep.retentionDays([path.join(tmp, 'missing.json')]),
+      keep.retentionDays([f('z.json', { cleanupPeriodDays: 0 }), f('s.json', { cleanupPeriodDays: '7' }), f('k.json', { cleanupPeriodDays: 45 })])];
+    if (JSON.stringify(days) === '[60,30,45]') ok('the retention is the smallest one set, 30 days when none is, and only a whole number of days counts');
+    else bad(`retention read as ${JSON.stringify(days)}`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  const script = `
+    const fs = require('fs'), os = require('os'), path = require('path');
+    const keep = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'keepgrouped.js'))});
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-keep-'));
+    const DAY = 86400000, now = Date.UTC(2026, 9, 16, 12);
+    const put = (rel, ageDays) => { const p = path.join(root, rel); fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, 'x'); const t = new Date(now - ageDays * DAY); fs.utimesSync(p, t, t); return p; };
+    const age = (rel) => Math.round((now - fs.statSync(path.join(root, rel)).mtimeMs) / DAY * 10) / 10;
+    (async () => {
+      try {
+        put('p1/${A}.jsonl', 100); put('p1/${A}/tool-results/a.txt', 100); put('p1/${A}/tool-results/s/b.txt', 85);
+        put('p1/${A}/tool-results/s/d/c.txt', 100); put('p1/${A}/subagents/agent-1.jsonl', 100);
+        put('p2/${B}.jsonl', 10); put('p2/${D}.jsonl', 100);
+        const first = await keep.keep({ ids: new Set(['${A}', '${B}', '${C}']), days: 90, projectsDir: root, now });
+        const ages = ['p1/${A}.jsonl', 'p1/${A}/tool-results/a.txt', 'p1/${A}/tool-results/s/b.txt', 'p1/${A}/tool-results/s/d/c.txt',
+          'p1/${A}/subagents/agent-1.jsonl', 'p2/${B}.jsonl', 'p2/${D}.jsonl'].map(age);
+        put('q/${A}.jsonl', 100);
+        const short = await keep.keep({ ids: new Set(['${A}']), days: 10, projectsDir: path.join(root, 'q', '..'), now });
+        process.stdout.write(JSON.stringify({ first, ages, short: age('q/${A}.jsonl') }));
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
+  let k;
+  try { k = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); }
+  catch (e) { k = { error: e.message }; }
+  if (k.error) bad('keeping grouped conversations failed: ' + k.error);
+  else {
+    const want = [76, 76, 76, 100, 100, 10, 100];
+    if (JSON.stringify(k.ages) === JSON.stringify(want) && k.first.found === 2 && k.first.touched === 3 && k.first.errors === 0) {
+      ok('a grouped transcript and its tool outputs past the margin are set to 14 days inside a 90-day cleanup; '
+        + 'fresh ones, other conversations, and what the cleanup does not reach are left alone');
+    } else bad(`ages after keeping: ${JSON.stringify(k.ages)} (expected ${JSON.stringify(want)}), counts ${JSON.stringify(k.first)}`);
+    if (k.short === 5) ok('with a 10-day cleanup, the margin is half of it');
+    else bad(`with a 10-day cleanup the transcript was left ${k.short} days old`);
+  }
+  const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/globalThis\.__cceClaudeState/.test(extSrc) && /cfg\(\)\.get\(KEEP_GROUPED_SETTING, true\)/.test(extSrc)
+    && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.keepGroupedSessions']) {
+    ok('the extension keeps them while its setting is on, from the state the host handed over');
+  } else bad('extension.js or the manifest does not wire up keeping grouped conversations');
+}
+
 console.log('\nthe date on a message or reply from before today');
 {
   /* The same order as the session list and the plan tree: month before day, the year only when it is not this one. */

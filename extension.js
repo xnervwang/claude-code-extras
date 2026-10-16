@@ -29,6 +29,7 @@ const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
+const keepgrouped = require('./src/keepgrouped');
 const ADAPTERS = require('./src/adapters');
 const removal = require('./src/removal');
 const PACKAGE = require('./package.json');
@@ -52,6 +53,7 @@ const SWEEP_KEY = 'claudeCodeExtras.lastOrphanSweep';
 const LATENCY_KEY = 'claudeCodeExtras.latencyOffset';
 const THRESHOLD_SETTING = PREFIX + 'latencyThresholdSeconds';
 const LATENCY_ON_SETTING = PREFIX + 'recordOpenLatency';
+const KEEP_GROUPED_SETTING = PREFIX + 'keepGroupedSessions';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
   enabled: PREFIX + 'workPlan',
@@ -691,6 +693,27 @@ function start(context, renamed) {
     } catch (e) { /* never break the host's own icon update */ }
   };
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTabDot) delete globalThis.__cceTabDot; } });
+  /* Conversations in a session-list group, kept from Claude Code's transcript cleanup (src/keepgrouped.js). The groups
+     come from the state the patched host hands over the first time it reads them, so a pass before that does nothing.
+     The margin it keeps is days, so once every half hour is far more often than it needs. */
+  let keeping = false;
+  const keepGrouped = async () => {
+    const state = globalThis.__cceClaudeState;
+    if (keeping || !state || removed() || !cfg().get(KEEP_GROUPED_SETTING, true)) return;
+    keeping = true;
+    try {
+      const r = await keepgrouped.keep({ ids: keepgrouped.groupedIds(state), days: keepgrouped.retentionDays() });
+      if (r.touched || r.errors) {
+        log.appendLine(`grouped conversations: ${r.found} of ${r.grouped} found, ${r.touched} file(s) given a later `
+          + `modification time to stay ahead of the transcript cleanup, ${r.errors} error(s)`);
+      }
+    } catch (e) {
+      log.appendLine('grouped conversations: ' + ((e && e.message) || e));
+    } finally { keeping = false; }
+  };
+  const keepFirst = setTimeout(keepGrouped, 60000);
+  const keepTimer = setInterval(keepGrouped, 30 * 60000);
+  context.subscriptions.push({ dispose: () => { clearTimeout(keepFirst); clearInterval(keepTimer); } });
   refreshPlans();
   paintBadge();
   watchEffort();

@@ -2,7 +2,7 @@
 
 This VS Code extension adds a Claude-maintained work plan to Claude Code's chat panel: a tree of unfinished work in its own activity-bar view, put back in front of Claude every turn so work survives long, branching conversations and compaction. It also adds smaller panel features listed in the [Features](#features) table.
 
-Not affiliated with Anthropic. Requires Anthropic's Claude Code extension and VS Code 1.94 or later. It changes files inside the installed Claude Code extension; removing it restores them. 24 settings, 11 commands.
+Not affiliated with Anthropic. Requires Anthropic's Claude Code extension and VS Code 1.94 or later. It changes files inside the installed Claude Code extension; removing it restores them. 25 settings, 11 commands.
 
 ## What it looks like
 
@@ -96,6 +96,7 @@ See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, th
 | **Focus view button:** Toggle Claude Code's own Focus view; while it is on and Claude works, the working line shows the latest tool call and elapsed time, such as `Bash running for 2m55s (since 11:11:18)`. Only available with Claude Code builds that have Focus view. | Footer button; working line |
 | **Context meter:** Keep the meter visible, outline it when 15% of the window remains, and hover for a breakdown by category, memory files and custom agents. | Panel's context meter |
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
+| **Grouped conversations kept:** A conversation in a group of the session list is not deleted by Claude Code's transcript cleanup (`cleanupPeriodDays`). Before it would be, its files get a later modification time, so the list shows it as last active up to 14 days short of that age. | Session list; transcripts on disk |
 | **Chimes:** Hear a short synthesized sound when a turn finishes, permission is requested or Claude asks a question; mute it in the footer. Sound plays on the machine showing the panel, including with Remote SSH. | Footer; machine showing the panel |
 | **Background sessions:** See this conversation's `claude --bg` sessions as running, waiting for you, done, stopped or failed, with what each waits for and its final result; copy the attach or logs command. | Agents button in the footer and its map |
 | **Scheduled prompts:** See timers this conversation set through Claude Code's scheduled tasks, with each schedule, last-fired time and prompt. | Agents button in the footer and its map |
@@ -105,7 +106,7 @@ See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, th
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 24 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 25 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **To turn off**
 
@@ -114,6 +115,7 @@ Open `Work Plan for Claude Code: Settings` for all 24 settings. Most apply witho
 | Panel additions | Set `claudeCodeWorkPlan.enabled` to off. The patch stays and its scripts keep running. |
 | Work plan | Set `claudeCodeWorkPlan.workPlan` to off. The view goes, nothing is added to turns, and writes to plan files are refused. |
 | Plugin's skill description too | Run `Work Plan for Claude Code: Stop Loading the Work Plan Plugin`. |
+| Keeping grouped conversations | Set `claudeCodeWorkPlan.keepGroupedSessions` to off. |
 | Patch and restore Claude Code's files | Run `Work Plan for Claude Code: Remove from Claude Code (restore original files)`, or uninstall. |
 
 **Work plan settings**

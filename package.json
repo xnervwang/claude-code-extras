@@ -223,6 +223,11 @@
           "default": true,
           "markdownDescription": "How long each session ran and the dates it covers, on the session list. Turning it off stops the work, not only the drawing, and takes effect without a reload."
         },
+        "claudeCodeWorkPlan.keepGroupedSessions": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Keep conversations you have put into a group of the session list from being deleted by Claude Code's transcript cleanup (`cleanupPeriodDays`). Before one reaches that age, its files are given a later modification time, so the session list shows it as last active up to 14 days short of that age rather than when it really was."
+        },
         "claudeCodeWorkPlan.show.footerInfo": {
           "type": "boolean",
           "default": true,

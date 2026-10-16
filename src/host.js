@@ -24,7 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 10;
+const VERSION = 11;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
@@ -118,6 +118,19 @@ const EDITS = [
     name: 'tab dot',
     re: /(this\.panelTab\.iconPath=[\w$]+\.Uri\.file\([\w$]+\.join\(this\.context\.extensionPath,"resources",[\w$]+\[([\w$]+)\]\)\))\}/g,
     to: (m, set, state) => `${set};try{globalThis.__cceTabDot&&globalThis.__cceTabDot(this.panelTab,${state})}catch(e){}}`,
+  },
+  /*
+   * Claude Code's own state, where the session list keeps its groups (src/keepgrouped.js says what they are needed for).
+   *
+   * Another extension's state is not reachable through the editor's API, and in a remote window it is not on the remote
+   * machine's disk either. So the method that reads the groups hands over the state it reads them from, through a global
+   * this extension shares with the host - both run in one extension host process, as with the active conversation.
+   */
+  {
+    name: 'session groups',
+    re: /getSessionGroups\(\)\{return ([\w$]+)\(this\.context\.globalState\.get\(this\.sessionGroupsKey\(\)\)\)\}/g,
+    to: (m, parse) => 'getSessionGroups(){try{globalThis.__cceClaudeState=this.context.globalState}catch(e){}'
+      + `return ${parse}(this.context.globalState.get(this.sessionGroupsKey()))}`,
   },
 ];
 
