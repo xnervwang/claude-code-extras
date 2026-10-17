@@ -4079,11 +4079,14 @@ console.log('\nconversations pinned in the session list');
       ok('a pinned row and an unpinned one carry different states');
     } else bad(`pinned state ${p && p['data-cce-pinned']}, unpinned state ${q && q['data-cce-pinned']}`);
     const label = (p && p['aria-label']) || '', other = (q && q['aria-label']) || '';
-    const says = (t) => /transcript cleanup will not delete/.test(t) || /transcript cleanup does not delete/.test(t);
-    if (says(label) && says(other) && /Archived sessions/.test(label) && /Archived sessions/.test(other)
-      && /Click to unpin/.test(label) && /Click again to unpin/.test(other) && /within about 14 days/.test(label) && /within about 14 days/.test(other)) {
-      ok('the hover text says it is not deleted by the cleanup, not moved to Archived sessions, how to unpin, and what happens after');
-    } else bad(`hover text pinned: "${label}" / unpinned: "${other}"`);
+    if (/^Pin this conversation/.test(other) && /transcript cleanup will then not delete it/.test(other) && /Archived sessions/.test(other)
+      && !/Unpin|within/.test(other)) {
+      ok('over a pin not yet pinned, the hover text says what pinning does: not deleted by the cleanup, not moved to Archived sessions');
+    } else bad(`hover text before pinning: "${other}"`);
+    if (/^Unpin this conversation/.test(label) && /cleaned up and archived as usual again/.test(label)
+      && /moved to Archived sessions straight away and deleted within about 14 days/.test(label) && !/^Pin /.test(label)) {
+      ok('over a pinned one already kept past its age, it says what unpinning does: archived at once and deleted within about 14 days unless used');
+    } else bad(`hover text of a pinned row kept past its age: "${label}"`);
     if (draw(C, false) === null && env.window.__ccePin(h, { sessionId: { value: 'remote:1' }, transcriptOnDisk: true }) === null) {
       ok('no pin on a row with no transcript on disk, or one whose id is not a session id');
     } else bad('a row with nothing on disk to keep got a pin');
@@ -4094,8 +4097,8 @@ console.log('\nconversations pinned in the session list');
     q.onClick({ stopPropagation: () => { stopped++; }, currentTarget: target });
     const sent = env.posted[0] || {};
     if (stopped === 1 && sent.type === 'cce_session_pin' && sent.sessionId === B && sent.pinned === true && target.attrs['data-cce-pinned'] === '1'
-      && /^Pinned:/.test(target.attrs['aria-label'] || '') && env.hidden > 0) {
-      ok('clicking a pin stops the click reaching the row, tells the host, and shows it pinned at once');
+      && /^Unpin this conversation/.test(target.attrs['aria-label'] || '') && env.hidden > 0) {
+      ok('clicking a pin stops the click reaching the row, tells the host, and shows it pinned at once, its hover text now about unpinning');
     } else bad(`after clicking: stopped ${stopped}, sent ${JSON.stringify(env.posted)}, attributes ${JSON.stringify(target.attrs)}`);
     const again = draw(B);
     if (again && again.props['data-cce-pinned'] === '1') ok('until the host answers, the row is drawn as the click left it');
@@ -4129,9 +4132,13 @@ console.log('\nconversations pinned in the session list');
     else bad('pinning was turned off and the pins drawn stayed');
     set([[A, B], {}, 5]);
     vm.runInContext('repaintPins()', env);
-    if (!('data-cce-pin-off' in target.attrs) && target.attrs['data-cce-pinned'] === '1' && /within about 5 days/.test(target.attrs['aria-label'])) {
-      ok('and turning it on again shows them, in the state and with the margin the stylesheet carries');
-    } else bad(`after pinning came back the pin read ${JSON.stringify(target.attrs)}`);
+    const fresh = target.attrs['aria-label'];
+    set([[A, B], { [B]: [real, given] }, 5]);
+    vm.runInContext('repaintPins()', env);
+    if (!('data-cce-pin-off' in target.attrs) && target.attrs['data-cce-pinned'] === '1'
+      && /once it has been left unused long enough\.$/.test(fresh) && /within about 5 days\.$/.test(target.attrs['aria-label'])) {
+      ok('and turning it on again shows them, in the state the stylesheet carries; unpinning one never kept past its age is said to change nothing yet, and one that was, with the margin carried');
+    } else bad(`after pinning came back the pin read ${JSON.stringify(target.attrs)}, before its record "${fresh}"`);
   }
 
   /* The host's half: the file of pins, the margin, and what goes into the stylesheet. */

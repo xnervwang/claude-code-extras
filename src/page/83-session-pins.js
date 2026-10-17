@@ -73,14 +73,19 @@
     var n = Math.floor(m);
     return 'about ' + n + (n === 1 ? ' day' : ' days');
   };
-  var pinLabel = function(on, d){
-    var after = 'Unpinned, it is archived and cleaned up as usual again, so one kept past its age can be deleted within '
-      + pinDays(d && d.margin) + ' unless you use it.';
-    return (on
-      ? 'Pinned: Claude Code\'s transcript cleanup will not delete this conversation, and it will not be moved to '
-        + 'Archived sessions. Click to unpin. '
-      : 'Pin this conversation so Claude Code\'s transcript cleanup does not delete it and it is not moved to '
-        + 'Archived sessions. Click again to unpin. ') + after;
+  /* What the click is about to do: pinning, what that keeps from happening; unpinning, what follows. One whose files
+     were already given a later time is past the cleanup's age, and is then at risk at once rather than at some point. */
+  var pinLabel = function(on, d, id){
+    if (!on) {
+      return 'Pin this conversation: Claude Code\'s transcript cleanup will then not delete it, and it will not be moved '
+        + 'to Archived sessions.';
+    }
+    var kept = !!(d && typeof id === 'string' && Object.prototype.hasOwnProperty.call(d.times, id));
+    return 'Unpin this conversation: it is cleaned up and archived as usual again'
+      + (kept
+        ? '. It has already been kept past the cleanup\'s age, so unless you use it, it can be moved to Archived sessions '
+          + 'straight away and deleted within ' + pinDays(d.margin) + '.'
+        : ', once it has been left unused long enough.');
   };
   var paintPin = function(el, on, d){
     var set = function(k, v){ if (el.getAttribute(k) !== v) el.setAttribute(k, v); };
@@ -88,7 +93,7 @@
     if (el.hasAttribute('data-cce-pin-off')) el.removeAttribute('data-cce-pin-off');
     set('data-cce-pinned', on ? '1' : '0');
     set('aria-pressed', on ? 'true' : 'false');
-    set('aria-label', pinLabel(on, d));
+    set('aria-label', pinLabel(on, d, el.getAttribute('data-cce-pin')));
   };
   /* The rows the list does not draw again are brought up to date here: when a stylesheet arrives, and when a click the
      host did not answer stops being shown. */
@@ -127,7 +132,7 @@
       return h('span', {
         role: 'button', tabIndex: 0,
         'data-cce-pin': id, 'data-cce-pin-off': d ? void 0 : '1',
-        'data-cce-pinned': on ? '1' : '0', 'aria-pressed': on ? 'true' : 'false', 'aria-label': pinLabel(on, d),
+        'data-cce-pinned': on ? '1' : '0', 'aria-pressed': on ? 'true' : 'false', 'aria-label': pinLabel(on, d, id),
         onClick: act,
         onKeyDown: function(e){ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(e); } },
         onMouseEnter: function(e){ showLabel(e.currentTarget); },
