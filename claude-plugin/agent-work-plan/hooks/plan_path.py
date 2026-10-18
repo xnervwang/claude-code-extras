@@ -46,7 +46,7 @@ extension, so every value here has a default that holds by itself.
 """
 SETTINGS_FILE = "config.json"
 DEFAULTS = {
-    # Off means this plugin does nothing at all: no rows in front of the model, no reminder at the end of a turn, and a
+    # Off means the work plan does nothing at all: no rows in front of the model, no reminder at the end of a turn, and a
     # write to the plan refused rather than quietly kept up. Hiding the view alone would be the worst of both - the
     # whole cost still paid every turn, with nothing to show for it.
     "enabled": True,
@@ -76,6 +76,9 @@ DEFAULTS = {
     # nothing. It is for a conversation that relays another model's replies word for word: an instruction injected there
     # is either relayed to a model that cannot act on it or obeyed by breaking the relay. Empty matches nothing.
     "quietWhenReplyMatches": "",
+    # Whether the model is told the time zone the user reads the panel in, on each message and after a compaction, when
+    # it differs from this machine's (tell-time-zone.py). Separate from `enabled`: it has nothing to do with the plan.
+    "tellTimeZone": True,
 }
 
 

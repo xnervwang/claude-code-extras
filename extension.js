@@ -60,6 +60,7 @@ const HOOK_SETTINGS = {
   offerMinTurns: PREFIX + 'workPlanOfferMinTurns',
   offerMinToolCalls: PREFIX + 'workPlanOfferMinToolCalls',
   quietWhenReplyMatches: PREFIX + 'workPlanQuietWhenReplyMatches',
+  tellTimeZone: PREFIX + 'tellClaudeYourTimeZone',
 };
 
 /** Every install of Claude Code this adapter can see: the active one plus sibling versions in the same folder. */
@@ -600,6 +601,24 @@ function start(context, renamed) {
     const v = globalThis.__cceClientTimeZone;
     return typeof v === 'string' ? v : '';
   };
+  /* The plugin's hooks tell the model this zone (tell-time-zone.py), and they run beside Claude Code with no way to ask
+     a panel, so it is left for them in a file. The last panel to report wins: one person behind several windows reads
+     them all in one zone. A window that has not heard from a panel yet writes nothing rather than an empty zone. */
+  const writeClientZone = () => {
+    const zone = clientZone();
+    if (!zone) return;
+    const file = path.join(planDir(), 'client-time-zone.json');
+    const next = JSON.stringify({ timeZone: zone }) + '\n';
+    try {
+      let current = null;
+      try { current = fs.readFileSync(file, 'utf8'); } catch (_) {}
+      if (current === next) return;
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, next);
+    } catch (e) {
+      log.appendLine('client time zone: ' + e.message);
+    }
+  };
   const refreshPlans = () => {
     sweepPlans().catch((e) => log.appendLine('orphan work plans: ' + e.message));
     workplan.setTimeZone(clientZone());
@@ -687,7 +706,10 @@ function start(context, renamed) {
      rather than at the next periodic refresh. */
   globalThis.__cceTzHook = () => {
     try { if (workplan.setTimeZone(clientZone())) workplan.refresh(); } catch (e) { /* never break the host's own message handling */ }
+    try { writeClientZone(); } catch (e) { /* the same */ }
   };
+  /* A panel can report before this activates, and then only the global above holds its zone. */
+  writeClientZone();
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTzHook) delete globalThis.__cceTzHook; } });
   /* The patched host hands over each editor tab's state as it picks the tab's icon; the title gets the same coloured
      dot the icon carries (src/tabdot.js). */

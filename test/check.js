@@ -493,6 +493,7 @@ console.log('\nwhat the hooks read of a transcript');
         ['nudge-work-plan.py', { hook_event_name: 'Stop' }],
         ['refresh-work-plan.py', { hook_event_name: 'Stop' }],
         ['resume-work-plan.py', { hook_event_name: 'SessionStart', source: 'compact' }],
+        ['tell-time-zone.py', { hook_event_name: 'SessionStart', source: 'compact' }],
       ];
       const took = (script, extra) => {
         const payload = (t) => Object.assign({ session_id: SID, transcript_path: t }, extra);
@@ -3091,6 +3092,71 @@ console.log('\nthe hooks around a compaction');
     if (r.status === 0 && /all checks pass/.test(out)) ok(`${name}: ${passed} checks of its own pass`);
     else bad(`${name}: ${out.split('\n').filter((l) => /^FAIL|Error|Traceback/.test(l)).join(' | ') || out.slice(-400)}`);
   }
+}
+
+/* ── 19c. the reader's time zone, told to the model ──
+   The panel reports its zone, the extension leaves it in the data directory, and a hook says it on every message and
+   after a compaction when it is not this machine's. Each link fails silently - a zone written where the hook does not
+   look, a hook left out of hooks.json, a switch the hook does not read - and the model just goes on giving the machine's
+   times, which is the complaint this was written for. */
+console.log("\nthe reader's time zone, told to the model");
+{
+  const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+  const hook = path.join(hooks, 'tell-time-zone.py');
+  const own = cp.spawnSync('python3', [hook, '--selftest'], { encoding: 'utf8' });
+  const said = (own.stdout || '') + (own.stderr || '');
+  if (own.status === 0 && /all checks pass/.test(said)) ok(`tell-time-zone.py: ${(said.match(/^PASS /gm) || []).length} checks of its own pass`);
+  else bad(`tell-time-zone.py: ${said.split('\n').filter((l) => /^FAIL|Error|Traceback/.test(l)).join(' | ') || said.slice(-400)}`);
+
+  const registered = JSON.parse(fs.readFileSync(path.join(hooks, 'hooks.json'), 'utf8')).hooks;
+  const runs = (event, matcher) => (registered[event] || []).some((g) => (matcher === undefined || g.matcher === matcher)
+    && (g.hooks || []).some((h) => /\/hooks\/tell-time-zone\.py" "\$\{CLAUDE_PLUGIN_DATA\}"$/.test(h.command)));
+  if (runs('UserPromptSubmit') && runs('SessionStart', 'compact')) ok('it runs on every message and after a compaction, handed the data directory');
+  else bad('hooks.json does not run tell-time-zone.py on UserPromptSubmit and on SessionStart after a compaction');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-tz-'));
+  try {
+    const run = (tz, payload) => {
+      const r = cp.spawnSync('python3', [hook, dir], { input: JSON.stringify(payload), encoding: 'utf8',
+        env: Object.assign({}, process.env, { TZ: tz }) });
+      try { return JSON.parse(r.stdout).hookSpecificOutput; } catch (e) { return r.stdout.trim() || null; }
+    };
+    const prompt = { hook_event_name: 'UserPromptSubmit', session_id: '19c00000-0000-0000-0000-000000000000' };
+    const none = run('UTC', prompt);
+    fs.writeFileSync(path.join(dir, 'client-time-zone.json'), JSON.stringify({ timeZone: 'Asia/Tokyo' }) + '\n');
+    const told = run('UTC', prompt);
+    const same = run('Asia/Tokyo', prompt);
+    const transcript = path.join(dir, 't.jsonl');
+    fs.writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { role: 'assistant',
+      content: [{ type: 'text', text: '[relayed] hello' }] } }) + '\n');
+    const compacted = run('UTC', { hook_event_name: 'SessionStart', source: 'compact', transcript_path: transcript });
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ quietWhenReplyMatches: '^\\[relayed\\]' }));
+    const relayed = run('UTC', { hook_event_name: 'SessionStart', source: 'compact', transcript_path: transcript });
+    const stillPrompt = run('UTC', prompt);
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ tellTimeZone: false }));
+    const off = run('UTC', prompt);
+    const text = told && told.additionalContext || '';
+    if (none === null && told && told.hookEventName === 'UserPromptSubmit'
+        && /^The user is in Asia\/Tokyo \(JST, UTC\+09:00\), where it is now \w{3} \d{4}-\d\d-\d\d \d\d:\d\d\. This machine runs on UTC \(UTC\+00:00\)/.test(text)
+        && same === null) {
+      ok('with a zone reported and the machine elsewhere, the model is told both; with none reported, or the same zone, nothing');
+    } else bad(`none: ${JSON.stringify(none)}, told: ${JSON.stringify(told)}, same zone: ${JSON.stringify(same)}`);
+    if (compacted && compacted.hookEventName === 'SessionStart' && relayed === null && stillPrompt && off === null) {
+      ok('after a compaction too, unless the conversation is relaying; and nothing at all once the setting is off');
+    } else bad(`after compaction: ${JSON.stringify(compacted)}, relaying: ${JSON.stringify(relayed)}, `
+      + `message while relaying: ${JSON.stringify(stillPrompt)}, off: ${JSON.stringify(off)}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const writer = (/const writeClientZone = \(\) => \{[\s\S]*?\n  \};\n/.exec(ext) || [''])[0];
+  const defaults = fs.readFileSync(path.join(hooks, 'plan_path.py'), 'utf8');
+  if (/path\.join\(planDir\(\), 'client-time-zone\.json'\)/.test(writer) && /if \(!zone\) return;/.test(writer)
+      && /globalThis\.__cceTzHook = \(\) => \{[\s\S]*?writeClientZone\(\);[\s\S]*?\};\n[\s\S]*?\n  writeClientZone\(\);/.test(ext)
+      && /tellTimeZone: PREFIX \+ 'tellClaudeYourTimeZone'/.test(ext) && /"tellTimeZone": True/.test(defaults)) {
+    ok('a reported zone is written where the hook reads it, never as empty, and the setting reaches the hook');
+  } else bad('extension.js does not write client-time-zone.json into planDir() on a report, or does not pass tellClaudeYourTimeZone to the hooks');
 }
 
 /* ── 20. how a row being worked on, or waiting, is drawn ──

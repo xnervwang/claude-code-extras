@@ -257,6 +257,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Keep a work plan for each conversation: the tree in the activity bar, the open rows put in front of the model every turn, and the reminder to reconcile them at the end of one. Turned off, the view and its activity bar icon go, nothing is put in front of the model, and a write to a plan file is refused so one is not kept where nobody can see it.\n\nWhat stays is the skill's own description, about 110 tokens a session, because the plugin is still registered with Claude Code. **Work Plan for Claude Code: Stop Loading the Work Plan Plugin** removes that too; it is a separate command because it changes Claude Code's own settings rather than this extension's."
+        },
+        "claudeCodeWorkPlan.tellClaudeYourTimeZone": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Tell Claude the time zone you read the panel in, and the time there, each time you send a message and after a compaction, so it gives you times in your zone rather than in the zone of the machine it runs on. Nothing is said while the two zones agree, as they usually do when VS Code and Claude Code run on the same machine. Takes effect from your next message, without a reload."
         }
       }
     }

@@ -11,9 +11,10 @@ The extension registers a Claude Code plugin the first time it activates. Its `m
 | `PostToolBatch` and `Stop` | Read context size from the transcript. At 170k, 180k or 195k tokens in a 200K window, or 960k, 970k or 995k in a 1M window, ask Claude to write the exact next step, what not to do and anything you said that is written nowhere else into every `doing` row. Repeat at the end of each turn while context stays above the mark and the plan has not been written. The marks move down when `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers the compaction line. |
 | `Stop` | At the end of a turn that changed at least two things without touching the plan, says so once for a plan in that state. Without a plan, says once that it could keep one after you have sent at least 3 messages and a turn made at least 25 tool calls. |
 | `SessionStart` after compaction | Tells Claude that context is at its smallest, gives the plan file's path and asks it to read the file before anything else. |
+| `UserPromptSubmit`, and `SessionStart` after compaction | When the time zone the panel reported differs from this machine's, tells Claude the user's zone, its offset and the time there, and that `date`, file times and log lines here are in the machine's zone. Says nothing when the zones agree or `claudeCodeWorkPlan.tellClaudeYourTimeZone` is off. |
 | `PreToolUse` on file writes and edits | Refuses a write to a plan file when a row's description exceeds what the view shows: 12 lines or 900 characters. |
 
-`claudeCodeWorkPlan.workPlanQuietWhenReplyMatches` silences only the compaction prompts: the context-size hook and the `SessionStart` hook.
+`claudeCodeWorkPlan.workPlanQuietWhenReplyMatches` silences only the compaction prompts: the context-size hook and the two `SessionStart` hooks.
 
 ## Changing a row
 
@@ -25,7 +26,7 @@ Rows that are not finished come first. The activity-bar badge counts `discussing
 
 ## Files and cleanup
 
-Each conversation has one JSON file under `~/.claude/plugins/data/agent-work-plan-claude-code-extras/`, named by session ID. At most once a day, plan files are deleted if their conversation transcripts no longer exist and the files have not been written for a week.
+Each conversation has one JSON file under `~/.claude/plugins/data/agent-work-plan-claude-code-extras/`, named by session ID; `client-time-zone.json` beside them holds the time zone a panel last reported. At most once a day, plan files are deleted if their conversation transcripts no longer exist and the files have not been written for a week.
 
 ## What a turn costs
 
