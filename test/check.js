@@ -3596,7 +3596,7 @@ console.log('\nthe name a person sees');
   const stray = keys.filter((k) => !k.startsWith('claudeCodeWorkPlan.'))
     .concat(c.commands.filter((x) => !x.command.startsWith('claudeCodeWorkPlan.')).map((x) => x.command));
   const shown = JSON.stringify([manifest.displayName, c.commands.map((x) => x.title), c.viewsContainers, [].concat(c.configuration).map((x) => x.title)]);
-  if (!stray.length && !/Extras for Claude Code/.test(shown) && manifest.displayName === 'Work Plan for Claude Code') {
+  if (!stray.length && !/Extras for Claude Code/.test(shown) && /^Work Plan for Claude Code \u2014 /.test(manifest.displayName)) {
     ok('every setting and command is named under claudeCodeWorkPlan, and every title says Work Plan for Claude Code');
   } else bad('old names in the manifest: ' + JSON.stringify(stray) + (/Extras for Claude Code/.test(shown) ? ' and an old title' : ''));
   const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8').split('\n');

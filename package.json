@@ -1,8 +1,8 @@
 {
   "name": "claude-code-extras",
-  "displayName": "Work Plan for Claude Code",
-  "description": "Work plan: a tree of what the conversation still has to do, kept current by Claude itself; also adds timestamps, reply figures, navigation, context details, and chimes to the Claude Code chat panel. Patches the installed Claude Code extension's files. Not affiliated with Anthropic.",
-  "version": "1.0.14",
+  "displayName": "Work Plan for Claude Code — Timestamps, Cost, Context & Sound Alerts",
+  "description": "Chat timestamps, running cost, context use, and sound alerts in Claude Code. Claude updates a work plan; jump to your messages or pin sessions. Unofficial; not affiliated with Anthropic.",
+  "version": "1.0.15",
   "publisher": "xnervwang",
   "license": "BSD-3-Clause",
   "icon": "images/icon.png",
