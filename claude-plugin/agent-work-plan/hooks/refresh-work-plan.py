@@ -56,7 +56,8 @@ import time
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
 
-from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, latest_reply_matches, plan_file, settings
+from plan_path import (MAX_DETAIL_CHARS, MAX_DETAIL_LINES, TAIL_MAX, TAIL_START, USAGE_KEYS, current_context,
+                       latest_reply_matches, plan_file, settings, tail_rows)
 
 # Three marks per window size, arranged around that window's compaction line:
 #
@@ -79,11 +80,6 @@ RESERVE = 13_000
 # session reporting more than this is on a 1M window whatever the transcript says about the model. Below it nothing is
 # proved, since a 1M session spends its first 200,000 tokens there too.
 STANDARD_WINDOW_CEILING = 200_000
-
-USAGE_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
-
-TAIL_START = 64 * 1024           # first window tried when reading back
-TAIL_MAX = 1024 * 1024           # give up past this; the answer is not worth more
 
 # How far the model identity is looked for. It is only looked for in the one band where it changes the outcome - between
 # the first standard-window mark and STANDARD_WINDOW_CEILING - and these bound what that costs. The identity attachment
@@ -119,48 +115,9 @@ def marks_for(env=None):
     return out[0], out[1]
 
 
-def tail_rows(path, window):
-    """Transcript lines from the last `window` bytes, newest first."""
-    size = os.path.getsize(path)
-    with open(path, "rb") as fh:
-        fh.seek(max(0, size - window))
-        chunk = fh.read().decode("utf-8", "replace")
-    return list(reversed(chunk.split("\n")))
-
-
 def head_rows(path, window):
     with open(path, "rb") as fh:
         return fh.read(window).decode("utf-8", "replace").split("\n")
-
-
-def current_context(path):
-    """Tokens sent on the main thread's most recent model call, or None.
-
-    A sub-agent writes into the same transcript, and its context is a fraction of the main thread's; reading its usage as
-    the session's would under-report by hundreds of thousands of tokens exactly when it matters.
-    """
-    window = TAIL_START
-    while window <= TAIL_MAX:
-        try:
-            rows = tail_rows(path, window)
-        except OSError:
-            return None
-        for line in rows:
-            if '"usage"' not in line:
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if row.get("type") != "assistant" or row.get("isSidechain"):
-                continue
-            u = (row.get("message") or {}).get("usage")
-            if isinstance(u, dict):
-                return sum(u.get(k) or 0 for k in USAGE_KEYS)
-        if window >= os.path.getsize(path):
-            return None
-        window *= 4
-    return None
 
 
 def pending_tool_bytes(path):

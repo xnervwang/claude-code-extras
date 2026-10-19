@@ -76,8 +76,8 @@ DEFAULTS = {
     # nothing. It is for a conversation that relays another model's replies word for word: an instruction injected there
     # is either relayed to a model that cannot act on it or obeyed by breaking the relay. Empty matches nothing.
     "quietWhenReplyMatches": "",
-    # Whether the model is told the time zone the user reads the panel in, on each message and after a compaction, when
-    # it differs from this machine's (tell-time-zone.py). Separate from `enabled`: it has nothing to do with the plan.
+    # Whether the model is told the time zone the user reads the panel in when it differs from this machine's
+    # (tell-time-zone.py). Separate from `enabled`: it has nothing to do with the plan.
     "tellTimeZone": True,
 }
 
@@ -175,6 +175,57 @@ def latest_reply_matches(transcript_path, pattern, tail=256 * 1024):
         if text.strip():
             return bool(rx.search(text))
     return False
+
+
+"""How much context the conversation is using, read back from the end of its transcript.
+
+Shared by the water-mark hook (refresh-work-plan.py), which asks for the plan to be brought up to date as the context
+nears the compaction line, and the time-zone hook (tell-time-zone.py), which says the user's zone again once the context
+has grown well past where it last said it.
+"""
+USAGE_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+TAIL_START = 64 * 1024           # first window tried when reading back
+TAIL_MAX = 1024 * 1024           # give up past this; the answer is not worth more
+
+
+def tail_rows(path, window):
+    """Transcript lines from the last `window` bytes, newest first."""
+    size = os.path.getsize(path)
+    with open(path, "rb") as fh:
+        fh.seek(max(0, size - window))
+        chunk = fh.read().decode("utf-8", "replace")
+    return list(reversed(chunk.split("\n")))
+
+
+def current_context(path):
+    """Tokens sent on the main thread's most recent model call, or None.
+
+    A sub-agent writes into the same transcript, and its context is a fraction of the main thread's; reading its usage as
+    the session's would under-report by hundreds of thousands of tokens exactly when it matters.
+    """
+    window = TAIL_START
+    while window <= TAIL_MAX:
+        try:
+            rows = tail_rows(path, window)
+        except OSError:
+            return None
+        for line in rows:
+            if '"usage"' not in line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("type") != "assistant" or row.get("isSidechain"):
+                continue
+            u = (row.get("message") or {}).get("usage")
+            if isinstance(u, dict):
+                return sum(u.get(k) or 0 for k in USAGE_KEYS)
+        if window >= os.path.getsize(path):
+            return None
+        window *= 4
+    return None
 
 
 def plan_file(payload):

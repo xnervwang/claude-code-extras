@@ -451,6 +451,8 @@ console.log('\nwhat the hooks read of a transcript');
       const data = path.join(dir, 'data');
       fs.mkdirSync(data);
       fs.writeFileSync(path.join(data, SID + '.json'), JSON.stringify({ nodes: [{ title: 'a', state: 'todo' }] }));
+      // A zone no machine running this is likely to be in, so the time-zone hook goes on to read the context size.
+      fs.writeFileSync(path.join(data, 'client-time-zone.json'), JSON.stringify({ timeZone: 'Pacific/Kiritimati' }));
       const prompt = JSON.stringify({ type: 'user', message: { content: 'go on' }, timestamp: '2026-10-05T00:00:00.000Z' }) + '\n';
       const row = JSON.stringify({ type: 'assistant', timestamp: '2026-10-05T00:00:01.000Z',
         message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls ' + 'q'.repeat(900) } }] } }) + '\n';
@@ -493,7 +495,7 @@ console.log('\nwhat the hooks read of a transcript');
         ['nudge-work-plan.py', { hook_event_name: 'Stop' }],
         ['refresh-work-plan.py', { hook_event_name: 'Stop' }],
         ['resume-work-plan.py', { hook_event_name: 'SessionStart', source: 'compact' }],
-        ['tell-time-zone.py', { hook_event_name: 'SessionStart', source: 'compact' }],
+        ['tell-time-zone.py', { hook_event_name: 'UserPromptSubmit', prompt_id: 'p1' }],
       ];
       const took = (script, extra) => {
         const payload = (t) => Object.assign({ session_id: SID, transcript_path: t }, extra);
@@ -1724,6 +1726,18 @@ console.log('\nabandoned work plans');
         return t;
       },
       (t, r) => r.deleted === 0 && left(t.dir).join() === id(2) + '.watermark'],
+    /* What the time-zone hook last told a conversation; the reader's zone itself belongs to no conversation. */
+    ['what a conversation was last told about the time zone goes with it, and the zone the panel reported stays',
+      () => {
+        const t = build([id(1)], []);
+        for (const name of [id(2) + '.tz', 'client-time-zone.json', 'config.json']) {
+          const f = path.join(t.dir, name);
+          fs.writeFileSync(f, '{}');
+          fs.utimesSync(f, OLD / 1000, OLD / 1000);
+        }
+        return t;
+      },
+      (t, r) => r.deleted === 1 && left(t.dir).sort().join() === 'client-time-zone.json,config.json'],
   ];
 
   for (const [what, make, want] of cases) {
@@ -3125,22 +3139,23 @@ console.log("\nthe reader's time zone, told to the model");
     const none = run('UTC', prompt);
     fs.writeFileSync(path.join(dir, 'client-time-zone.json'), JSON.stringify({ timeZone: 'Asia/Tokyo' }) + '\n');
     const told = run('UTC', prompt);
-    const same = run('Asia/Tokyo', prompt);
+    const again = run('UTC', prompt);
+    const same = run('Asia/Tokyo', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000001' }));
     const transcript = path.join(dir, 't.jsonl');
     fs.writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { role: 'assistant',
       content: [{ type: 'text', text: '[relayed] hello' }] } }) + '\n');
     const compacted = run('UTC', { hook_event_name: 'SessionStart', source: 'compact', transcript_path: transcript });
     fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ quietWhenReplyMatches: '^\\[relayed\\]' }));
     const relayed = run('UTC', { hook_event_name: 'SessionStart', source: 'compact', transcript_path: transcript });
-    const stillPrompt = run('UTC', prompt);
+    const stillPrompt = run('UTC', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000002' }));
     fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ tellTimeZone: false }));
-    const off = run('UTC', prompt);
+    const off = run('UTC', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000003' }));
     const text = told && told.additionalContext || '';
     if (none === null && told && told.hookEventName === 'UserPromptSubmit'
         && /^The user is in Asia\/Tokyo \(JST, UTC\+09:00\), where it is now \w{3} \d{4}-\d\d-\d\d \d\d:\d\d\. This machine runs on UTC \(UTC\+00:00\)/.test(text)
-        && same === null) {
-      ok('with a zone reported and the machine elsewhere, the model is told both; with none reported, or the same zone, nothing');
-    } else bad(`none: ${JSON.stringify(none)}, told: ${JSON.stringify(told)}, same zone: ${JSON.stringify(same)}`);
+        && again === null && same === null && fs.existsSync(path.join(dir, '19c00000-0000-0000-0000-000000000000.tz'))) {
+      ok('with a zone reported and the machine elsewhere, a conversation is told both once; with none reported, or the same zone, nothing');
+    } else bad(`none: ${JSON.stringify(none)}, told: ${JSON.stringify(told)}, again: ${JSON.stringify(again)}, same zone: ${JSON.stringify(same)}`);
     if (compacted && compacted.hookEventName === 'SessionStart' && relayed === null && stillPrompt && off === null) {
       ok('after a compaction too, unless the conversation is relaying; and nothing at all once the setting is off');
     } else bad(`after compaction: ${JSON.stringify(compacted)}, relaying: ${JSON.stringify(relayed)}, `

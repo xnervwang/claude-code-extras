@@ -72,7 +72,7 @@ Work you ask Claude to do now goes straight to `doing`; work Claude suggests on 
 
 ### Cost and scope
 
-- When your time zone differs from the machine's, every message also carries one sentence with your zone and the time there.
+- When your time zone differs from the machine's, a conversation also carries a sentence of about 90 tokens with your zone and the time there: when it starts, after each compaction, when a date turns over or the offset changes, and after every 100k tokens of context.
 - With no plan, nothing about the plan is added to a turn. The plugin's skill description loads in every session at about 110 tokens, by the extension's own estimate.
 - With a plan, every turn carries short fixed instructions and up to 40 rows. A finished row can be included when a row under it is still open. The cost grows with the number of rows and the length of their text; the page linked below has a measured example.
 - Before an automatic compaction, Claude is asked to bring the rows it is working on up to date. After compaction, it is asked to read the plan file before anything else.
@@ -91,7 +91,7 @@ See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, th
 | What it shows | Where it appears |
 | --- | --- |
 | **Timestamps:** Times from the transcript on every message and reply block, with `start→result` on tool calls; Claude Code's own message times are hidden while these are on. | Messages, reply blocks, tool calls |
-| **Your time zone for Claude:** When Claude runs on a machine whose clock is in another zone, as with Remote SSH, it is told your time zone and the time there each time you send a message and after a compaction, so it gives you times in your zone. Nothing is said while the two zones agree. | Claude's context |
+| **Your time zone for Claude:** When Claude runs on a machine whose clock is in another zone, as with Remote SSH, it is told your time zone and the time there, so it gives you times in your zone. It is told when a conversation starts, and again after a compaction, when either side's date turns over, when the offset changes, and after every 100k tokens of context. Nothing is said while the two zones agree. | Claude's context |
 | **Reply figures:** `2m10s · ctx 33% · cost $0.42 · opus-5 high` shows turn duration, context-window use, running spend, model and effort. | Each reply |
 | **Sub-agent tags and filters:** Tag each sub-agent's messages with its task, such as `#look up tomorrow's weather`, and filter to the main thread or one sub-agent. | Tags on messages; filter in the footer |
 | **Conversation navigation:** Find your messages by time and first words or find compaction points; filter, click to scroll, step with arrows or `,` and `.`, or jump to the top or bottom. | Right edge of the panel |
