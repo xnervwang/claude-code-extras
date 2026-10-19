@@ -14,7 +14,8 @@
     "vscode": "^1.94.0"
   },
   "categories": [
-    "Other"
+    "AI",
+    "Chat"
   ],
   "extensionDependencies": [
     "anthropic.claude-code"
@@ -22,9 +23,30 @@
   "keywords": [
     "claude",
     "claude-code",
+    "claude code",
     "anthropic",
+    "ai",
+    "agent",
+    "work-plan",
+    "plan",
+    "todo",
+    "tasks",
+    "compaction",
+    "timestamps",
     "timestamp",
-    "subagent"
+    "usage",
+    "cost",
+    "tokens",
+    "context",
+    "context-window",
+    "notification",
+    "sound",
+    "sessions",
+    "session-history",
+    "subagent",
+    "sub-agent",
+    "remote-ssh",
+    "time-zone"
   ],
   "extensionKind": [
     "workspace"
