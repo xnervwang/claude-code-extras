@@ -1423,6 +1423,18 @@ console.log('\nbackground sessions');
   if (tree && flat.includes('5 background sessions') && flat.includes('Waiting for you: decide which of the two copies')) {
     ok('the agent map lists this conversation\'s sessions, a waiting one saying what it waits for');
   } else bad('the section did not render the sessions as expected');
+  {
+    const spans = calls.filter((c) => c.type === 'span' && c.props && c.props.style && c.props.style.color
+      && Array.isArray(c.props.children) && typeof c.props.children[0] === 'string');
+    const tone = (re) => spans.filter((c) => re.test(c.props.children[0])).map((c) => c.props.style.color);
+    const states = { running: 'charts-green', 'waiting for you': 'editorWarning', done: 'charts-blue', stopped: 'descriptionForeground', failed: 'errorForeground' };
+    const rows = Object.entries(states).filter(([word]) => tone(new RegExp('^' + word + '$')).length);
+    const rowsRight = rows.every(([word, v]) => tone(new RegExp('^' + word + '$')).every((c) => c.includes(v)));
+    const heads = Object.entries(states).filter(([word, v]) => tone(new RegExp('^\\d+ ' + word + '$')).some((c) => c.includes(v)));
+    if (["running", "waiting for you", "done"].every((w) => rows.some(([r]) => r === w)) && rowsRight && heads.length === rows.length) {
+      ok(`each state has its own colour, on its row and counted in the heading (${rows.map(([w]) => w).join(', ')})`);
+    } else bad(`state colours: rows ${JSON.stringify(rows.map(([w]) => [w, tone(new RegExp('^' + w + '$'))]))}, heading counts for ${heads.map(([w]) => w)}`);
+  }
   if (flat.includes('claude attach 1a2b3c4d') && flat.includes('claude logs 5e6f7a8b')) {
     ok('each session offers the commands to reach it, and nothing that opens it in this panel');
   } else bad('the attach and logs commands were missing');

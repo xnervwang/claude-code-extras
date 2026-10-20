@@ -29,7 +29,7 @@ Work Plan for Claude Code edits files inside the installed Claude Code extension
 by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
 alone with a warning.
 
-Verified against Claude Code 2.1.301; compatibility with other builds unknown.
+Verified against Claude Code 2.1.301 and 2.1.304; compatibility with other builds unknown.
 
 ## Work plan
 
@@ -100,7 +100,7 @@ See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, th
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
 | **Pinned conversations:** Click the pin at the start of a row in the session list, and Claude Code's transcript cleanup (`cleanupPeriodDays`) does not delete it and it is not moved to Archived sessions. Before it would be deleted, its files get a later modification time; the list still shows when it was really last active. | Session list; transcripts on disk |
 | **Chimes:** Hear a short synthesized sound when a turn finishes, permission is requested or Claude asks a question; mute it in the footer. Sound plays on the machine showing the panel, including with Remote SSH. | Footer; machine showing the panel |
-| **Background sessions:** See this conversation's `claude --bg` sessions as running, waiting for you, done, stopped or failed, with what each waits for and its final result; copy the attach or logs command. | Agents button in the footer and its map |
+| **Background sessions:** See this conversation's `claude --bg` sessions as running, waiting for you, done, stopped or failed, each state in its own colour and counted at the top, with what each waits for and its final result; copy the attach or logs command. | Agents button in the footer and its map |
 | **Scheduled prompts:** See timers this conversation set through Claude Code's scheduled tasks, with each schedule, last-fired time and prompt. | Agents button in the footer and its map |
 | **Background commands:** See a count such as `1 task` while a background build, test run or `sleep` timer runs, with the list one click away. | Footer |
 | **Marks on tabs:** A coloured mark after a Claude Code tab's title, in the colour of the dot on its icon: 🔹 while Claude waits for your permission or answer, 🔸 when the conversation finished and you have not looked at it yet. | Editor tab titles |

@@ -164,6 +164,18 @@
   var BG_WARN = 'var(--vscode-editorWarning-foreground, #cca700)';
   var BG_ERR = 'var(--vscode-errorForeground, #f48771)';
   var BG_STATE = { working: 'running', blocked: 'waiting for you', done: 'done', stopped: 'stopped', failed: 'failed' };
+  /* One colour per state, so a long list can be read for what is still going without reading every row. Theme colours,
+     which follow a light theme as well; stopped is the one left grey, since nothing is going on there and nothing went
+     wrong. The two live states are bold as well, being the ones worth finding. */
+  var BG_TONE = {
+    working: 'var(--vscode-charts-green, #89d185)', blocked: BG_WARN, failed: BG_ERR,
+    done: 'var(--vscode-charts-blue, #75beff)', stopped: DIM,
+  };
+  var BG_ORDER = ['working', 'blocked', 'failed', 'done', 'stopped'];
+  var bgStateSpan = function(h, state, text){
+    return h('span', { style: { color: BG_TONE[state] || DIM, fontWeight: bgLive({ state: state }) ? '600' : 'normal' },
+      children: [text] });
+  };
   var SECTION_PRE = {
     whiteSpace: 'pre-wrap', wordBreak: 'break-word',
     margin: '6px 0 0', padding: '8px', maxHeight: '200px', overflowY: 'auto',
@@ -226,11 +238,11 @@
       bgButton(h, 'claude attach ' + b.id), bgButton(h, 'claude logs ' + b.id),
     ] }));
     var at = bgWhen(b);
-    var tone = b.state === 'blocked' ? BG_WARN : b.state === 'failed' ? BG_ERR : bgLive(b) ? 'inherit' : DIM;
     return h('details', { style: { margin: '5px 0' }, children: [
       h('summary', { style: { cursor: 'pointer', listStyle: 'revert' }, children: [
         h('span', { children: [b.name || b.id] }),
-        h('span', { style: { color: tone }, children: [' · ' + (BG_STATE[b.state] || b.state)] }),
+        h('span', { style: { color: DIM }, children: [' · '] }),
+        bgStateSpan(h, b.state, BG_STATE[b.state] || b.state),
         h('span', { style: { color: DIM }, children: [at ? ' · ' + at : ''] }),
         h('span', { style: { color: DIM, opacity: '0.7', marginLeft: '6px' }, children: [b.id] }),
       ] }),
@@ -238,15 +250,24 @@
   };
   var BG_NOTE = 'Sessions this conversation started with claude --bg. Each runs in its own process; attach to one '
               + 'from a terminal with the command under it.';
+  /* The heading counts each state in its own colour, so how many are still running is read off one line. */
   var bgSection = function(h, list){
+    var by = {};
+    for (var i = 0; i < list.length; i++) by[list[i].state] = (by[list[i].state] || 0) + 1;
+    var head = [h('span', { children: [list.length + (list.length === 1 ? ' background session' : ' background sessions')] })];
+    for (var j = 0; j < BG_ORDER.length; j++) {
+      var st = BG_ORDER[j];
+      if (!by[st]) continue;
+      head.push(h('span', { children: [' · '] }), bgStateSpan(h, st, by[st] + ' ' + BG_STATE[st]));
+    }
+    head.push(h('span', { children: [' · started from this conversation'] }));
     var kids = [h('div', {
       style: { color: DIM, fontSize: '1em', marginBottom: '4px' },
       title: BG_NOTE,
-      children: [list.length + (list.length === 1 ? ' background session' : ' background sessions')
-               + ' · started from this conversation'],
+      children: head,
     })];
     // Newest first: the one just launched is the one being looked for.
-    for (var i = list.length - 1; i >= 0; i--) kids.push(bgRow(h, list[i]));
+    for (var k = list.length - 1; k >= 0; k--) kids.push(bgRow(h, list[k]));
     return h('div', { style: { marginBottom: '16px' }, children: kids });
   };
 
