@@ -99,8 +99,11 @@ const SETUP = String.raw`
   var session = {
     agentMapAgents: { value: new Map(CFG.subagent ? [[SUB, { toolUseId: SUB, description: 'Survey the hooks' }]] : []) },
     subagentTasks: { value: new Map() },
-    sessionId: { value: CFG.efforts ? CFG.efforts.sid : '' },
+    sessionId: { value: CFG.efforts && !CFG.efforts.sidAfterMs ? CFG.efforts.sid : '' },
   };
+  // A panel learns which conversation it shows only once the bundle has asked, which can be after the first probe; the
+  // efforts then come with the next one, inside what would otherwise have been the idle spell.
+  if (CFG.efforts && CFG.efforts.sidAfterMs) setTimeout(function(){ session.sessionId.value = CFG.efforts.sid; }, CFG.efforts.sidAfterMs);
   // What the panel hands its components as \`context\`, reduced to the part the button uses. A build without Focus view
   // has none, which is what \`focusCtx: false\` stands for.
   var focusCtx = { on: !!CFG.focus, calls: [], get focusViewEnabled(){ return this.on; },
@@ -222,9 +225,18 @@ const PHASES = String.raw`
      - a fixed moment would sometimes land before the script had put its controls in, and a count still at zero is a
      script that has not started rather than one that has stopped. A page that never holds still starts at the cap
      instead, and is counted as it is. */
+  /* With efforts, the quiet spell counts only once they are in. They arrive by way of the revision probe, and when that
+     answers is the browser's business: on a slow runner it answered after a second of quiet had already been counted,
+     and the sweeps that applied them were then read as a page that never went idle. */
+  var effortsIn = function(){
+    if (!CFG.efforts) return true;
+    var c = document.getElementById('cce-effort');
+    return !!c && String(getComputedStyle(c).getPropertyValue('--cce-effort')).length > 0;
+  };
   var settle = function(lastN, quiet, waited){
-    var n = snap().n;
-    quiet = n > 0 && n === lastN ? quiet + 1 : 0;
+    var n = snap().n, ready = effortsIn();
+    if (ready && CFG.efforts && R.effortsAt === undefined) R.effortsAt = waited;
+    quiet = n > 0 && n === lastN && ready ? quiet + 1 : 0;
     if (quiet >= 5 || waited >= CFG.settleCapMs) { R.settledAfter = waited; R.bootSweeps = n; return idle(); }
     later(200, function(){ settle(n, quiet, waited + 200); });
   };

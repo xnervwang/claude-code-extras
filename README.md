@@ -29,7 +29,7 @@ Work Plan for Claude Code edits files inside the installed Claude Code extension
 by removing it or uninstalling the extension; a Claude Code build it does not recognise is left
 alone with a warning.
 
-Verified against Claude Code 2.1.301 and 2.1.304; compatibility with other builds unknown.
+Verified against Claude Code 2.1.306 and 2.1.308; compatibility with other builds unknown.
 
 ## Work plan
 

@@ -1010,7 +1010,9 @@ console.log('\nreply efforts');
     else note('skipped: no Chrome or Chromium here - set CCE_BROWSER to one to run the efforts in a page');
   } else {
     const sid = 'dddddddd-2222-4333-8444-555555555555';
-    const r = harness.run(browser, { turns: 30, focus: false, subagent: false,
+    // A longer cap than the default: the quiet spell waits for the efforts to arrive (page-harness.js), and the time is
+    // virtual, so the wait costs nothing unless they never come.
+    const r = harness.run(browser, { turns: 30, focus: false, subagent: false, settleCapMs: 15000,
       efforts: { sid, css: `#cce-effort{--cce-effort:"${H(1)}=max,${H(40)}=high!${H(80)}"}\n` } });
     const shown = (r.labels || []).map((l) => String(l || '').split('  ').pop().replace(/^\d+s · /, ''));
     const want = shown.map((_, i) => (i + 1 < 40 ? 'opus-5-5 max' : i + 1 <= 80 ? 'opus-5-5 high' : 'opus-5-5'));
@@ -1018,7 +1020,18 @@ console.log('\nreply efforts');
     else if (shown.length === 90 && shown.join('|') === want.join('|') && r.idleSweeps === 0) {
       ok('in a page: 39 replies at max, 41 at high, the 10 past the last one read with no effort, and the page idle after');
     } else bad(`in a page the replies showed ${JSON.stringify([...new Set(shown)])} over ${shown.length} replies, `
-      + `${r.idleSweeps} idle sweeps`);
+      + `${r.idleSweeps} idle sweeps; efforts in at ${r.effortsAt} ms, settled at ${r.settledAfter} ms after ${r.bootSweeps} sweeps`);
+    /* The same, with the conversation's id known only after the first probe, so the efforts come with the second one, three
+       seconds in: past the point a fixed quiet spell would have closed. This is how the check above failed on slower
+       runners, and it must neither miss the efforts nor count the sweeps that apply them as the page failing to rest. */
+    const late = harness.run(browser, { turns: 30, focus: false, subagent: false, settleCapMs: 15000,
+      efforts: { sid, sidAfterMs: 2500, css: `#cce-effort{--cce-effort:"${H(1)}=max,${H(40)}=high!${H(80)}"}\n` } });
+    const lateShown = (late.labels || []).map((l) => String(l || '').split('  ').pop().replace(/^\d+s · /, ''));
+    if (late.error) bad('the page with late efforts did not run: ' + late.error);
+    else if (lateShown.join('|') === want.join('|') && late.idleSweeps === 0 && late.effortsAt >= 2500) {
+      ok(`efforts that come with a later probe are waited for, and the page rests after them (in at ${late.effortsAt} ms)`);
+    } else bad(`with late efforts the replies showed ${JSON.stringify([...new Set(lateShown)])}, ${late.idleSweeps} idle sweeps, `
+      + `efforts in at ${late.effortsAt} ms`);
   }
 
   /* The page learns of a change from the request it already makes: no timer and no image of its own. */
