@@ -203,7 +203,7 @@ function format(record) {
  * the check share one spelling of it - two spellings would drift the same way the sentence did.
  */
 const README_FILE = path.join(ROOT, 'README.md');
-const README_LINE = /^Verified against Claude Code (.+); compatibility with other builds unknown\.$/m;
+const README_LINE = /^Verified against Claude Code (.+)\.$/m;
 
 function listed(versions) {
   const v = versions.slice().sort(cmpVersion);
@@ -222,7 +222,7 @@ function readmeClaims() {
 function syncReadme(versions) {
   const was = fs.readFileSync(README_FILE, 'utf8');
   const now = was.replace(README_LINE,
-    `Verified against Claude Code ${listed(versions)}; compatibility with other builds unknown.`);
+    `Verified against Claude Code ${listed(versions)}.`);
   if (now === was) return false;
   fs.writeFileSync(README_FILE, now);
   return true;
