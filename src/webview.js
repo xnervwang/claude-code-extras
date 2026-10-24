@@ -317,6 +317,25 @@ const EDITS = [
     to: (m, fn, state, ring, title, cls) => `window.__cceStatusDot=${fn};function ${fn}({state:${state},ring:${ring}=!1,title:${title},className:${cls}}){`,
   },
   {
+    // The component the list draws a row with, so a row in OPEN SESSIONS is one: pin, time, rename and archive included.
+    name: 'session row component for open sessions',
+    re: /([\w$]+)=([\w$]+)\(function\(\{session:([\w$]+),id:([\w$]+),isActive:/g,
+    to: (m, name, wrap, session, id) => `${name}=window.__cceSessionRow=${wrap}(function({session:${session},id:${id},isActive:`,
+  },
+  {
+    // The panel's signal constructor, for the one piece of state OPEN SESSIONS keeps: which of its rows is being renamed.
+    name: 'signal constructor for open sessions',
+    re: /sessionStates=([\w$]+)\(\[\]\);sessionArchiveChanged=/g,
+    to: (m, signal) => `sessionStates=(window.__cceSignal=${signal},${signal}([]));sessionArchiveChanged=`,
+  },
+  {
+    /* The list scrolls to the active conversation and selects it whenever the active one changes. A switch made from
+       OPEN SESSIONS asks it not to, so the long list stays where the person left it. */
+    name: 'session list keeps its place after a switch from open sessions',
+    re: /if\(([\w$]+)\.current!==null\)return;let ([\w$]+)=([\w$]+)\.findIndex\(\(([\w$]+)\)=>\4===([\w$]+)\);if\(\2<0\|\|\5===null\)return;([\w$]+)\.anchor\(\5\)/g,
+    to: (m, busy, idx, rows, x, active, list) => `if(${busy}.current!==null)return;if(typeof window.__cceSkipFollow==="function"&&window.__cceSkipFollow(${active}))return;let ${idx}=${rows}.findIndex((${x})=>${x}===${active});if(${idx}<0||${active}===null)return;${list}.anchor(${active})`,
+  },
+  {
     // The list's row classes, so a row in OPEN SESSIONS is laid out like a row of the list.
     name: 'session list row classes',
     re: /([\w$]+)=(\{root:"root_[\w$]+",sessionListOnly:"sessionListOnly_[\w$]+",[^{}]*\})/g,

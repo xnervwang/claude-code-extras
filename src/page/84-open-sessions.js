@@ -7,12 +7,14 @@
 // Fragment of the in-page script - see README.md in this folder.
 
   // The section is part of the session list's own render: edits in src/webview.js hand over the list's element
-  // factories and class names, the status dot it draws, and the objects it reads its sessions from. A throw here would
-  // take the list down with it, so the entry point returns null on any failure.
+  // factories, its section classes and chevron, the component it draws a row with, the status dot, and the objects it
+  // reads its sessions from. A throw here would take the list down with it, so the entry point returns null on any
+  // failure.
   //
-  // It is for moving between open conversations and nothing else. Pinning, renaming and archiving stay on the row in the
-  // list below, which is where the same conversation also appears, and clicking a row here makes it the active one, so
-  // the list follows it by itself.
+  // A row here is the list's own row component, so it carries everything a row below carries - the pin, the time and
+  // date span, rename and archive - and can be the one place a person works from. Clicking one switches to that
+  // conversation and leaves the list below where it was: the list would otherwise scroll to the conversation and select
+  // it, which moves the long list under someone who is not looking at it.
   var OPEN_COLLAPSED_KEY = 'cce.openSessionsCollapsed';
   var OPEN_CSS = '[data-cce-open-sessions][data-cce-collapsed="1"] [data-cce-open-body]{display:none}'
     + '[data-cce-open-count]{margin-left:auto;padding:0 6px;border-radius:9px;font-size:.85em;line-height:16px;'
@@ -69,7 +71,7 @@
         seen[id] = true;
         var last = item && item.lastModifiedTime ? item.lastModifiedTime.value : void 0;
         out.push({
-          id: id, where: where,
+          id: id, where: where, item: item || null,
           title: (item && item.summary && item.summary.value) || (info && info.title) || 'New session',
           last: typeof last === 'number' && isFinite(last) ? last : now,
           state: openState(info && info.state, !!unread[id]),
@@ -96,8 +98,30 @@
     } catch (err) { /* the section stays as it was */ }
   };
 
+  /* Which row is being renamed, as a signal of the panel's own kind: read during the list's render, it re-renders the
+     list when set, which is how the list's own rename works. Made on first use, since the edit hands over the signal
+     constructor only once the panel has loaded. */
+  var openRenaming = null;
+  var renamingNow = function(){
+    if (!openRenaming && typeof window.__cceSignal === 'function') openRenaming = window.__cceSignal(null);
+    return openRenaming ? openRenaming.value : null;
+  };
+  var setRenaming = function(id){ if (openRenaming) openRenaming.value = id; };
+  /* The conversation last switched to from here. The list scrolls to the active conversation and selects it whenever
+     the active one changes; for this one it is told not to, until some other way makes another one active. */
+  var openFollowSkip = null;
+  window.__cceSkipFollow = function(active){
+    try {
+      var id = active && active.sessionId && active.sessionId.value;
+      if (openFollowSkip && id === openFollowSkip) return true;
+      openFollowSkip = null;
+    } catch (e) { /* the list does what it always does */ }
+    return false;
+  };
+
   window.__cceOpenSessions = function(ui){
     try {
+      var renaming = renamingNow();
       if (isOff('openSessions')) return null;
       var src = window.__cceSessionList;
       if (!ui || typeof ui.jsx !== 'function' || typeof ui.jsxs !== 'function' || !src || !src.comms || !src.context) return null;
@@ -110,12 +134,34 @@
         head.appendChild(openStyle);
       }
       var F = ui.jsx, W = ui.jsxs, c = ui.cls || {}, l = window.__cceListCls || {}, Dot = window.__cceStatusDot;
+      var Row = window.__cceSessionRow, store = src.sessions;
       var active = src.comms.activeSessionId && src.comms.activeSessionId.value;
       var collapsed = openCollapsed();
       var open = function(row){
+        openFollowSkip = row.id;
         try { src.context.openInEditor(row.id, void 0, { openState: row.state, isRemote: false }); } catch (e) { /* nothing opens */ }
       };
+      var noop = function(){};
       var body = rows.map(function(row){
+        if (Row && row.item) {
+          return F(Row, {
+            id: 'cce-open-' + row.id, session: row.item,
+            isActive: row.id === active, isHighlighted: false, isSelected: false, isRenaming: renaming === row.id, searchQuery: '',
+            onClick: function(){ open(row); },
+            onFocus: noop, onMouseMove: noop, draggable: false,
+            onKeyDown: function(e){ if (e && e.key === 'Enter' && (e.metaKey || e.ctrlKey || e.shiftKey)) { e.preventDefault(); open(row); } },
+            onStartRename: openRenaming ? function(){ setRenaming(row.id); } : void 0,
+            onFinishRename: function(item, text){
+              setRenaming(null);
+              var t = String(text || '').replace(/^\s+|\s+$/g, '');
+              if (t && t !== row.title && store && typeof store.renameSession === 'function') store.renameSession(row.id, t);
+            },
+            onCancelRename: function(){ setRenaming(null); },
+            onArchive: store && typeof store.archiveSession === 'function' ? function(item){ store.archiveSession(item); } : void 0,
+            currentCwd: src.context.defaultCwd && src.context.defaultCwd.value,
+            openState: row.state,
+          }, row.id);
+        }
         return W('button', {
           type: 'button', className: (l.sessionItem || '') + (row.id === active && l.active ? ' ' + l.active : ''),
           'data-cce-open-row': row.id, title: row.title,
@@ -143,7 +189,7 @@
               F('span', { 'data-cce-open-count': '1', children: String(rows.length) }),
             ],
           }) }),
-          F('div', { 'data-cce-open-body': '1', children: body }),
+          F('div', { 'data-cce-open-body': '1', className: l.sessionsList || '', children: body }),
         ],
       });
     } catch (e) { return null; }

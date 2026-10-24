@@ -4412,6 +4412,15 @@ console.log('\nopen sessions on the session list');
     ['status dot for open sessions',
       ';function qY({state:$,ring:J=!1,title:Z,className:X}){return 1}',
       ';window.__cceStatusDot=qY;function qY({state:$,ring:J=!1,title:Z,className:X}){'],
+    ['session row component for open sessions',
+      'var Xh5=u0(function({session:J,id:Z,isActive:X}){return 1});',
+      'var Xh5=window.__cceSessionRow=u0(function({session:J,id:Z,isActive:'],
+    ['signal constructor for open sessions',
+      'class C{activeSessionId=y1(void 0);sessionStates=y1([]);sessionArchiveChanged=y1(void 0)}',
+      'sessionStates=(window.__cceSignal=y1,y1([]));sessionArchiveChanged='],
+    ['session list keeps its place after a switch from open sessions',
+      'i(()=>{if(F8.current!==null)return;let W1=m7.findIndex((f0)=>f0===G);if(W1<0||G===null)return;c.anchor(G),V1(W1)},[G])',
+      'if(F8.current!==null)return;if(typeof window.__cceSkipFollow==="function"&&window.__cceSkipFollow(G))return;let W1=m7.findIndex((f0)=>f0===G);'],
     ['session list row classes',
       'var b5={root:"root_x",sessionListOnly:"sessionListOnly_x",sessionItem:"sessionItem_x"};',
       'var b5=(window.__cceListCls={root:"root_x",sessionListOnly:"sessionListOnly_x",sessionItem:"sessionItem_x"});'],
@@ -4469,6 +4478,38 @@ console.log('\nopen sessions on the session list');
   if (opened.length === 1 && opened[0][0] === 'B' && opened[0][1] === undefined && opened[0][2].openState === 'unread' && opened[0][2].isRemote === false) {
     ok('a click opens the conversation the way a click on its row in the list does');
   } else bad(`a click opened ${JSON.stringify(opened)}`);
+  const follow = env.window.__cceSkipFollow;
+  const after = [follow({ sessionId: sig('B') }), follow({ sessionId: sig('B') }), follow({ sessionId: sig('A') }), follow({ sessionId: sig('B') })];
+  if (JSON.stringify(after) === '[true,true,false,false]') {
+    ok('after a switch from here the list keeps its place, until something else makes another conversation active');
+  } else bad(`the list was told to keep its place: ${JSON.stringify(after)}`);
+
+  /* With the list's own row component handed over, the rows the list knows are drawn with it; a conversation it does not
+     list yet keeps the plain row. Renaming goes through a panel signal and the store, archiving through the store. */
+  const renamed = [], archived = [];
+  env.window.__cceSessionRow = function Row() {};
+  env.window.__cceSignal = (v) => ({ value: v });
+  const srcs = env.window.__cceSessionList;
+  srcs.sessions.renameSession = (...a) => renamed.push(a);
+  srcs.sessions.archiveSession = (it) => archived.push(it.sessionId.value);
+  srcs.context.defaultCwd = sig('/work');
+  const drawn = () => walk(env.window.__cceOpenSessions(ui), (n) => n.type === env.window.__cceSessionRow || (n.props && n.props['data-cce-open-row']));
+  let list = drawn();
+  const kinds = list.map((n) => (n.type === env.window.__cceSessionRow ? 'row:' + n.props.session.sessionId.value : 'plain:' + n.props['data-cce-open-row']));
+  const a = list.find((n) => n.type === env.window.__cceSessionRow && n.props.session.sessionId.value === 'A');
+  if (JSON.stringify(kinds) === JSON.stringify(['plain:N', 'row:S', 'row:A', 'row:B']) && a && a.props.isActive === true
+      && a.props.openState === 'running' && a.props.currentCwd === '/work' && a.props.id === 'cce-open-A' && a.props.isRenaming === false) {
+    ok('the rows the list knows are its own row component, active and state set, with an id of their own; one it does not list yet is a plain row');
+  } else bad(`the rows drawn were ${JSON.stringify(kinds)}, A: ${a && JSON.stringify({ isActive: a.props.isActive, openState: a.props.openState, cwd: a.props.currentCwd, id: a.props.id })}`);
+  a.props.onStartRename();
+  list = drawn();
+  const a2 = list.find((n) => n.type === env.window.__cceSessionRow && n.props.session.sessionId.value === 'A');
+  a2.props.onFinishRename(a2.props.session, '  Alpha two ');
+  a2.props.onArchive(a2.props.session);
+  const a3 = drawn().find((n) => n.type === env.window.__cceSessionRow && n.props.session.sessionId.value === 'A');
+  if (a2.props.isRenaming === true && a3.props.isRenaming === false && JSON.stringify(renamed) === '[["A","Alpha two"]]' && JSON.stringify(archived) === '["A"]') {
+    ok('rename and archive work on a row here as on the list, rename saved through the store');
+  } else bad(`rename and archive: renaming ${a2.props.isRenaming}→${a3.props.isRenaming}, renamed ${JSON.stringify(renamed)}, archived ${JSON.stringify(archived)}`);
   store.data['cce.openSessionsCollapsed'] = '1';
   const shut = env.window.__cceOpenSessions(ui);
   const toggle = walk(shut, (n) => n.props && n.props.className === 'st')[0];
