@@ -113,7 +113,10 @@
     if (!sendPin(id, on)) return;
     pinWait[id] = { on: on, at: Date.now() };
     hideLabel();
+    // Every copy of this conversation's pin, not only the one clicked: OPEN SESSIONS shows the same row as the list.
     if (el) paintPin(el, on, d);
+    var els = document.querySelectorAll('span[data-cce-pin]');
+    for (var i = 0; i < els.length; i++) if (els[i] !== el && els[i].getAttribute('data-cce-pin') === id) paintPin(els[i], on, d);
     setTimeout(function(){ try { repaintPins(); } catch (e) { /* the next render of the list does it */ } }, PIN_WAIT_MS + 100);
   };
   window.__ccePin = function(h, row){

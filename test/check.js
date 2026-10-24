@@ -4202,7 +4202,15 @@ console.log('\nconversations pinned in the session list');
     let stopped = 0;
     const target = { attrs: {}, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
       setAttribute(k, v) { this.attrs[k] = String(v); }, hasAttribute(k) { return k in this.attrs; }, removeAttribute(k) { delete this.attrs[k]; } };
+    const copyOf = (id) => ({ attrs: { 'data-cce-pin': id, 'data-cce-pinned': '0' }, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+      setAttribute(k, v) { this.attrs[k] = String(v); }, hasAttribute(k) { return k in this.attrs; }, removeAttribute(k) { delete this.attrs[k]; } });
+    const sameB = copyOf(B), otherA = copyOf(A);
+    env.rows = [sameB, otherA];
     q.onClick({ stopPropagation: () => { stopped++; }, currentTarget: target });
+    env.rows = undefined;
+    if (sameB.attrs['data-cce-pinned'] === '1' && otherA.attrs['data-cce-pinned'] === '0') {
+      ok('a click repaints every copy of that conversation\'s pin, as OPEN SESSIONS draws the same row as the list, and leaves the others alone');
+    } else bad(`after the click, the other copy of the pin read ${sameB.attrs['data-cce-pinned']} and another conversation's ${otherA.attrs['data-cce-pinned']}`);
     const sent = env.posted[0] || {};
     if (stopped === 1 && sent.type === 'cce_session_pin' && sent.sessionId === B && sent.pinned === true && target.attrs['data-cce-pinned'] === '1'
       && /^Unpin this conversation/.test(target.attrs['aria-label'] || '') && env.hidden > 0) {
@@ -4510,6 +4518,52 @@ console.log('\nopen sessions on the session list');
   if (a2.props.isRenaming === true && a3.props.isRenaming === false && JSON.stringify(renamed) === '[["A","Alpha two"]]' && JSON.stringify(archived) === '["A"]') {
     ok('rename and archive work on a row here as on the list, rename saved through the store');
   } else bad(`rename and archive: renaming ${a2.props.isRenaming}→${a3.props.isRenaming}, renamed ${JSON.stringify(renamed)}, archived ${JSON.stringify(archived)}`);
+  const unarchived = [];
+  srcs.sessions.unarchiveSession = (it) => unarchived.push(it.sessionId.value);
+  srcs.sessions.sessions.value.find((it) => it.sessionId.value === 'B').archived = sig(true);
+  const b = drawn().find((n) => n.type === env.window.__cceSessionRow && n.props.session.sessionId.value === 'B');
+  const a4 = drawn().find((n) => n.type === env.window.__cceSessionRow && n.props.session.sessionId.value === 'A');
+  if (b && b.props.onArchive === undefined && typeof b.props.onUnarchive === 'function' && a4.props.onUnarchive === undefined) {
+    b.props.onUnarchive(b.props.session);
+    if (JSON.stringify(unarchived) === '["B"]') ok('an archived conversation gets unarchive and no archive, as on the list');
+    else bad(`unarchiving called ${JSON.stringify(unarchived)}`);
+  } else bad('an archived conversation still got the archive button, or a live one got unarchive');
+
+  /* The props the list gives its row component, read out of the real bundles: each is either passed here or left out on
+     purpose. A new one is a behaviour of the list's rows that OPEN SESSIONS would not have, so it fails until reviewed. */
+  const PASSED = ['id', 'session', 'isActive', 'isHighlighted', 'isSelected', 'isRenaming', 'searchQuery', 'onClick', 'onFocus', 'onKeyDown',
+    'draggable', 'onMouseMove', 'onStartRename', 'onFinishRename', 'onCancelRename', 'onArchive', 'onUnarchive', 'currentCwd', 'openState'];
+  const LEFT_OUT = ['ref', 'onContextMenu', 'onDragStart', 'onDragEnd', 'onOpenInNewWindow', 'liveElsewhere'];
+  const rowKeys = (src) => {
+    const m = /([\w$]+)=[\w$]+\(function\(\{session:[\w$]+,id:[\w$]+,isActive:/.exec(src);
+    if (!m) return null;
+    const at = src.indexOf('(' + m[1] + ',{');
+    if (at < 0) return null;
+    // A key is the name that opens a property: right after the brace or after a comma at the object's own depth.
+    let i = at + m[1].length + 2, depth = 0, keys = [], key = '', quote = '', expect = false;
+    for (; i < src.length; i++) {
+      const ch = src[i];
+      if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = ''; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { quote = ch; expect = false; continue; }
+      if (ch === '{' || ch === '(' || ch === '[') { depth++; expect = depth === 1; key = ''; continue; }
+      if (ch === '}' || ch === ')' || ch === ']') { if (depth === 1 && ch === '}') break; depth--; expect = false; continue; }
+      if (depth !== 1) continue;
+      if (ch === ',') { expect = true; key = ''; continue; }
+      if (expect && /[\w$]/.test(ch)) { key += ch; continue; }
+      if (expect && ch === ':' && key) keys.push(key);
+      expect = false; key = '';
+    }
+    return keys;
+  };
+  for (const ext of extensionsDirs ? [].concat(...extensionsDirs().map((d) => { try { return fs.readdirSync(d).filter((n) => /^anthropic\.claude-code-/.test(n)).map((n) => path.join(d, n)); } catch (e) { return []; } })) : []) {
+    const bak = path.join(ext, 'webview', 'index.js.claude-code-extras-webview.bak');
+    const file = fs.existsSync(bak) ? bak : path.join(ext, 'webview', 'index.js');
+    if (!fs.existsSync(file)) continue;
+    const keys = rowKeys(fs.readFileSync(file, 'utf8'));
+    const unknown = keys ? keys.filter((k) => !PASSED.includes(k) && !LEFT_OUT.includes(k)) : null;
+    if (keys && !unknown.length) ok(`${path.basename(ext)}: every prop the list gives its rows is passed by OPEN SESSIONS or left out on purpose`);
+    else bad(`${path.basename(ext)}: ${keys ? 'the list gives its rows props OPEN SESSIONS has not been reviewed for: ' + unknown.join(', ') : 'the row call could not be read'}`);
+  }
   store.data['cce.openSessionsCollapsed'] = '1';
   const shut = env.window.__cceOpenSessions(ui);
   const toggle = walk(shut, (n) => n.props && n.props.className === 'st')[0];

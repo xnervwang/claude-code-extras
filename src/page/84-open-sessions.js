@@ -144,6 +144,7 @@
       var noop = function(){};
       var body = rows.map(function(row){
         if (Row && row.item) {
+          var archived = !!(row.item.archived && row.item.archived.value);
           return F(Row, {
             id: 'cce-open-' + row.id, session: row.item,
             isActive: row.id === active, isHighlighted: false, isSelected: false, isRenaming: renaming === row.id, searchQuery: '',
@@ -157,7 +158,9 @@
               if (t && t !== row.title && store && typeof store.renameSession === 'function') store.renameSession(row.id, t);
             },
             onCancelRename: function(){ setRenaming(null); },
-            onArchive: store && typeof store.archiveSession === 'function' ? function(item){ store.archiveSession(item); } : void 0,
+            // As the list decides it: archive for a conversation that is not archived, unarchive for one that is.
+            onArchive: !archived && store && typeof store.archiveSession === 'function' ? function(item){ store.archiveSession(item); } : void 0,
+            onUnarchive: archived && store && typeof store.unarchiveSession === 'function' ? function(item){ store.unarchiveSession(item); } : void 0,
             currentCwd: src.context.defaultCwd && src.context.defaultCwd.value,
             openState: row.state,
           }, row.id);
