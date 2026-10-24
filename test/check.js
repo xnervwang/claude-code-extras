@@ -4396,6 +4396,96 @@ console.log('\nthe date on a message or reply from before today');
   else bad(`the result time kept ${JSON.stringify(ends)}`);
 }
 
+/* OPEN SESSIONS: the edits hand over what the session list reads and draws with, and the page lists this window's open
+   conversations from it. The edits are also checked against every installed build, in the section on matching. */
+console.log('\nopen sessions on the session list');
+{
+  const { applyEdits } = require('../src/edits');
+  const pick = (name) => webview.EDITS.find((e) => e.name === name);
+  const shapes = [
+    ['session list sources for open sessions',
+      'F(Ch0,{sessions:V,context:U,sessionStates:q.sessionStates,openSessionIds:q.openSessionIds,unreadSessionKeys:q.unreadSessionKeys})',
+      'F(Ch0,{sessions:(window.__cceSessionList={sessions:V,context:U,comms:q},V),context:U,sessionStates:q.sessionStates,openSessionIds:q.openSessionIds,'],
+    ['open sessions section',
+      'children:[F(Lh5,{collapsed:i1,onViewUsage:R0}),F("div",{className:e7.sectionHeader,children:w("button",{className:e7.sectionToggle,onClick:()=>W0("sessions",!z0),"aria-expanded":!z0,title:z0?"Expand session manager":"Collapse session manager",children:[F(Va,{className:e7.sectionChevron}),F("span",{children:"Session manager"})]})})]',
+      'onViewUsage:R0}),(typeof window.__cceOpenSessions==="function"?window.__cceOpenSessions({jsx:F,jsxs:w,cls:e7,Chevron:Va}):null),F("div",{className:e7.sectionHeader,'],
+    ['status dot for open sessions',
+      ';function qY({state:$,ring:J=!1,title:Z,className:X}){return 1}',
+      ';window.__cceStatusDot=qY;function qY({state:$,ring:J=!1,title:Z,className:X}){'],
+    ['session list row classes',
+      'var b5={root:"root_x",sessionListOnly:"sessionListOnly_x",sessionItem:"sessionItem_x"};',
+      'var b5=(window.__cceListCls={root:"root_x",sessionListOnly:"sessionListOnly_x",sessionItem:"sessionItem_x"});'],
+  ];
+  for (const [name, src, want] of shapes) {
+    const e = pick(name);
+    const r = e ? applyEdits(src, [e]) : { error: 'no such edit' };
+    if (!r.error && r.out.includes(want)) ok(`"${name}" hands over what OPEN SESSIONS needs`);
+    else bad(`"${name}": ${r.error || r.out}`);
+  }
+
+  const now = Date.now(), MIN = 60000;
+  const sig = (v) => ({ value: v });
+  const item = (id, title, ago, remote) => ({ sessionId: sig(id), summary: sig(title), lastModifiedTime: sig(now - ago), isRemote: sig(!!remote) });
+  const opened = [];
+  const store = { getItem: (k) => store.data[k] ?? null, setItem: (k, v) => { store.data[k] = String(v); }, data: {} };
+  const env = {
+    window: {}, isOff: (k) => env.offKey === k, offKey: '', localStorage: store, Date, Array, String, Math, isFinite,
+    head: { appendChild() {} },
+    document: { createElement: () => ({ setAttribute() {}, textContent: '' }) },
+  };
+  env.window.__cceListCls = { sessionItem: 'sessionItem_x', active: 'active_x', sessionName: 'sessionName_x', sessionMeta: 'sessionMeta_x', sessionTime: 'sessionTime_x' };
+  env.window.__cceStatusDot = function Dot() {};
+  env.window.__cceSessionList = {
+    sessions: { sessions: sig([item('A', 'Alpha', 10 * MIN), item('B', 'Beta', 120 * MIN), item('C', 'Gamma', 1440 * MIN),
+      item('S', 'Side', 5 * MIN), item('R', 'Remote', 1 * MIN, true)]) },
+    context: { openInEditor: (...a) => opened.push(a) },
+    comms: {
+      openSessionIds: sig(['B', 'A', 'N', 'X', 'R']), sidebarSessionIds: sig(['S', 'A']),
+      sessionStates: sig([{ sessionId: 'A', state: 'running' }, { sessionId: 'B', state: 'idle' }, { sessionId: 'N', state: 'waiting', title: 'Fresh' }]),
+      unreadSessionKeys: sig(['B']), activeSessionId: sig('A'),
+    },
+  };
+  vm.createContext(env);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '84-open-sessions.js'), 'utf8'), env);
+  const h = (type, props, key) => ({ type, props: props || {}, key });
+  const ui = { jsx: h, jsxs: h, cls: { sectionHeader: 'sh', sectionToggle: 'st', sectionChevron: 'sc', sectionChevronExpanded: 'sce', sectionLabel: 'sl' }, Chevron: function Chev() {} };
+  const walk = (n, f, out = []) => { if (!n || typeof n !== 'object') return out; if (Array.isArray(n)) { n.forEach((c) => walk(c, f, out)); return out; } if (f(n)) out.push(n); walk(n.props && n.props.children, f, out); return out; };
+  const text = (n) => (typeof n === 'string' ? n : Array.isArray(n) ? n.map(text).join('') : n && n.props ? text(n.props.children) : '');
+  const tree = env.window.__cceOpenSessions(ui);
+  const rows = walk(tree, (n) => n.props && n.props['data-cce-open-row']);
+  const got = rows.map((r) => {
+    const dot = walk(r, (n) => n.type === env.window.__cceStatusDot)[0];
+    return [r.props['data-cce-open-row'], dot && dot.props.state, /active_x/.test(r.props.className) ? 'active' : '', text(r).replace(/^\s+|\s+$/g, '')];
+  });
+  const want = [['N', 'waiting', '', 'Freshnow'], ['S', 'idle', '', 'Side5m · sidebar'], ['A', 'running', 'active', 'Alpha10m'], ['B', 'unread', '', 'Beta2h']];
+  if (JSON.stringify(got) === JSON.stringify(want)) {
+    ok('the open conversations, newest first: one just started counts as now, the sidebar one is marked, a remote one and one the list knows nothing of are left out');
+  } else bad(`the rows were ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  const header = walk(tree, (n) => n.props && n.props['data-cce-open-count'])[0];
+  if (header && text(header) === '4' && walk(tree, (n) => n.props && n.props.className === 'sl').some((n) => text(n) === 'Open sessions')) {
+    ok('the header is the list\'s own section header, labelled Open sessions, with the count');
+  } else bad('the header was not the list\'s section header with a count of 4');
+  rows[3].props.onClick();
+  if (opened.length === 1 && opened[0][0] === 'B' && opened[0][1] === undefined && opened[0][2].openState === 'unread' && opened[0][2].isRemote === false) {
+    ok('a click opens the conversation the way a click on its row in the list does');
+  } else bad(`a click opened ${JSON.stringify(opened)}`);
+  store.data['cce.openSessionsCollapsed'] = '1';
+  const shut = env.window.__cceOpenSessions(ui);
+  const toggle = walk(shut, (n) => n.props && n.props.className === 'st')[0];
+  if (shut && shut.props['data-cce-collapsed'] === '1' && toggle && toggle.props['aria-expanded'] === 'false') ok('a collapsed section stays collapsed the next time the list draws it');
+  else bad('the collapsed state was not kept');
+  env.offKey = 'openSessions';
+  const off = env.window.__cceOpenSessions(ui);
+  env.offKey = '';
+  env.window.__cceSessionList.comms.openSessionIds = sig([]); env.window.__cceSessionList.comms.sidebarSessionIds = sig(undefined);
+  const none = env.window.__cceOpenSessions(ui);
+  if (off === null && none === null) ok('nothing is drawn with the switch off, or with no conversation open');
+  else bad('the section was drawn with the switch off or with nothing open');
+  if (webview.SWITCHES.includes('openSessions') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.openSessions']) {
+    ok('the switch is a setting of its own');
+  } else bad('the openSessions switch has no setting');
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

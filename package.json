@@ -275,6 +275,11 @@
           "default": true,
           "markdownDescription": "The `claude --bg` sessions a conversation started, listed in its agents button with how each is doing and how it ended. Turning it off stops the work, not only the drawing, and takes effect without a reload."
         },
+        "claudeCodeWorkPlan.show.openSessions": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "OPEN SESSIONS at the top of the session list: the conversations this window has open in an editor tab or in the sidebar, most recently active first, each with its status dot. Clicking one switches to it. Turning it off stops the work, not only the drawing, and takes effect without a reload."
+        },
         "claudeCodeWorkPlan.workPlan": {
           "type": "boolean",
           "default": true,

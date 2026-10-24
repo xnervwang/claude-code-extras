@@ -73,7 +73,7 @@ remote.
 
 The extension works by editing files inside the installed Claude Code extension.
 
-Verified against Claude Code 2.1.306 and 2.1.308.
+Verified against Claude Code 2.1.309 and 2.1.310.
 
 ## Other features
 
@@ -86,6 +86,7 @@ Verified against Claude Code 2.1.306 and 2.1.308.
 | **Conversation navigation:** Find your messages by time and first words or find compaction points; filter, click to scroll, step with arrows or `,` and `.`, or jump to the top or bottom. | Right edge of the panel |
 | **Focus view button:** Toggle Claude Code's own Focus view; while it is on and Claude works, the working line shows the latest tool call and elapsed time, such as `Bash running for 2m55s (since 11:11:18)`. | Footer button; working line |
 | **Context meter:** Keep the meter visible, outline it when 15% of the window remains, and hover for a breakdown by category, memory files and custom agents. | Panel's context meter |
+| **Open sessions:** The conversations open in this window, in an editor tab or the sidebar, most recently active first, each with its status dot; click one to switch to it. | Top of the session list |
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
 | **Pinned conversations:** Click the pin at the start of a session-list row to keep that conversation from Claude Code's transcript cleanup (`cleanupPeriodDays`) and out of Archived sessions. | Session list |
 | **Chimes:** A short sound when a turn finishes, permission is requested or Claude asks a question, played on the machine showing the panel; mute it in the footer. | Footer; machine showing the panel |
@@ -101,7 +102,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 26 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 27 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 

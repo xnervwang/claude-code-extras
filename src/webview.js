@@ -216,6 +216,7 @@ const SWITCHES = [
   'footerViewFilter', // main thread versus one sub-agent
   'footerMute',       // the button that silences the chimes
   'backgroundSessions', // the `claude --bg` sessions a conversation started, in its agent map
+  'openSessions',     // OPEN SESSIONS at the top of the session list
 ];
 
 /** The live stylesheet for one set of settings. */
@@ -293,6 +294,34 @@ function buildBody() {
 const SCRIPT_BODY = buildBody();
 
 const EDITS = [
+  {
+    /* OPEN SESSIONS reads what the session list itself reads: the store of sessions, the context that opens one, and the
+       connection that reports which are open in a tab and which in the sidebar. They are named in one place only, where
+       the list is mounted, so they are handed to the page there. */
+    name: 'session list sources for open sessions',
+    re: /([\w$]+)\(([\w$]+),\{sessions:([\w$]+),context:([\w$]+),sessionStates:([\w$]+)\.sessionStates,openSessionIds:\5\.openSessionIds,/g,
+    to: (m, jsx, list, store, ctx, comms) => `${jsx}(${list},{sessions:(window.__cceSessionList={sessions:${store},context:${ctx},comms:${comms}},${store}),context:${ctx},sessionStates:${comms}.sessionStates,openSessionIds:${comms}.openSessionIds,`,
+  },
+  {
+    /* The section itself, between Account & usage and Session manager, drawn with the list's own element factories,
+       section classes and chevron so it looks like the two around it. */
+    name: 'open sessions section',
+    re: /(onViewUsage:[\w$]+\}\)),([\w$]+)\("div",\{className:([\w$]+)\.sectionHeader,children:([\w$]+)\("button",\{className:\3\.sectionToggle,onClick:\(\)=>([\w$]+)\("sessions",!([\w$]+)\),"aria-expanded":!\6,title:\6\?"Expand session manager":"Collapse session manager",children:\[\2\(([\w$]+),/g,
+    to: (m, usage, jsx, cls, jsxs, toggle, collapsed, chevron) => `${usage},(typeof window.__cceOpenSessions==="function"?window.__cceOpenSessions({jsx:${jsx},jsxs:${jsxs},cls:${cls},Chevron:${chevron}}):null),${jsx}("div",{className:${cls}.sectionHeader,children:${jsxs}("button",{className:${cls}.sectionToggle,onClick:()=>${toggle}("sessions",!${collapsed}),"aria-expanded":!${collapsed},title:${collapsed}?"Expand session manager":"Collapse session manager",children:[${jsx}(${chevron},`,
+  },
+  {
+    // The status dot the list draws on its rows, so a row in OPEN SESSIONS carries the same one. A function declaration
+    // is hoisted, so naming it before its line is fine.
+    name: 'status dot for open sessions',
+    re: /function ([\w$]+)\(\{state:([\w$]+),ring:([\w$]+)=!1,title:([\w$]+),className:([\w$]+)\}\)\{/g,
+    to: (m, fn, state, ring, title, cls) => `window.__cceStatusDot=${fn};function ${fn}({state:${state},ring:${ring}=!1,title:${title},className:${cls}}){`,
+  },
+  {
+    // The list's row classes, so a row in OPEN SESSIONS is laid out like a row of the list.
+    name: 'session list row classes',
+    re: /([\w$]+)=(\{root:"root_[\w$]+",sessionListOnly:"sessionListOnly_[\w$]+",[^{}]*\})/g,
+    to: (m, name, obj) => `${name}=(window.__cceListCls=${obj})`,
+  },
   {
     name: 'message builder',
     re: /return new ([\w$]+)\(([\w$]+)\.type,([\w$]+),\{uuid:\2\.uuid,foldedIntoTurn:/g,
