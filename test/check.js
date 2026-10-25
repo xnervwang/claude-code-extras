@@ -4586,22 +4586,23 @@ console.log('\nopening in a tab or the sidebar from the session list');
   const { applyEdits } = require('../src/edits');
   const pick = (name) => webview.EDITS.find((e) => e.name === name);
   const ID = '0b6f0c2e-5d1a-4c3b-9e8f-1a2b3c4d5e6f';
-  const posted = [];
-  const env = { window: {}, isOff: (k) => env.offKey === k, offKey: '', acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(m) }) };
+  const env = { window: {}, isOff: (k) => env.offKey === k, offKey: '' };
   vm.createContext(env);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '86-open-in-tab-or-sidebar.js'), 'utf8'), env);
   const h = (type, props, key) => ({ type, props: props || {}, key });
   const walk = (n, f, out = []) => { if (!n || typeof n !== 'object') return out; if (Array.isArray(n)) { n.forEach((c) => walk(c, f, out)); return out; } if (f(n)) out.push(n); walk(n.props && n.props.children, f, out); return out; };
   const text = (n) => (typeof n === 'string' ? n : Array.isArray(n) ? n.map(text).join('') : n && n.props ? text(n.props.children) : '');
   const Icon = function Plus() {};
-  const ui = { jsx: h, jsxs: h, cls: { newSessionButton: 'nsb', newSessionIcon: 'nsi' }, Icon };
+  const opens = [];
+  const ctx = { openInEditor: (...a) => opens.push([env.window.__cceOpenWhere, a.length]) };
+  const ui = { jsx: h, jsxs: h, cls: { newSessionButton: 'nsb', newSessionIcon: 'nsi' }, Icon, ctx };
 
   // The button edit, on the official button's own shape: the page's two buttons, or the official one when it returns null.
   const button = 'w("button",{className:e7.newSessionButton,onClick:()=>{J.openInEditor()},children:[F(zQ1,{className:e7.newSessionIcon}),"New session"]})';
   const be = pick('new session in a tab or the sidebar');
   const br = be ? applyEdits('children:[' + button + ',null]', [be]) : { error: 'no such edit' };
-  if (!br.error && br.out.includes('window.__cceNewSessionButtons({jsx:F,jsxs:w,cls:e7,Icon:zQ1})||' + button)) {
-    ok('New session hands the panel\'s factories, classes and icon to the page, and keeps the official button as the fallback');
+  if (!br.error && br.out.includes('window.__cceNewSessionButtons({jsx:F,jsxs:w,cls:e7,Icon:zQ1,ctx:J})||' + button)) {
+    ok('New session hands the panel\'s factories, classes, icon and context to the page, and keeps the official button as the fallback');
   } else bad(`the New session edit gave ${br.error || br.out}`);
   const pair = env.window.__cceNewSessionButtons(ui);
   const buttons = walk(pair, (n) => n.type === 'button');
@@ -4610,9 +4611,9 @@ console.log('\nopening in a tab or the sidebar from the session list');
     ok('two buttons in the official button\'s style: New in tab and New in sidebar');
   } else bad(`the buttons were ${JSON.stringify(labels)}`);
   buttons[0].props.onClick(); buttons[1].props.onClick();
-  if (JSON.stringify(posted) === JSON.stringify([{ type: 'cce_open_session', where: 'tab' }, { type: 'cce_open_session', where: 'sidebar' }])) {
-    ok('each asks this extension for a new conversation where its label says');
-  } else bad(`the buttons sent ${JSON.stringify(posted)}`);
+  if (JSON.stringify(opens) === JSON.stringify([['tab', 0], ['sidebar', 0]]) && env.window.__cceOpenWhere === undefined) {
+    ok('each does what New session does, with where to open it set only for that call');
+  } else bad(`the buttons opened ${JSON.stringify(opens)}, leaving ${env.window.__cceOpenWhere}`);
 
   // The two menus, each run as a function: the live list's takes one more argument than the archived list's.
   const menus = [
@@ -4623,10 +4624,12 @@ console.log('\nopening in a tab or the sidebar from the session list');
     const e = pick(name);
     const r = e ? applyEdits(fn, [e]) : { error: 'no such edit' };
     if (r.error) { bad(`"${name}" did not apply: ${r.error}`); continue; }
-    const menv = { window: env.window, act: { resumeSession: 'official' }, out: null };
+    const resumed = [];
+    const menv = { window: env.window, act: { resumeSession: () => resumed.push(env.window.__cceOpenWhere || 'as set') }, out: null, items: null };
     vm.createContext(menv);
-    const run = (keys, info) => { vm.runInContext(r.out + `;out=${call(keys, info)}.map((i)=>i.label);`, menv); return menv.out; };
+    const run = (keys, info) => { vm.runInContext(r.out + `;items=${call(keys, info)};out=items.map((i)=>i.label);`, menv); return menv.out; };
     const closed = run(`["${ID}"]`, '{sessionIsOpen:false}');
+    menv.items.forEach((i) => i.onSelect());
     const open = run(`["${ID}"]`, '{sessionIsOpen:true}');
     const remote = run('["remote:abc"]', '{sessionIsOpen:false}');
     const many = run(`["${ID}","x"]`, '{sessionIsOpen:false}');
@@ -4637,29 +4640,41 @@ console.log('\nopening in a tab or the sidebar from the session list');
     const want = JSON.stringify([['Resume in tab', 'Resume in sidebar'], ['Switch to session'], ['Resume session'], [], ['Resume session']]);
     if (got === want) ok(`"${name}": a closed conversation gets Resume in tab and Resume in sidebar; an open one, a remote one and a page without the script keep the official item`);
     else bad(`"${name}" gave ${got}, expected ${want}`);
+    if (JSON.stringify(resumed) === '["tab","sidebar"]' && env.window.__cceOpenWhere === undefined) {
+      ok(`"${name}": each Resume item runs the list's own resume, which clears the list's selection, with where to open it`);
+    } else bad(`"${name}": the Resume items resumed ${JSON.stringify(resumed)}`);
   }
-  posted.length = 0;
-  env.window.__cceResumeItems(ID).forEach((i) => i.onSelect());
-  if (JSON.stringify(posted) === JSON.stringify([{ type: 'cce_open_session', where: 'tab', sessionId: ID }, { type: 'cce_open_session', where: 'sidebar', sessionId: ID }])) {
-    ok('each Resume item asks this extension to open that conversation where it says');
-  } else bad(`the Resume items sent ${JSON.stringify(posted)}`);
   env.offKey = 'openInTabOrSidebar';
-  const offButtons = env.window.__cceNewSessionButtons(ui), offItems = env.window.__cceResumeItems(ID);
+  const offButtons = env.window.__cceNewSessionButtons(ui), offItems = env.window.__cceResumeItems(ID, () => {});
   env.offKey = '';
-  if (offButtons === null && offItems === null) ok('with the switch off, New session and Resume session are the official ones');
-  else bad('the switch off still drew the two buttons or the two Resume items');
+  if (offButtons === null && offItems === null && env.window.__cceResumeItems(ID) === null) {
+    ok('with the switch off, or without the list\'s own resume, New session and Resume session are the official ones');
+  } else bad('the switch off still drew the two buttons or the two Resume items');
 
-  // The host: the message reaches this extension, and the location chooser sends the new request value to the sidebar.
-  const msgEdit = host.EDITS.find((e) => e.name === 'panel messages');
-  const mr = applyEdits('function eT($,J){let Q=`Received message from webview: ${bl0(J)}`;$.info(Q)}', [msgEdit]);
-  const asked = [];
-  const henv = { bl0: (m) => JSON.stringify(m), __cceOpenHook: (w, id) => asked.push([w, id === undefined ? null : id]) };
-  henv.globalThis = henv;
-  vm.createContext(henv);
-  vm.runInContext(mr.out + ';const L={info(){}};eT(L,{type:"cce_open_session",where:"sidebar"});eT(L,{type:"cce_open_session",where:"tab",sessionId:"s1"});'
-    + 'eT(L,{type:"cce_open_session",where:"window",sessionId:"s2"});eT(L,{type:"cce_open_session",where:"tab",sessionId:7});', henv);
-  if (JSON.stringify(asked) === '[["sidebar",null],["tab","s1"],["tab",null]]') ok('the patched host passes an open request on with where and the conversation, and nothing else');
-  else bad(`the host passed on ${JSON.stringify(asked)}`);
+  // The panel's open request carries where, once; the host opens it there, and a request that does not say as before.
+  const re = pick('open request says where');
+  const rr = re ? applyEdits('class K{sendRequest(m){return m}openInEditor($,J,Z){return this.sendRequest({type:"open_in_editor",sessionId:$,newSessionGroupId:J,usage:Z})}}', [re]) : { error: 'no such edit' };
+  if (rr.error) bad('the open request edit did not apply: ' + rr.error);
+  else {
+    const kenv = { window: { __cceOpenWhere: 'sidebar' } };
+    vm.createContext(kenv);
+    vm.runInContext(rr.out + ';var k=new K();var first=k.openInEditor("s1");var second=k.openInEditor("s1");', kenv);
+    if (kenv.first.cceWhere === 'sidebar' && kenv.first.sessionId === 's1' && kenv.second.cceWhere === undefined) ok('the panel\'s open request carries where it was asked to open, for that one request');
+    else bad(`the open requests were ${JSON.stringify([kenv.first, kenv.second])}`);
+  }
+  const he = host.EDITS.find((e) => e.name === 'session list open says where');
+  const hsrc = 'async function o($){await D1.commands.executeCommand("claude-vscode.editor.open",$.request.sessionId,void 0,void 0,$.request.newSessionGroupId,!0,{programmatic:$.request.newSessionGroupId&&!$.request.sessionId?"pin-to-panel":"honor-preferred-location"})}';
+  const hr = he ? applyEdits(hsrc, [he]) : { error: 'no such edit' };
+  if (hr.error) bad('the host open edit did not apply: ' + hr.error);
+  else {
+    const calls = [];
+    const henv = { D1: { commands: { executeCommand: (...a) => { calls.push(a[6].programmatic); } } } };
+    vm.createContext(henv);
+    vm.runInContext(hr.out + ';o({request:{cceWhere:"sidebar"}});o({request:{cceWhere:"tab",sessionId:"s"}});o({request:{}});o({request:{newSessionGroupId:"g"}});o({request:{cceWhere:"window"}});', henv);
+    if (JSON.stringify(calls) === JSON.stringify(['cce-pin-to-sidebar', 'pin-to-panel', 'honor-preferred-location', 'pin-to-panel', 'honor-preferred-location'])) {
+      ok('the patched host opens a session-list request where it says, and one that does not say as before');
+    } else bad(`the host asked for ${JSON.stringify(calls)}`);
+  }
   const ci = 'function CI1({programmatic:$,preferredLocation:J,sessionAlreadyOpenInPanel:Q,fullEditor:X}){if($)return{target:$==="honor-preferred-location"&&J==="sidebar"&&!Q?"sidebar":"panel",updatePreferredLocationToPanel:!1,focusInput:!1};return{target:"panel",updatePreferredLocationToPanel:!X,focusInput:!0}}';
   const cr = applyEdits(ci, [host.EDITS.find((e) => e.name === 'open in the sidebar on request')]);
   if (cr.error) bad('the location chooser edit did not apply: ' + cr.error);
@@ -4674,23 +4689,6 @@ console.log('\nopening in a tab or the sidebar from the session list');
     if (JSON.stringify(got) === JSON.stringify(want)) {
       ok('the sidebar request opens in the sidebar whatever the setting says, unless the conversation is open in a tab; the official requests choose as before');
     } else bad(`the location chooser gave ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
-  }
-
-  // This extension: the request becomes the official open command, as the session list's own open calls it.
-  const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
-  const hook = /globalThis\.__cceOpenHook = (\(where, sessionId\) => \{[\s\S]*?\n  \});/.exec(extSrc);
-  if (!hook) bad('extension.js has no open hook');
-  else {
-    const calls = [];
-    const eenv = { vscode: { commands: { executeCommand: (...a) => { calls.push(a); return Promise.resolve(); } } }, log: { appendLine() {} }, Promise };
-    vm.createContext(eenv);
-    vm.runInContext('var f=' + hook[1] + ';f("tab");f("sidebar","s1");', eenv);
-    const got = JSON.stringify(calls.map((a) => a.map((v) => (v === undefined ? null : v))));
-    const want = JSON.stringify([['claude-vscode.editor.open', null, null, null, null, true, { programmatic: 'pin-to-panel' }],
-      ['claude-vscode.editor.open', 's1', null, null, null, true, { programmatic: 'cce-pin-to-sidebar' }]]);
-    if (got === want && /if \(globalThis\.__cceOpenHook\) delete globalThis\.__cceOpenHook;/.test(extSrc)) {
-      ok('this extension opens it with the official open command, without touching the preferred location, and drops the hook when it stops');
-    } else bad(`the open hook called ${got}`);
   }
   if (webview.SWITCHES.includes('openInTabOrSidebar') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.openInTabOrSidebar']) {
     ok('the switch is a setting of its own');

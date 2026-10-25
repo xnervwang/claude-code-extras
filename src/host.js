@@ -94,8 +94,8 @@ const EDITS = [
       + link,
   },
   /*
-   * Messages from a panel meant for this extension: the panel's time zone, a conversation pinned or unpinned in the
-   * session list, and a conversation to open in a tab or in the sidebar.
+   * Messages from a panel meant for this extension: the panel's time zone, and a conversation pinned or unpinned in the
+   * session list.
    *
    * Every message a panel sends passes through the one function that logs it, before anything decides what the message
    * is, and Claude Code itself ignores both types. A global is how each reaches this extension - both run in one
@@ -108,15 +108,24 @@ const EDITS = [
       + `&&typeof ${msg}.timeZone==="string"){globalThis.__cceClientTimeZone=${msg}.timeZone;`
       + `globalThis.__cceTzHook&&globalThis.__cceTzHook(${msg}.timeZone)}`
       + `else if(${msg}&&${msg}.type==="cce_session_pin"&&typeof ${msg}.sessionId==="string"){`
-      + `globalThis.__ccePinHook&&globalThis.__ccePinHook(${msg}.sessionId,${msg}.pinned===true)}`
-      + `else if(${msg}&&${msg}.type==="cce_open_session"&&(${msg}.where==="tab"||${msg}.where==="sidebar")){`
-      + `globalThis.__cceOpenHook&&globalThis.__cceOpenHook(${msg}.where,typeof ${msg}.sessionId==="string"?${msg}.sessionId:void 0)}}catch(e){}${rest}`,
+      + `globalThis.__ccePinHook&&globalThis.__ccePinHook(${msg}.sessionId,${msg}.pinned===true)}}catch(e){}${rest}`,
   },
   /*
-   * A conversation opened in the sidebar on request. Opening one is decided in one function: a programmatic open goes to
-   * the sidebar only when the preferred location is the sidebar, and otherwise to a tab. One more request value sends it
-   * to the sidebar whatever that setting says, unless the conversation is already open in a tab, where it is shown. The
-   * setting is not touched, as with the official programmatic opens.
+   * A conversation opened from the session list in the place asked for (src/page/86-open-in-tab-or-sidebar.js). The
+   * list's own open request carries where, and the host passes it to the open command in place of the preferred
+   * location; a request that does not say is opened as before.
+   */
+  {
+    name: 'session list open says where',
+    re: /programmatic:([\w$]+)\.request\.newSessionGroupId&&!\1\.request\.sessionId\?"pin-to-panel":"honor-preferred-location"\}/g,
+    to: (m, msg) => `programmatic:${msg}.request.cceWhere==="sidebar"?"cce-pin-to-sidebar":${msg}.request.cceWhere==="tab"?"pin-to-panel":`
+      + `${msg}.request.newSessionGroupId&&!${msg}.request.sessionId?"pin-to-panel":"honor-preferred-location"}`,
+  },
+  /*
+   * Opening one is decided in one function: a programmatic open goes to the sidebar only when the preferred location is
+   * the sidebar, and otherwise to a tab. One more request value sends it to the sidebar whatever that setting says,
+   * unless the conversation is already open in a tab, where it is shown. The setting is not touched, as with the
+   * official programmatic opens.
    */
   {
     name: 'open in the sidebar on request',
