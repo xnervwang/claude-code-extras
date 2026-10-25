@@ -4845,6 +4845,91 @@ console.log('\ntabs VS Code did not restore');
   } else bad('the reopening is not wired as expected');
 }
 
+console.log('\ndeleting an archived conversation');
+{
+  const del = require('../src/deletesession');
+  const { applyEdits } = require('../src/edits');
+  const A = '0aaaaaaa-0000-4000-8000-000000000000', B = '0bbbbbbb-0000-4000-8000-000000000000';
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-delete-'));
+  const put = (rel, text = 'x') => { const f = path.join(root, rel); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); };
+  try {
+    put(`projects/-a/${A}.jsonl`, '0123456789'); put(`projects/-b/${A}.jsonl`);
+    put(`projects/-a/${A}/subagents/agent-1.jsonl`); put(`projects/-a/${A}/subagents/agent-1.meta.json`); put(`projects/-a/${A}/subagents/agent-2.jsonl`);
+    put(`projects/-a/${A}/tool-results/t1.txt`); put(`projects/-a/${A}/tool-results/t2.txt`); put(`projects/-a/${A}/workflows/w.json`);
+    put(`file-history/${A}/f@v1`); put(`session-env/${A}/env`); put(`debug/${A}.txt`); put(`todos/${A}-agent-${A}.json`);
+    put(`plans/${A}.json`); put(`plans/${A}.tz`); put(`ext/claude-code-extras.effort.${A}.css`);
+    put(`projects/-a/${B}.jsonl`); put(`projects/-a/${B}/subagents/agent-9.jsonl`); put(`file-history/${B}/f@v1`); put(`plans/${B}.json`); put(`debug/${B}.txt`);
+    const opts = { root, planDir: path.join(root, 'plans'), extra: [path.join(root, 'ext', `claude-code-extras.effort.${A}.css`)] };
+    const found = del.find(A, opts);
+    const text = del.describe(found);
+    if (/^2 transcripts, 2 sub-agent conversations, 2 saved tool outputs, 1 file checkpoint, the work plan, the debug log \(\d+ B\)$/.test(text)) {
+      ok('the confirmation names what of the conversation is on disk: transcripts, sub-agent conversations, tool outputs, checkpoints, work plan, debug log, and the size');
+    } else bad(`the description was "${text}"`);
+    const failed = del.remove(found);
+    const left = [];
+    const walk = (d) => { for (const n of fs.readdirSync(d)) { const p = path.join(d, n); if (fs.statSync(p).isDirectory()) walk(p); else left.push(path.relative(root, p)); } };
+    walk(root);
+    const want = [`debug/${B}.txt`, `file-history/${B}/f@v1`, `plans/${B}.json`, `projects/-a/${B}.jsonl`, `projects/-a/${B}/subagents/agent-9.jsonl`].sort();
+    if (!failed.length && JSON.stringify(left.sort()) === JSON.stringify(want) && !fs.existsSync(path.join(root, 'projects', '-a', A))) {
+      ok('everything named after the conversation goes, in every project folder, and nothing of another conversation is touched');
+    } else bad(`after the delete ${JSON.stringify(left)} were left, failures ${JSON.stringify(failed)}`);
+    if (del.find('../projects', opts).length === 0 && del.find(A + '/..', opts).length === 0) ok('an ID that is not a session ID names nothing');
+    else bad('a path-like ID found something to delete');
+    put('sessions/1.json', JSON.stringify({ pid: process.pid, sessionId: A }));
+    put('sessions/2.json', JSON.stringify({ pid: 2147483646, sessionId: B }));
+    if (del.running(A, root) && !del.running(B, root)) ok('a conversation with a live process in Claude Code\'s register counts as running, one whose process is gone does not');
+    else bad('the running check was wrong');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+  // The menu: Delete after Unarchive, for local conversations only, and it only asks this extension.
+  const posted = [];
+  const penv = { window: { __cceSessionList: { sessions: { sessions: { value: [{ sessionId: { value: A }, summary: { value: 'Alpha' } }] } } } },
+    isOff: (k) => penv.offKey === k, offKey: '', acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(m) }) };
+  vm.createContext(penv);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '89-delete-archived.js'), 'utf8'), penv);
+  const e = webview.EDITS.find((x) => x.name === 'delete in the archived list');
+  const menu = 'function Hh0($,J,Z){let X=[];if($.length===1)X.push({label:"Resume session",onSelect:J.resumeSession});if(J.unarchiveSelection)X.push({label:$.length>1?`Unarchive ${$.length} sessions`:"Unarchive session",separatorBefore:X.length>0,onSelect:J.unarchiveSelection});return X}';
+  const mr = e ? applyEdits(menu, [e]) : { error: 'no such edit' };
+  if (mr.error) bad('the delete edit did not apply: ' + mr.error);
+  else {
+    const menv = { window: penv.window, out: null, items: null };
+    vm.createContext(menv);
+    const run = (keys) => { vm.runInContext(mr.out + `;items=Hh0(${keys},{resumeSession(){},unarchiveSelection(){}},{});out=items.map((i)=>i.label+(i.separatorBefore?"|":""));`, menv); return menv.out; };
+    const one = run(`["${A}"]`), two = run(`["${A}","${B}"]`), remote = run('["remote:x"]');
+    menv.items = null; run(`["${A}"]`); menv.items[2].onSelect();
+    penv.offKey = 'deleteArchived'; const off = run(`["${A}"]`); penv.offKey = '';
+    const got = JSON.stringify([one, two, remote, off]);
+    const want = JSON.stringify([['Resume session', 'Unarchive session|', 'Delete session…|'], ['Unarchive 2 sessions', 'Delete 2 sessions…|'],
+      ['Resume session', 'Unarchive session|'], ['Resume session', 'Unarchive session|']]);
+    if (got === want) ok('Archived sessions gets Delete after Unarchive, for one or several, not for a remote conversation, and not with the switch off');
+    else bad(`the archived menu was ${got}, expected ${want}`);
+    if (JSON.stringify(posted) === JSON.stringify([{ type: 'cce_delete_sessions', sessions: [{ id: A, title: 'Alpha' }] }])) ok('choosing it only asks this extension, with each conversation\'s ID and title');
+    else bad(`Delete sent ${JSON.stringify(posted)}`);
+  }
+  // The host: the request reaches this extension; and a delete can tell every panel to read the conversations again.
+  const me = host.EDITS.find((x) => x.name === 'panel messages');
+  const hr = applyEdits('function eT($,J){let Q=`Received message from webview: ${bl0(J)}`;$.info(Q)}', [me]);
+  const asked = [];
+  const henv = { bl0: (m) => JSON.stringify(m), __cceDeleteHook: (l) => asked.push(l) };
+  henv.globalThis = henv;
+  vm.createContext(henv);
+  vm.runInContext(hr.out + ';const L={info(){}};eT(L,{type:"cce_delete_sessions",sessions:[{id:"a"}]});eT(L,{type:"cce_delete_sessions",sessions:"a"});', henv);
+  const te = host.EDITS.find((x) => x.name === 'tab record at start');
+  const tr = applyEdits('class V{constructor(X){this.allComms=new Set([{n:0,sendSessionStoreChanged(){this.n++}},{n:0,sendSessionStoreChanged(){throw new Error("gone")}}]);this.sessionPanels=new Map;this.liveElsewhereSessions=[];this.rememberedTabSessions=X.getPanelTabSessions?.()??[],this.reconcileRememberedTabSessions()}reconcileRememberedTabSessions(){}reportableRememberedTabSessions(){return[]}sidebarChatSessionIds(){return[]}}', [te]);
+  const tenv = {};
+  tenv.globalThis = tenv;
+  vm.createContext(tenv);
+  vm.runInContext(tr.out + ';var v=new V({getPanelTabSessions:()=>[]});globalThis.__cceSessionsChanged();var n=[...v.allComms][0].n;', tenv);
+  if (JSON.stringify(asked) === '[[{"id":"a"}]]' && tenv.n === 1) ok('the patched host passes a delete request on, and can tell every panel to read the conversations on disk again');
+  else bad(`the host passed on ${JSON.stringify(asked)}, panels told ${tenv.n}`);
+  const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/showWarningMessage\([\s\S]{0,200}\{ modal: true, detail: lines\.join\('\\n'\) \}, 'Delete'\);\s*if \(pick !== 'Delete'\) return;/.test(extSrc)
+      && /shown\.includes\(w\.id\) \|\| deleteSession\.running\(w\.id\)/.test(extSrc)
+      && webview.SWITCHES.includes('deleteArchived') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.deleteArchived']) {
+    ok('nothing is deleted before a modal confirmation is accepted, an open or running conversation is left alone, and the switch is a setting of its own');
+  } else bad('the delete is not guarded as expected');
+}
+
 console.log('\nthe patch markers follow the code');
 {
   /* A marker that stays the same while what patching writes changes leaves the old patch in place, and every step

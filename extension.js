@@ -31,6 +31,7 @@ const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
 const sessionPins = require('./src/sessionpins');
 const droppedTabs = require('./src/droppedtabs');
+const deleteSession = require('./src/deletesession');
 const ADAPTERS = require('./src/adapters');
 const removal = require('./src/removal');
 const PACKAGE = require('./package.json');
@@ -846,6 +847,62 @@ function start(context, renamed) {
     if (droppedTimer) clearTimeout(droppedTimer);
     if (globalThis.__cceTabsAtStart) delete globalThis.__cceTabsAtStart;
     if (globalThis.__cceSessionsShown) delete globalThis.__cceSessionsShown;
+  } });
+  /*
+   * Archived conversations deleted from disk, asked for from the Archived sessions menu (src/deletesession.js). Nothing
+   * goes before the person accepts a confirmation that names each conversation and what of it is on disk. One that is
+   * open in this window or running anywhere on this machine is left alone and named as such.
+   */
+  globalThis.__cceDeleteHook = (asked) => {
+    (async () => {
+      const seen = new Set(), want = [];
+      for (const s of Array.isArray(asked) ? asked : []) {
+        if (s && typeof s.id === 'string' && deleteSession.SESSION.test(s.id) && !seen.has(s.id)) {
+          seen.add(s.id);
+          want.push({ id: s.id, title: typeof s.title === 'string' && s.title.trim() ? s.title.trim().slice(0, 120) : s.id });
+        }
+      }
+      if (!want.length || !enabled() || removed()) return;
+      let shown = [];
+      try { shown = typeof globalThis.__cceSessionsShown === 'function' ? globalThis.__cceSessionsShown() : []; } catch (_) { /* none known */ }
+      const busy = [], go = [];
+      for (const w of want) {
+        if (shown.includes(w.id) || deleteSession.running(w.id)) { busy.push(w); continue; }
+        const found = deleteSession.find(w.id, {
+          planDir: planDir(),
+          extra: installs(webview).map((d) => path.join(d, 'webview', webview.EFFORT_PREFIX + w.id + '.css')),
+        });
+        if (found.length) go.push({ ...w, found });
+      }
+      if (!go.length) {
+        vscode.window.showInformationMessage(busy.length
+          ? `Not deleted: ${busy.map((b) => `"${b.title}"`).join(', ')} ${busy.length === 1 ? 'is' : 'are'} open or running.`
+          : 'Nothing of that conversation is left on disk.');
+        return;
+      }
+      const lines = go.map((g) => `"${g.title}": ${deleteSession.describe(g.found)}`);
+      if (busy.length) lines.push('', `Left alone, open or running: ${busy.map((b) => `"${b.title}"`).join(', ')}`);
+      lines.push('', 'This cannot be undone.');
+      const pick = await vscode.window.showWarningMessage(
+        go.length === 1 ? `Delete "${go[0].title}" from disk?` : `Delete ${go.length} conversations from disk?`,
+        { modal: true, detail: lines.join('\n') }, 'Delete');
+      if (pick !== 'Delete') return;
+      const failed = [];
+      for (const g of go) {
+        failed.push(...deleteSession.remove(g.found));
+        try { sessionPins.setPinned(pinsFile(), g.id, false); } catch (_) { /* not pinned */ }
+        log.appendLine(`Deleted "${g.title}" (${g.id}): ${deleteSession.describe(g.found)}`);
+      }
+      try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }
+      if (failed.length) {
+        log.appendLine('Could not delete:\n  ' + failed.join('\n  '));
+        vscode.window.showWarningMessage(`${failed.length} file${failed.length === 1 ? '' : 's'} could not be deleted; the output "Work Plan for Claude Code" lists them.`);
+      }
+    })().catch((e) => log.appendLine('deleting archived conversations: ' + (e && e.message)));
+  };
+  context.subscriptions.push({ dispose: () => {
+    if (globalThis.__cceDeleteHook) delete globalThis.__cceDeleteHook;
+    if (globalThis.__cceSessionsChanged) delete globalThis.__cceSessionsChanged;
   } });
   refreshPlans();
   paintBadge();

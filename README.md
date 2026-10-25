@@ -88,6 +88,7 @@ Verified against Claude Code 2.1.309 and 2.1.310.
 | **Context meter:** Keep the meter visible, outline it when 15% of the window remains, and hover for a breakdown by category, memory files and custom agents. | Panel's context meter |
 | **Open sessions:** The conversations open in this window, in an editor tab or in the sidebar while it is shown, most recently active first, each with the status dot the session list gives it; hover one to see which session-list group it is in, click one to switch to it. | Top of the session list |
 | **Open in a tab or the sidebar:** **New in tab** and **New in sidebar** replace the New session button. A closed conversation's right-click menu offers **Resume in tab** and **Resume in sidebar** instead of Resume session; an open one keeps Switch to session. The choice applies to that conversation only: `claudeCode.preferredLocation` is not changed, and the Claude button at the right of the editor tabs opens where that setting says. | Session list |
+| **Delete archived conversations:** **Delete session…** in an archived conversation's right-click menu permanently deletes it from disk once you confirm: its transcripts, sub-agent conversations, saved tool outputs, file checkpoints (Claude Code's copies, not your files), debug log and work plan. It cannot be undone. A conversation open in a tab or the sidebar, or still running, is left alone. | Archived sessions in the session list |
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
 | **Pinned conversations:** Click the pin at the start of a session-list row to keep that conversation from Claude Code's transcript cleanup (`cleanupPeriodDays`) and out of Archived sessions. | Session list |
 | **Chimes:** A short sound when a turn finishes, permission is requested or Claude asks a question, played on the machine showing the panel; mute it in the footer. | Footer; machine showing the panel |
@@ -104,7 +105,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 29 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 30 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 

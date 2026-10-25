@@ -285,6 +285,11 @@
           "default": true,
           "markdownDescription": "Reopen the Claude Code tabs that were open when the window closed but that VS Code did not restore, as can happen after the window lost its remote connection. Tabs you closed while connected stay closed. Takes effect the next time the window starts."
         },
+        "claudeCodeWorkPlan.show.deleteArchived": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Add **Delete session…** to the right-click menu of a conversation in Archived sessions. After you confirm, it permanently deletes the conversation from disk: its transcripts, sub-agent conversations, saved tool outputs, file checkpoints (Claude Code's copies, not your files), debug log and work plan. It cannot be undone. A conversation open in a tab or the sidebar, or still running, is left alone. Takes effect without a reload."
+        },
         "claudeCodeWorkPlan.show.openSessions": {
           "type": "boolean",
           "default": true,

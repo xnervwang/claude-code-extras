@@ -218,6 +218,7 @@ const SWITCHES = [
   'backgroundSessions', // the `claude --bg` sessions a conversation started, in its agent map
   'openSessions',     // OPEN SESSIONS at the top of the session list
   'openInTabOrSidebar', // New in tab / New in sidebar, and Resume in tab / Resume in sidebar on the session list
+  'deleteArchived',   // Delete in the Archived sessions menu
 ];
 
 /** The live stylesheet for one set of settings. */
@@ -335,6 +336,13 @@ const EDITS = [
     name: 'session list keeps its place after a switch from open sessions',
     re: /if\(([\w$]+)\.current!==null\)return;let ([\w$]+)=([\w$]+)\.findIndex\(\(([\w$]+)\)=>\4===([\w$]+)\);if\(\2<0\|\|\5===null\)return;([\w$]+)\.anchor\(\5\)/g,
     to: (m, busy, idx, rows, x, active, list) => `if(${busy}.current!==null)return;if(typeof window.__cceSkipFollow==="function"&&window.__cceSkipFollow(${active}))return;let ${idx}=${rows}.findIndex((${x})=>${x}===${active});if(${idx}<0||${active}===null)return;${list}.anchor(${active})`,
+  },
+  {
+    // Delete after Unarchive in the Archived sessions menu (89-delete-archived.js); the page returning null leaves it out.
+    name: 'delete in the archived list',
+    re: /if\(([\w$]+)\.unarchiveSelection\)([\w$]+)\.push\(\{label:([\w$]+)\.length>1\?`Unarchive \$\{\3\.length\} sessions`:"Unarchive session",separatorBefore:\2\.length>0,onSelect:\1\.unarchiveSelection\}\);return \2\}/g,
+    to: (m, act, items, keys) => m.slice(0, -(`return ${items}}`).length)
+      + `{let cceD=typeof window.__cceDeleteItem==="function"?window.__cceDeleteItem(${keys}):null;if(cceD)${items}.push(cceD)}return ${items}}`,
   },
   {
     // The panel's open request, carrying where the session list's two buttons and two Resume items asked for.

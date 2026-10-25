@@ -93,8 +93,8 @@ const EDITS = [
       + link,
   },
   /*
-   * Messages from a panel meant for this extension: the panel's time zone, and a conversation pinned or unpinned in the
-   * session list.
+   * Messages from a panel meant for this extension: the panel's time zone, a conversation pinned or unpinned in the
+   * session list, and archived conversations to delete.
    *
    * Every message a panel sends passes through the one function that logs it, before anything decides what the message
    * is, and Claude Code itself ignores both types. A global is how each reaches this extension - both run in one
@@ -107,7 +107,9 @@ const EDITS = [
       + `&&typeof ${msg}.timeZone==="string"){globalThis.__cceClientTimeZone=${msg}.timeZone;`
       + `globalThis.__cceTzHook&&globalThis.__cceTzHook(${msg}.timeZone)}`
       + `else if(${msg}&&${msg}.type==="cce_session_pin"&&typeof ${msg}.sessionId==="string"){`
-      + `globalThis.__ccePinHook&&globalThis.__ccePinHook(${msg}.sessionId,${msg}.pinned===true)}}catch(e){}${rest}`,
+      + `globalThis.__ccePinHook&&globalThis.__ccePinHook(${msg}.sessionId,${msg}.pinned===true)}`
+      + `else if(${msg}&&${msg}.type==="cce_delete_sessions"&&Array.isArray(${msg}.sessions)){`
+      + `globalThis.__cceDeleteHook&&globalThis.__cceDeleteHook(${msg}.sessions)}}catch(e){}${rest}`,
   },
   /*
    * A conversation opened from the session list in the place asked for (src/page/86-open-in-tab-or-sidebar.js). The
@@ -134,7 +136,8 @@ const EDITS = [
   /*
    * Claude Code's record of the conversations in its tabs, as it reads it at start and before it drops the entries whose
    * tab is missing, and a way to ask which conversations are shown now - in a tab, a restored tab, the sidebar or another
-   * window. This extension reopens the tabs VS Code did not bring back (src/droppedtabs.js).
+   * window. This extension reopens the tabs VS Code did not bring back (src/droppedtabs.js). Also a way to tell every
+   * panel that the conversations on disk changed, which makes the session list read them again, used after a delete.
    */
   {
     name: 'tab record at start',
@@ -143,6 +146,7 @@ const EDITS = [
       + 'globalThis.__cceTabsAtStart=this.rememberedTabSessions.slice(),'
       + 'globalThis.__cceSessionsShown=()=>[...this.sessionPanels.keys(),...this.reportableRememberedTabSessions().map((cceR)=>cceR.sessionId),'
       + '...this.liveElsewhereSessions.map((cceL)=>cceL.sessionId),...this.sidebarChatSessionIds()],'
+      + 'globalThis.__cceSessionsChanged=()=>{for(let cceC of this.allComms)try{cceC.sendSessionStoreChanged()}catch(e){}},'
       + 'this.reconcileRememberedTabSessions()',
   },
   /*
