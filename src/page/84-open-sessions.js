@@ -47,8 +47,8 @@
 
   /*
    * This window's open conversations, most recently active first. The tab ones are the list's own openSessionIds and the
-   * sidebar one its sidebarSessionIds; a conversation in both is listed once, as a tab. One with no row in the list yet
-   * - just started, nothing on disk - counts as active now, which is what it is.
+   * sidebar one its sidebarSessionIds, while the sidebar is shown; a conversation in both is listed once, as a tab. One
+   * with no row in the list yet - just started, nothing on disk - counts as active now, which is what it is.
    */
   var openSessionsNow = function(src){
     var comms = src.comms, items = asList(src.sessions && src.sessions.sessions && src.sessions.sessions.value);
@@ -79,7 +79,8 @@
       }
     };
     add(asList(comms.openSessionIds && comms.openSessionIds.value), 'tab');
-    add(asList(comms.sidebarSessionIds && comms.sidebarSessionIds.value), 'sidebar');
+    // A hidden sidebar keeps its conversation loaded; only a host from before the patch leaves this unsaid.
+    if (window.__cceSidebarShown !== false) add(asList(comms.sidebarSessionIds && comms.sidebarSessionIds.value), 'sidebar');
     out.sort(function(a, b){ return b.last - a.last; });
     return out;
   };

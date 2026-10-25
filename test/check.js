@@ -4721,6 +4721,74 @@ console.log('\nthe group of a row in open sessions');
   else bad(`the rows' titles were ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
 }
 
+console.log('\na hidden sidebar in open sessions');
+{
+  const { applyEdits } = require('../src/edits');
+  const hedit = (name) => host.EDITS.find((e) => e.name === name);
+  // The host: every update of the open conversations says whether the sidebar's conversation can be seen.
+  const loop = 'function b(){let z=this.sidebarComms,G=["S"];for(let K of this.allComms)K.sendSessionStates([],this.activeSessionId,["A"],[],[],K===z?void 0:G);return 1}';
+  const send = 'class C{constructor(){this.sent=[]}send(m){this.sent.push(m)}sendSessionStates($,J,Q,X,Y,W){let z={type:"request",channelId:"",requestId:l$(),request:{type:"session_states_update",sessions:$,activeSessionId:J,openSessionIds:Q,unreadSessionKeys:X,liveElsewhereSessions:Y,sidebarSessionIds:W}};this.send(z)}}';
+  const vis = 'function r($,G){$.onDidChangeVisibility(()=>{G.notifyVisibilityChange($.visible),this.updateSidebarActiveState()},null,this.disposables)}';
+  const lr = applyEdits(loop, [hedit('session states say whether the sidebar is shown')]);
+  const sr = applyEdits(send, [hedit('session states message carries whether the sidebar is shown')]);
+  const vr = applyEdits(vis, [hedit('sidebar showing or hiding updates the open conversations')]);
+  if (lr.error || sr.error || vr.error) bad(`the sidebar edits did not apply: ${lr.error || sr.error || vr.error}`);
+  else {
+    const env = { l$: () => 'id' };
+    vm.createContext(env);
+    vm.runInContext(lr.out + ';' + sr.out + ';this.b=b;this.C=C;' + vr.out + ';this.r=r;', env);
+    const sidebar = new env.C(), list = new env.C();
+    const shown = { v: true };
+    const mgr = { sidebarComms: sidebar, allComms: [sidebar, list], activeSessionId: 'A',
+      webviews: new Set([{ comms: sidebar, isVisible: () => shown.v }, { comms: list, isVisible: () => true }]) };
+    env.b.call(mgr); shown.v = false; env.b.call(mgr); mgr.sidebarComms = undefined; env.b.call(mgr);
+    const got = list.sent.map((m) => [m.request.sidebarSessionIds, m.request.cceSidebarShown]);
+    if (JSON.stringify(got) === JSON.stringify([[['S'], true], [['S'], false], [['S'], false]]) && sidebar.sent[0].request.sidebarSessionIds === undefined) {
+      ok('the patched host sends whether the sidebar is shown with each update, false with no sidebar, and leaves the sidebar ids as they were');
+    } else bad(`the session list was sent ${JSON.stringify(got)}`);
+    let handler = null, broadcasts = 0;
+    env.r.call({ updateSidebarActiveState() {}, broadcastSessionStates() { broadcasts++; }, disposables: [] },
+      { onDidChangeVisibility: (f) => { handler = f; }, visible: false }, { notifyVisibilityChange() {} });
+    handler && handler();
+    if (broadcasts === 1) ok('the sidebar showing or hiding sends an update');
+    else bad(`the sidebar's visibility change sent ${broadcasts} update(s)`);
+  }
+
+  // The panel keeps what the host said, ahead of the signals that make the list draw again.
+  const we = webview.EDITS.find((e) => e.name === 'sidebar shown for open sessions');
+  const hsrc = 'function h($){switch($.request.type){case"session_states_update":if(this.sessionStates.value=$.request.sessions,this.activeSessionId.value=$.request.activeSessionId,$.request.openSessionIds!==void 0)this.openSessionIds.value=$.request.openSessionIds;break}}';
+  const wr = we ? applyEdits(hsrc, [we]) : { error: 'no such edit' };
+  if (wr.error) bad('the panel edit did not apply: ' + wr.error);
+  else {
+    const penv = { window: {}, seen: [] };
+    vm.createContext(penv);
+    vm.runInContext(wr.out + ';const o={sessionStates:{set value(v){seen.push(window.__cceSidebarShown)}},activeSessionId:{},openSessionIds:{}};'
+      + 'h.call(o,{request:{type:"session_states_update",sessions:[],cceSidebarShown:false}});h.call(o,{request:{type:"session_states_update",sessions:[]}});', penv);
+    if (JSON.stringify(penv.seen) === '[false,null]' || (penv.seen[0] === false && penv.seen[1] === undefined)) {
+      ok('the panel keeps whether the sidebar is shown before the list is told to draw');
+    } else bad(`the panel kept ${JSON.stringify(penv.seen)}`);
+  }
+
+  // OPEN SESSIONS: the sidebar's conversation is listed while the sidebar is shown, or when the host does not say.
+  const sig = (v) => ({ value: v });
+  const env = { window: {}, isOff: () => false, localStorage: { getItem: () => null, setItem() {} }, Date, Array, String, Math, isFinite,
+    head: { appendChild() {} }, document: { createElement: () => ({ setAttribute() {}, textContent: '' }) } };
+  const item = (id) => ({ sessionId: sig(id), summary: sig(id), lastModifiedTime: sig(Date.now()), isRemote: sig(false) });
+  env.window.__cceSessionList = {
+    sessions: { sessions: sig([item('A'), item('S')]) }, context: { openInEditor() {} },
+    comms: { openSessionIds: sig(['A']), sidebarSessionIds: sig(['S']), sessionStates: sig([]), unreadSessionKeys: sig([]), activeSessionId: sig('A') },
+  };
+  vm.createContext(env);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '84-open-sessions.js'), 'utf8'), env);
+  const h = (type, props, key) => ({ type, props: props || {}, key });
+  const walk = (n, f, out = []) => { if (!n || typeof n !== 'object') return out; if (Array.isArray(n)) { n.forEach((c) => walk(c, f, out)); return out; } if (f(n)) out.push(n); walk(n.props && n.props.children, f, out); return out; };
+  const ids = () => walk(env.window.__cceOpenSessions({ jsx: h, jsxs: h, cls: {} }), (n) => n.props && n.props['data-cce-open-row']).map((n) => n.props['data-cce-open-row']).sort().join(',');
+  const got = [];
+  for (const v of [true, false, undefined]) { env.window.__cceSidebarShown = v; got.push(ids()); }
+  if (JSON.stringify(got) === JSON.stringify(['A,S', 'A', 'A,S'])) ok('a hidden sidebar\'s conversation leaves OPEN SESSIONS, and comes back when the sidebar is shown');
+  else bad(`with the sidebar shown, hidden and unsaid the rows were ${JSON.stringify(got)}`);
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

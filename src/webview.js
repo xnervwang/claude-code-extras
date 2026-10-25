@@ -337,6 +337,12 @@ const EDITS = [
     to: (m, busy, idx, rows, x, active, list) => `if(${busy}.current!==null)return;if(typeof window.__cceSkipFollow==="function"&&window.__cceSkipFollow(${active}))return;let ${idx}=${rows}.findIndex((${x})=>${x}===${active});if(${idx}<0||${active}===null)return;${list}.anchor(${active})`,
   },
   {
+    // Whether the sidebar's conversation can be seen, as the patched host sends it; OPEN SESSIONS reads it as it draws.
+    name: 'sidebar shown for open sessions',
+    re: /case"session_states_update":if\(this\.sessionStates\.value=([\w$]+)\.request\.sessions,/g,
+    to: (m, msg) => `case"session_states_update":if(window.__cceSidebarShown=${msg}.request.cceSidebarShown,this.sessionStates.value=${msg}.request.sessions,`,
+  },
+  {
     // New session becomes New in tab and New in sidebar (86-open-in-tab-or-sidebar.js); the page returning null keeps it.
     name: 'new session in a tab or the sidebar',
     re: /([\w$]+)\("button",\{className:([\w$]+)\.newSessionButton,onClick:\(\)=>\{([\w$]+)\.openInEditor\(\)\},children:\[([\w$]+)\(([\w$]+),\{className:\2\.newSessionIcon\}\),"New session"\]\}\)/g,

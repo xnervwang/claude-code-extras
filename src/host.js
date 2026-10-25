@@ -24,7 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 13;
+const VERSION = 14;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
@@ -122,6 +122,29 @@ const EDITS = [
     name: 'open in the sidebar on request',
     re: /if\(([\w$]+)\)return\{target:\1==="honor-preferred-location"&&([\w$]+)==="sidebar"&&!([\w$]+)\?"sidebar":"panel",/g,
     to: (m, how, where, open) => `if(${how})return{target:(${how}==="cce-pin-to-sidebar"||${how}==="honor-preferred-location"&&${where}==="sidebar")&&!${open}?"sidebar":"panel",`,
+  },
+  /*
+   * Whether the sidebar's conversation can be seen, sent with the open conversations to every panel. A hidden sidebar
+   * keeps its conversation loaded, so the host still lists it among the sidebar's; OPEN SESSIONS leaves it out while the
+   * sidebar is hidden (src/page/84-open-sessions.js). The state goes out with every update of the open conversations,
+   * and the sidebar showing or hiding sends one.
+   */
+  {
+    name: 'session states say whether the sidebar is shown',
+    re: /for\(let ([\w$]+) of this\.allComms\)\1\.sendSessionStates\(([^;]*?),\1===([\w$]+)\?void 0:([\w$]+)\)/g,
+    to: (m, c, args, side, ids) => `for(let ${c} of this.allComms)${c}.sendSessionStates(${args},${c}===${side}?void 0:${ids},`
+      + `${side}!==void 0&&[...this.webviews].some((cceV)=>cceV.comms===${side}&&cceV.isVisible()))`,
+  },
+  {
+    name: 'session states message carries whether the sidebar is shown',
+    re: /sendSessionStates\(([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)\{let ([\w$]+)=\{type:"request",channelId:"",requestId:([\w$]+)\(\),request:\{type:"session_states_update",([^{}]*?),sidebarSessionIds:\6\}\}/g,
+    to: (m, a, b, c, d, e, f, z, id, fields) => `sendSessionStates(${a},${b},${c},${d},${e},${f},cceShown){let ${z}={type:"request",channelId:"",`
+      + `requestId:${id}(),request:{type:"session_states_update",${fields},sidebarSessionIds:${f},cceSidebarShown:cceShown}}`,
+  },
+  {
+    name: 'sidebar showing or hiding updates the open conversations',
+    re: /onDidChangeVisibility\(\(\)=>\{([\w$]+)\.notifyVisibilityChange\(([\w$]+)\.visible\),this\.updateSidebarActiveState\(\)\}/g,
+    to: (m, comms, view) => `onDidChangeVisibility(()=>{${comms}.notifyVisibilityChange(${view}.visible),this.updateSidebarActiveState(),this.broadcastSessionStates()}`,
   },
   /*
    * The dot after a tab's title (src/tabdot.js says what it is for).
