@@ -32,7 +32,7 @@ The in-page script stays in ordinary `.js` files rather than one large template 
 
 Reload the window twice to see a code change: once for the extension to rewrite the file, then once for the panel to load it. The activity bar icon needs an editor restart; reloading does not refresh it.
 
-The panel patch needs no manual version bump. Its marker includes a digest of the injected script and edits, so a patched file that differs from this tree is recognised as outdated. The host patch uses a hand-written number instead. If you change an edit in `src/host.js`, raise its number. Otherwise an already-patched file is treated as current: packaging, installation, and reloading can all succeed while the old code keeps running.
+Neither patch needs a manual version bump. Each marker includes a digest of the scripts and edits that patch writes, so a patched file that differs from this tree is recognised as outdated.
 
 Two rules the in-page script keeps, each adopted after the failure it prevents. Never put a node of your own inside one the panel owns - read positions, add siblings, set attributes and inline styles, but nothing goes inside. When the panel's own rendering collided with such a node it threw, and from then on the page stopped handling clicks and keys at all: a dead stop button and a dead Escape, with nothing visible to say why. And never do anything before the panel has painted - the script is appended to the panel's own bundle, so whatever it does there is work the panel must finish before it can show anything. Everything that reads or watches the page waits for the browser to report itself idle.
 

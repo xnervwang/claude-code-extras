@@ -24,8 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 14;
-const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
+const VERSION = 15;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
 const TMP_SUFFIX = '.claude-code-extras-host.tmp';
@@ -181,6 +180,14 @@ const EDITS = [
       + 'r=typeof p==="function"?p():[];return Array.isArray(r)?r.filter((x)=>typeof x==="string"):[]}catch(e){return[]}})()])',
   },
 ];
+
+/* As in src/webview.js: the digest says whether the host runs the code this tree produces, so an edit changed without
+   the number being raised still patches again. It covers each edit's pattern and replacement and the scripts the
+   replacements put into the bundle. */
+const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION}-` + require('crypto').createHash('sha256')
+  .update(EDITS.map((e) => [e.name, String(e.re), String(e.to)].join('\0')).join('\n'))
+  .update('\n').update([LOAD_WATCH, LOAD_WATCH_OFF, CACHE_CLEAR, PANEL_TZ].map(String).join('\0'))
+  .digest('hex').slice(0, 12) + ' */';
 
 function hostFile(claudeExtensionPath) { return path.join(claudeExtensionPath, 'extension.js'); }
 

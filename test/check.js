@@ -4787,6 +4787,34 @@ console.log('\na hidden sidebar in open sessions');
   else bad(`with the sidebar shown, hidden and unsaid the rows were ${JSON.stringify(got)}`);
 }
 
+console.log('\nthe patch markers follow the code');
+{
+  /* A marker that stays the same while what patching writes changes leaves the old patch in place, and every step
+     after it - packaging, installing, reloading - reports success. Each module is loaded again with one replacement
+     changed and nothing else; its marker has to change. */
+  const Module = require('module');
+  const reload = (file, edit) => {
+    const full = path.join(__dirname, '..', 'src', file);
+    const src = fs.readFileSync(full, 'utf8');
+    const changed = edit(src);
+    if (changed === src) return null;
+    const m = new Module(full, null);
+    m.filename = full; m.paths = Module._nodeModulePaths(path.dirname(full));
+    m._compile(changed, full);
+    return m.exports.MARK;
+  };
+  const cases = [
+    ['src/host.js', 'host.js', require('../src/host').MARK, (src) => src.replace('?"cce-pin-to-sidebar":', '?"cce-pin-to-sidebar-x":')],
+    ['src/webview.js', 'webview.js', require('../src/webview').MARK, (src) => src.replace('cceWhere:cceW})}`', 'cceWhere:cceW,x:1})}`')],
+  ];
+  for (const [label, file, now, edit] of cases) {
+    const other = reload(file, edit);
+    if (other === null) bad(`${label}: the replacement to change was not found`);
+    else if (other !== now && other.startsWith(now.slice(0, now.indexOf('-')))) ok(`${label}: changing one edit's replacement changes the marker, without the number being raised`);
+    else bad(`${label}: the marker stayed ${now} after a replacement changed`);
+  }
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

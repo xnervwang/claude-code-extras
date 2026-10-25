@@ -494,7 +494,7 @@ const EDITS = [
 
 /** Pure transform. Returns { out, chosen } or { error }. Never partially applies. */
 const MARK = MARK_PREFIX + 'v' + VERSION + '-' + crypto.createHash('sha256')
-  .update(SCRIPT_BODY).update('\n').update(JSON.stringify(EDITS))
+  .update(SCRIPT_BODY).update('\n').update(EDITS.map((e) => [e.name, String(e.re), String(e.to)].join('\0')).join('\n'))
   .digest('hex').slice(0, 12) + ' */';
 
 const SCRIPT = ['', MARK, SCRIPT_BODY, ''].join('\n');
