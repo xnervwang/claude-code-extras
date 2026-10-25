@@ -94,6 +94,7 @@ Verified against Claude Code 2.1.309 and 2.1.310.
 | **Background sessions:** This conversation's `claude --bg` sessions, each state in its own colour and counted at the top, with what each waits for, its result, and the attach and logs commands. | Agents button in the footer and its map |
 | **Scheduled prompts:** See timers this conversation set through Claude Code's scheduled tasks, with each schedule, last-fired time and prompt. | Agents button in the footer and its map |
 | **Background commands:** See a count such as `1 task` while a background build, test run or `sleep` timer runs, with the list one click away. | Footer |
+| **Tabs back after a restart:** Claude Code tabs that were open when the window closed but that VS Code did not restore, as can happen after the window lost its remote connection, are opened again when it starts. Tabs you closed stay closed. | Editor tabs |
 | **Marks on tabs:** 🔹 after a Claude Code tab's title while Claude waits for your permission or answer, 🔸 when it finished and you have not looked yet, in the colours of the dot on the tab's icon. | Editor tab titles |
 | **Session information:** See the session ID, starting directory, transcript location and size; click a value to copy it. | Footer button |
 
@@ -103,7 +104,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 28 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 29 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 
@@ -121,6 +122,7 @@ Open `Work Plan for Claude Code: Settings` for all 28 settings. Most apply witho
 | Panel additions | Set `claudeCodeWorkPlan.enabled` to off. The patch stays and its scripts keep running. |
 | Your time zone in Claude's context | Set `claudeCodeWorkPlan.tellClaudeYourTimeZone` to off. |
 | Work plan plugin, skill description included | Run `Work Plan for Claude Code: Stop Loading the Work Plan Plugin`. |
+| Reopening Claude Code tabs VS Code did not restore | Set `claudeCodeWorkPlan.reopenDroppedTabs` to off. |
 | Pins on the session list | Set `claudeCodeWorkPlan.sessionPins` to off. Pinned conversations are then cleaned up and archived as usual. |
 | Patch and restore Claude Code's files | Run `Work Plan for Claude Code: Remove from Claude Code (restore original files)`, or uninstall. |
 

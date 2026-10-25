@@ -132,6 +132,20 @@ const EDITS = [
     to: (m, how, where, open) => `if(${how})return{target:(${how}==="cce-pin-to-sidebar"||${how}==="honor-preferred-location"&&${where}==="sidebar")&&!${open}?"sidebar":"panel",`,
   },
   /*
+   * Claude Code's record of the conversations in its tabs, as it reads it at start and before it drops the entries whose
+   * tab is missing, and a way to ask which conversations are shown now - in a tab, a restored tab, the sidebar or another
+   * window. This extension reopens the tabs VS Code did not bring back (src/droppedtabs.js).
+   */
+  {
+    name: 'tab record at start',
+    re: /this\.rememberedTabSessions=([\w$]+)\.getPanelTabSessions\?\.\(\)\?\?\[\],this\.reconcileRememberedTabSessions\(\)/g,
+    to: (m, settings) => `this.rememberedTabSessions=${settings}.getPanelTabSessions?.()??[],`
+      + 'globalThis.__cceTabsAtStart=this.rememberedTabSessions.slice(),'
+      + 'globalThis.__cceSessionsShown=()=>[...this.sessionPanels.keys(),...this.reportableRememberedTabSessions().map((cceR)=>cceR.sessionId),'
+      + '...this.liveElsewhereSessions.map((cceL)=>cceL.sessionId),...this.sidebarChatSessionIds()],'
+      + 'this.reconcileRememberedTabSessions()',
+  },
+  /*
    * Whether the sidebar's conversation can be seen, sent with the open conversations to every panel. A hidden sidebar
    * keeps its conversation loaded, so the host still lists it among the sidebar's; OPEN SESSIONS leaves it out while the
    * sidebar is hidden (src/page/84-open-sessions.js). The state goes out with every update of the open conversations,

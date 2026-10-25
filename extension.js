@@ -30,6 +30,7 @@ const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
 const sessionPins = require('./src/sessionpins');
+const droppedTabs = require('./src/droppedtabs');
 const ADAPTERS = require('./src/adapters');
 const removal = require('./src/removal');
 const PACKAGE = require('./package.json');
@@ -54,6 +55,7 @@ const LATENCY_KEY = 'claudeCodeExtras.latencyOffset';
 const THRESHOLD_SETTING = PREFIX + 'latencyThresholdSeconds';
 const LATENCY_ON_SETTING = PREFIX + 'recordOpenLatency';
 const PINS_SETTING = PREFIX + 'sessionPins';
+const REOPEN_SETTING = PREFIX + 'reopenDroppedTabs';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
   enabled: PREFIX + 'workPlan',
@@ -793,6 +795,57 @@ function start(context, renamed) {
     if (pinsWatch) { try { pinsWatch.close(); } catch (_) { /* closed */ } }
     if (globalThis.__ccePinHook) delete globalThis.__ccePinHook;
     if (globalThis.__ccePinnedIds) delete globalThis.__ccePinnedIds;
+  } });
+  /*
+   * Claude Code tabs VS Code did not bring back (src/droppedtabs.js), looked for once, after Claude Code has started: by
+   * then VS Code has put back the tabs it kept and Claude Code has matched them to their conversations. They open where
+   * Claude Code opens a tab, and the tab that was in front is put back in front.
+   */
+  const FOCUS_GROUP = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth']
+    .map((n) => `workbench.action.focus${n}EditorGroup`);
+  const isClaudeTab = (t) => t.input instanceof vscode.TabInputWebview && String(t.input.viewType).includes('claudeVSCodePanel');
+  let droppedTries = 0, droppedTimer = setTimeout(function lookForDropped() {
+    droppedTimer = undefined;
+    const atStart = globalThis.__cceTabsAtStart, shown = globalThis.__cceSessionsShown;
+    if (!Array.isArray(atStart) || typeof shown !== 'function') {
+      if (++droppedTries < 45) droppedTimer = setTimeout(lookForDropped, 2000);
+      return;
+    }
+    if (!enabled() || removed() || cfg().get(REOPEN_SETTING, true) === false) return;
+    let lost;
+    try {
+      lost = droppedTabs.find({
+        record: atStart, shown: shown(),
+        labels: vscode.window.tabGroups.all.flatMap((g) => g.tabs.filter(isClaudeTab).map((t) => t.label)),
+        strip: (t) => tabdot.withDot(t, 'plain', false),
+      });
+    } catch (e) { log.appendLine('looking for Claude Code tabs VS Code did not restore: ' + (e && e.message)); return; }
+    if (!lost.length) return;
+    const group = vscode.window.tabGroups.activeTabGroup, front = group && group.activeTab;
+    const at = front ? group.tabs.indexOf(front) : -1, column = group && group.viewColumn;
+    (async () => {
+      let reopened = 0;
+      for (const t of lost) {
+        try {
+          await vscode.commands.executeCommand('claude-vscode.editor.open', t.sessionId, undefined, undefined, undefined, t.fullEditor,
+            { programmatic: 'pin-to-panel' });
+          reopened++;
+        } catch (e) { log.appendLine(`reopening "${t.title}" (${t.sessionId}): ${e && e.message}`); }
+      }
+      log.appendLine(`Reopened ${reopened} Claude Code tab(s) VS Code did not restore: ${lost.map((t) => `"${t.title}"`).join(', ')}`);
+      if (reopened) vscode.window.setStatusBarMessage(`Reopened ${reopened} Claude Code tab${reopened === 1 ? '' : 's'} VS Code did not restore`, 10000);
+      if (at >= 0 && FOCUS_GROUP[column - 1]) {
+        try {
+          await vscode.commands.executeCommand(FOCUS_GROUP[column - 1]);
+          await vscode.commands.executeCommand('workbench.action.openEditorAtIndex', at);
+        } catch (_) { /* the reopened tab stays in front */ }
+      }
+    })();
+  }, 5000);
+  context.subscriptions.push({ dispose: () => {
+    if (droppedTimer) clearTimeout(droppedTimer);
+    if (globalThis.__cceTabsAtStart) delete globalThis.__cceTabsAtStart;
+    if (globalThis.__cceSessionsShown) delete globalThis.__cceSessionsShown;
   } });
   refreshPlans();
   paintBadge();

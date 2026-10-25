@@ -4787,6 +4787,64 @@ console.log('\na hidden sidebar in open sessions');
   else bad(`with the sidebar shown, hidden and unsaid the rows were ${JSON.stringify(got)}`);
 }
 
+console.log('\ntabs VS Code did not restore');
+{
+  const dropped = require('../src/droppedtabs');
+  const { applyEdits } = require('../src/edits');
+  const id = (n) => `0000000${n}-0000-4000-8000-000000000000`;
+  const strip = (t) => require('../src/tabdot').withDot(t, 'plain', false);
+  const record = [
+    { sessionId: id(1), title: 'Shown in a tab' },
+    { sessionId: id(2), title: 'Restored, not yet matched' },
+    { sessionId: id(3), title: 'Twin' },
+    { sessionId: id(4), title: 'Twin' },
+    { sessionId: id(5), title: 'Guessed', inferred: true },
+    { sessionId: id(6), title: 'Transcript gone' },
+    { sessionId: 'not-a-session', title: 'Bad id' },
+    { sessionId: id(7), title: 'Dropped', fullEditor: true },
+    { sessionId: id(7), title: 'Dropped' },
+  ];
+  const got = dropped.find({ record, shown: [id(1)], labels: ['Restored, not yet matched \u{1F538}', 'Twin'], strip, exists: (s) => s !== id(6) });
+  const want = [{ sessionId: id(4), title: 'Twin', fullEditor: false }, { sessionId: id(7), title: 'Dropped', fullEditor: true }];
+  if (JSON.stringify(got) === JSON.stringify(want)) {
+    ok('a recorded conversation is reopened only when it is shown nowhere, no restored tab carries its title, it was not guessed, and its transcript is there');
+  } else bad(`the tabs to reopen were ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  const many = Array.from({ length: 30 }, (_, i) => ({ sessionId: `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`, title: 't' + i }));
+  if (dropped.find({ record: many, shown: [], labels: [], exists: () => true }).length === dropped.LIMIT) ok(`no more than ${dropped.LIMIT} are reopened at once`);
+  else bad('the limit on reopened tabs did not hold');
+  const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-dropped-'));
+  try {
+    fs.mkdirSync(path.join(tmp, '-work-a')); fs.mkdirSync(path.join(tmp, '-work-b'));
+    fs.writeFileSync(path.join(tmp, '-work-b', id(8) + '.jsonl'), '{}\n');
+    if (dropped.transcriptExists(id(8), tmp) && !dropped.transcriptExists(id(9), tmp) && !dropped.transcriptExists(id(8), path.join(tmp, 'none'))) {
+      ok('a transcript is found in any project folder');
+    } else bad('the transcript check was wrong');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+
+  const edit = host.EDITS.find((e) => e.name === 'tab record at start');
+  const src = 'class V{constructor(X){this.sessionPanels=new Map([["p",{}]]);this.liveElsewhereSessions=[{sessionId:"w"}];'
+    + 'this.rememberedTabSessions=X.getPanelTabSessions?.()??[],this.reconcileRememberedTabSessions()}'
+    + 'reconcileRememberedTabSessions(){this.rememberedTabSessions=this.rememberedTabSessions.slice(0,1)}'
+    + 'reportableRememberedTabSessions(){return this.rememberedTabSessions}sidebarChatSessionIds(){return["s"]}}';
+  const r = edit ? applyEdits(src, [edit]) : { error: 'no such edit' };
+  if (r.error) bad('the tab record edit did not apply: ' + r.error);
+  else {
+    const env = {};
+    env.globalThis = env;
+    vm.createContext(env);
+    vm.runInContext(r.out + ';new V({getPanelTabSessions:()=>[{sessionId:"a"},{sessionId:"b"}]});', env);
+    if (JSON.stringify(env.__cceTabsAtStart) === '[{"sessionId":"a"},{"sessionId":"b"}]' && JSON.stringify(env.__cceSessionsShown()) === '["p","a","w","s"]') {
+      ok('the patched host hands over its tab record as read, before dropping missing tabs, and what is shown now in tabs, restored tabs, other windows and the sidebar');
+    } else bad(`the host handed over ${JSON.stringify(env.__cceTabsAtStart)} and ${env.__cceSessionsShown && JSON.stringify(env.__cceSessionsShown())}`);
+  }
+  const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/executeCommand\('claude-vscode\.editor\.open', t\.sessionId, undefined, undefined, undefined, t\.fullEditor,\s*\{ programmatic: 'pin-to-panel' \}\)/.test(extSrc)
+      && /cfg\(\)\.get\(REOPEN_SETTING, true\) === false/.test(extSrc)
+      && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.reopenDroppedTabs']) {
+    ok('the dropped tabs are reopened with Claude Code\'s own open command, without changing the preferred location, behind a setting of their own');
+  } else bad('the reopening is not wired as expected');
+}
+
 console.log('\nthe patch markers follow the code');
 {
   /* A marker that stays the same while what patching writes changes leaves the old patch in place, and every step
