@@ -744,6 +744,16 @@ function start(context, renamed) {
     } finally { keeping = false; }
   };
   let keepSoon = 0, toldStale = false;
+  /* New conversations and closed ones, opened from the session list in a tab or in the sidebar as asked
+     (src/page/86-open-in-tab-or-sidebar.js). Both call the official open command with the arguments the session list's
+     own open passes, apart from where to: a programmatic open leaves claudeCode.preferredLocation as it is. The sidebar
+     one needs the host patch's request value, and a host from before it opens a tab instead. A conversation already
+     open somewhere is shown where it is. */
+  globalThis.__cceOpenHook = (where, sessionId) => {
+    const how = where === 'sidebar' ? 'cce-pin-to-sidebar' : 'pin-to-panel';
+    Promise.resolve(vscode.commands.executeCommand('claude-vscode.editor.open', sessionId, undefined, undefined, undefined, true,
+      { programmatic: how })).catch((e) => log.appendLine('open in ' + where + ': ' + (e && e.message)));
+  };
   /*
    * Called by the patched host from inside its own message handling, so the work is put off rather than done there.
    *
@@ -792,6 +802,7 @@ function start(context, renamed) {
     clearTimeout(keepFirst); clearInterval(keepTimer); if (keepSoon) clearTimeout(keepSoon); if (pinsSettle) clearTimeout(pinsSettle);
     if (pinsWatch) { try { pinsWatch.close(); } catch (_) { /* closed */ } }
     if (globalThis.__ccePinHook) delete globalThis.__ccePinHook;
+    if (globalThis.__cceOpenHook) delete globalThis.__cceOpenHook;
     if (globalThis.__ccePinnedIds) delete globalThis.__ccePinnedIds;
   } });
   refreshPlans();

@@ -24,7 +24,7 @@ const vm = require('vm');
 
 const { applyEdits } = require('./edits');
 
-const VERSION = 12;
+const VERSION = 13;
 const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION} */`;
 const ANY_MARK = '/* CLAUDE-CODE-EXTRAS-HOST v';
 const BACKUP_SUFFIX = '.claude-code-extras-host.bak';
@@ -94,8 +94,8 @@ const EDITS = [
       + link,
   },
   /*
-   * Messages from a panel meant for this extension: the panel's time zone, and a conversation pinned or unpinned in the
-   * session list.
+   * Messages from a panel meant for this extension: the panel's time zone, a conversation pinned or unpinned in the
+   * session list, and a conversation to open in a tab or in the sidebar.
    *
    * Every message a panel sends passes through the one function that logs it, before anything decides what the message
    * is, and Claude Code itself ignores both types. A global is how each reaches this extension - both run in one
@@ -108,7 +108,20 @@ const EDITS = [
       + `&&typeof ${msg}.timeZone==="string"){globalThis.__cceClientTimeZone=${msg}.timeZone;`
       + `globalThis.__cceTzHook&&globalThis.__cceTzHook(${msg}.timeZone)}`
       + `else if(${msg}&&${msg}.type==="cce_session_pin"&&typeof ${msg}.sessionId==="string"){`
-      + `globalThis.__ccePinHook&&globalThis.__ccePinHook(${msg}.sessionId,${msg}.pinned===true)}}catch(e){}${rest}`,
+      + `globalThis.__ccePinHook&&globalThis.__ccePinHook(${msg}.sessionId,${msg}.pinned===true)}`
+      + `else if(${msg}&&${msg}.type==="cce_open_session"&&(${msg}.where==="tab"||${msg}.where==="sidebar")){`
+      + `globalThis.__cceOpenHook&&globalThis.__cceOpenHook(${msg}.where,typeof ${msg}.sessionId==="string"?${msg}.sessionId:void 0)}}catch(e){}${rest}`,
+  },
+  /*
+   * A conversation opened in the sidebar on request. Opening one is decided in one function: a programmatic open goes to
+   * the sidebar only when the preferred location is the sidebar, and otherwise to a tab. One more request value sends it
+   * to the sidebar whatever that setting says, unless the conversation is already open in a tab, where it is shown. The
+   * setting is not touched, as with the official programmatic opens.
+   */
+  {
+    name: 'open in the sidebar on request',
+    re: /if\(([\w$]+)\)return\{target:\1==="honor-preferred-location"&&([\w$]+)==="sidebar"&&!([\w$]+)\?"sidebar":"panel",/g,
+    to: (m, how, where, open) => `if(${how})return{target:(${how}==="cce-pin-to-sidebar"||${how}==="honor-preferred-location"&&${where}==="sidebar")&&!${open}?"sidebar":"panel",`,
   },
   /*
    * The dot after a tab's title (src/tabdot.js says what it is for).

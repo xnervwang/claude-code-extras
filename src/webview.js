@@ -217,6 +217,7 @@ const SWITCHES = [
   'footerMute',       // the button that silences the chimes
   'backgroundSessions', // the `claude --bg` sessions a conversation started, in its agent map
   'openSessions',     // OPEN SESSIONS at the top of the session list
+  'openInTabOrSidebar', // New in tab / New in sidebar, and Resume in tab / Resume in sidebar on the session list
 ];
 
 /** The live stylesheet for one set of settings. */
@@ -334,6 +335,24 @@ const EDITS = [
     name: 'session list keeps its place after a switch from open sessions',
     re: /if\(([\w$]+)\.current!==null\)return;let ([\w$]+)=([\w$]+)\.findIndex\(\(([\w$]+)\)=>\4===([\w$]+)\);if\(\2<0\|\|\5===null\)return;([\w$]+)\.anchor\(\5\)/g,
     to: (m, busy, idx, rows, x, active, list) => `if(${busy}.current!==null)return;if(typeof window.__cceSkipFollow==="function"&&window.__cceSkipFollow(${active}))return;let ${idx}=${rows}.findIndex((${x})=>${x}===${active});if(${idx}<0||${active}===null)return;${list}.anchor(${active})`,
+  },
+  {
+    // New session becomes New in tab and New in sidebar (86-open-in-tab-or-sidebar.js); the page returning null keeps it.
+    name: 'new session in a tab or the sidebar',
+    re: /([\w$]+)\("button",\{className:([\w$]+)\.newSessionButton,onClick:\(\)=>\{([\w$]+)\.openInEditor\(\)\},children:\[([\w$]+)\(([\w$]+),\{className:\2\.newSessionIcon\}\),"New session"\]\}\)/g,
+    to: (m, jsxs, cls, ctx, jsx, icon) => `(typeof window.__cceNewSessionButtons==="function"&&window.__cceNewSessionButtons({jsx:${jsx},jsxs:${jsxs},cls:${cls},Icon:${icon}})||${m})`,
+  },
+  {
+    /* Resume session, for a conversation that is not open, becomes Resume in tab and Resume in sidebar. The live list's
+       menu and the archived list's menu each build it, with one more argument in the first. */
+    name: 'resume in a tab or the sidebar, live list',
+    re: /function ([\w$]+)\(([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)\{let ([\w$]+)=\[\];if\(\2\.length===1\)\6\.push\(\{label:\5\?\.sessionIsOpen\?"Switch to session":"Resume session",onSelect:\4\.resumeSession\}\);/g,
+    to: (m, fn, keys, groups, act, info, items) => `function ${fn}(${keys},${groups},${act},${info}){let ${items}=[];if(${keys}.length===1){let cceR=!${info}?.sessionIsOpen&&typeof window.__cceResumeItems==="function"?window.__cceResumeItems(${keys}[0]):null;if(cceR)${items}.push(...cceR);else ${items}.push({label:${info}?.sessionIsOpen?"Switch to session":"Resume session",onSelect:${act}.resumeSession})}`,
+  },
+  {
+    name: 'resume in a tab or the sidebar, archived list',
+    re: /function ([\w$]+)\(([\w$]+),([\w$]+),([\w$]+)\)\{let ([\w$]+)=\[\];if\(\2\.length===1\)\5\.push\(\{label:\4\?\.sessionIsOpen\?"Switch to session":"Resume session",onSelect:\3\.resumeSession\}\);/g,
+    to: (m, fn, keys, act, info, items) => `function ${fn}(${keys},${act},${info}){let ${items}=[];if(${keys}.length===1){let cceR=!${info}?.sessionIsOpen&&typeof window.__cceResumeItems==="function"?window.__cceResumeItems(${keys}[0]):null;if(cceR)${items}.push(...cceR);else ${items}.push({label:${info}?.sessionIsOpen?"Switch to session":"Resume session",onSelect:${act}.resumeSession})}`,
   },
   {
     // The list's row classes, so a row in OPEN SESSIONS is laid out like a row of the list.

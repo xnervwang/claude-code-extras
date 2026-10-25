@@ -86,7 +86,8 @@ Verified against Claude Code 2.1.309 and 2.1.310.
 | **Conversation navigation:** Find your messages by time and first words or find compaction points; filter, click to scroll, step with arrows or `,` and `.`, or jump to the top or bottom. | Right edge of the panel |
 | **Focus view button:** Toggle Claude Code's own Focus view; while it is on and Claude works, the working line shows the latest tool call and elapsed time, such as `Bash running for 2m55s (since 11:11:18)`. | Footer button; working line |
 | **Context meter:** Keep the meter visible, outline it when 15% of the window remains, and hover for a breakdown by category, memory files and custom agents. | Panel's context meter |
-| **Open sessions:** The conversations open in this window, in an editor tab or the sidebar, most recently active first, each with its status dot; click one to switch to it. | Top of the session list |
+| **Open sessions:** The conversations open in this window, in an editor tab or the sidebar, most recently active first, each with the status dot the session list gives it; hover one to see which session-list group it is in, click one to switch to it. | Top of the session list |
+| **Open in a tab or the sidebar:** **New in tab** and **New in sidebar** replace the New session button. A closed conversation's right-click menu offers **Resume in tab** and **Resume in sidebar** instead of Resume session; an open one keeps Switch to session. The choice applies to that conversation only: `claudeCode.preferredLocation` is not changed, and the Claude button at the right of the editor tabs opens where that setting says. | Session list |
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
 | **Pinned conversations:** Click the pin at the start of a session-list row to keep that conversation from Claude Code's transcript cleanup (`cleanupPeriodDays`) and out of Archived sessions. | Session list |
 | **Chimes:** A short sound when a turn finishes, permission is requested or Claude asks a question, played on the machine showing the panel; mute it in the footer. | Footer; machine showing the panel |
@@ -102,7 +103,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 27 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 28 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 

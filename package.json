@@ -275,6 +275,11 @@
           "default": true,
           "markdownDescription": "The `claude --bg` sessions a conversation started, listed in its agents button with how each is doing and how it ended. Turning it off stops the work, not only the drawing, and takes effect without a reload."
         },
+        "claudeCodeWorkPlan.show.openInTabOrSidebar": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "On the session list, **New in tab** and **New in sidebar** replace New session, and a closed conversation's right-click menu offers **Resume in tab** and **Resume in sidebar** instead of Resume session. The choice applies to that conversation only; `claudeCode.preferredLocation` is not changed. Off shows Claude Code's own New session and Resume session. Takes effect without a reload."
+        },
         "claudeCodeWorkPlan.show.openSessions": {
           "type": "boolean",
           "default": true,

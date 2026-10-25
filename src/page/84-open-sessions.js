@@ -142,10 +142,20 @@
         try { src.context.openInEditor(row.id, void 0, { openState: row.state, isRemote: false }); } catch (e) { /* nothing opens */ }
       };
       var noop = function(){};
+      var groups = asList(store && store.sessionGroups && store.sessionGroups.value);
+      var openGroupTitle = function(id){
+        var names = [];
+        for (var g = 0; g < groups.length; g++) {
+          var grp = groups[g];
+          if (grp && Array.isArray(grp.sessionIds) && grp.sessionIds.indexOf(id) >= 0 && grp.name) names.push(grp.name);
+        }
+        return names.length ? 'Group: ' + names.join(', ') : 'Not in a group';
+      };
       var body = rows.map(function(row){
         if (Row && row.item) {
           var archived = !!(row.item.archived && row.item.archived.value);
-          return F(Row, {
+          // The row is the list's own and takes no title, so the group it belongs to is shown on hover around it.
+          return F('div', { title: openGroupTitle(row.id), 'data-cce-open-group': '1', style: { minWidth: 0 }, children: F(Row, {
             id: 'cce-open-' + row.id, session: row.item,
             isActive: row.id === active, isHighlighted: false, isSelected: false, isRenaming: renaming === row.id, searchQuery: '',
             onClick: function(){ open(row); },
@@ -163,7 +173,7 @@
             onUnarchive: archived && store && typeof store.unarchiveSession === 'function' ? function(item){ store.unarchiveSession(item); } : void 0,
             currentCwd: src.context.defaultCwd && src.context.defaultCwd.value,
             openState: row.state,
-          }, row.id);
+          }) }, row.id);
         }
         return W('button', {
           type: 'button', className: (l.sessionItem || '') + (row.id === active && l.active ? ' ' + l.active : ''),
