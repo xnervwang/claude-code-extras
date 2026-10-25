@@ -2,8 +2,8 @@
 // Copyright (c) 2026, Xnerv Wang
 // All rights reserved.
 
-// Hover text on the session list's rows, in OPEN SESSIONS and below it: the group the conversation is in, and its
-// session ID.
+// Hover text on the session list's rows, in OPEN SESSIONS and below it: the section the conversation is listed under -
+// its group, Ungrouped or Archived sessions - and its session ID.
 // Fragment of the in-page script - see README.md in this folder.
 
   // The panel shows no native `title` tooltip (05-page-setup.js says why), so the text is drawn with the same box as the
@@ -11,23 +11,27 @@
   // The box waits a moment, as a tooltip does, so moving across the list does not flash one box per row.
   var ROW_HOVER_MS = 600;
   var rowHoverTimer = 0, rowHoverEl = null;
-  var rowGroups = function(id){
-    var names = [];
+  // The section the list puts the row under, decided as the list decides it: an archived conversation is under Archived
+  // sessions whatever group it was in, one in a group under that group (the last group naming it, if several do), and
+  // the rest under Ungrouped. A remote conversation's group key is not its plain ID, so for it only the ID is shown.
+  var rowSection = function(session, id){
+    if (session.archived && session.archived.value) return 'Archived sessions';
+    var name = 'Ungrouped';
     try {
       var store = window.__cceSessionList && window.__cceSessionList.sessions;
       var groups = store && store.sessionGroups && store.sessionGroups.value;
       for (var g = 0; Array.isArray(groups) && g < groups.length; g++) {
         var grp = groups[g];
-        if (grp && Array.isArray(grp.sessionIds) && grp.sessionIds.indexOf(id) >= 0 && grp.name) names.push(grp.name);
+        if (grp && Array.isArray(grp.sessionIds) && grp.sessionIds.indexOf(id) >= 0) name = grp.name || 'Unnamed group';
       }
     } catch (e) { /* no groups known */ }
-    return names;
+    return name;
   };
   var rowHoverText = function(session){
     var id = session && session.sessionId && session.sessionId.value;
     if (typeof id !== 'string' || !id) return '';
-    var names = rowGroups(id);
-    return (names.length ? 'Group: ' + names.join(', ') : 'Not in a group') + '\nSession ID: ' + id;
+    var remote = !!(session.isRemote && session.isRemote.value);
+    return (remote ? '' : 'Group: ' + rowSection(session, id) + '\n') + 'Session ID: ' + id;
   };
   var rowHoverEnd = function(){
     if (rowHoverTimer) { clearTimeout(rowHoverTimer); rowHoverTimer = 0; }

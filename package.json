@@ -293,7 +293,7 @@
         "claudeCodeWorkPlan.show.sessionHoverDetails": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Hovering over a conversation anywhere in the session list, including Open sessions, shows its group name (or that it is in no group) and its session ID. Takes effect without a reload."
+          "markdownDescription": "Hovering over a conversation in the session list shows its session ID and where it sits in the list below Open sessions: its group, Ungrouped or Archived sessions. Rows in Open sessions show the same. Takes effect without a reload."
         },
         "claudeCodeWorkPlan.show.openSessions": {
           "type": "boolean",

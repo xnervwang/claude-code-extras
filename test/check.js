@@ -4702,16 +4702,18 @@ console.log('\nhover text on the session list rows');
   const env = { window: {}, isOff: (k) => env.offKey === k, offKey: '',
     showLabel: (el, text) => shown.push(text), hideLabel: () => {},
     setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout: () => {} };
-  env.window.__cceSessionList = { sessions: { sessionGroups: sig([{ id: 'g1', name: 'Release', sessionIds: ['A', 'C'] }, { id: 'g2', name: 'Docs', sessionIds: ['C'] }, { id: 'g3', name: '', sessionIds: ['B'] }]) } };
+  env.window.__cceSessionList = { sessions: { sessionGroups: sig([{ id: 'g1', name: 'Release', sessionIds: ['A', 'C', 'R'] }, { id: 'g2', name: 'Docs', sessionIds: ['C', 'Z'] }]) } };
   vm.createContext(env);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '84-row-hover.js'), 'utf8'), env);
   const el = () => ({ isConnected: true, addEventListener() {} });
-  const session = (id) => ({ sessionId: sig(id) });
-  const hover = (id) => { timers.length = 0; shown.length = 0; env.window.__cceRowHover(session(id), el(), true); timers.forEach((f) => f()); return shown.slice(); };
-  const got = [hover('A'), hover('B'), hover('C')];
-  const want = [['Group: Release\nSession ID: A'], ['Not in a group\nSession ID: B'], ['Group: Release, Docs\nSession ID: C']];
-  if (JSON.stringify(got) === JSON.stringify(want)) ok('hovering a row, in OPEN SESSIONS or below it, shows the group it is in, or that it is in none, and its session ID');
-  else bad(`the hover text was ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  const session = (id, extra) => ({ sessionId: sig(id), ...(extra || {}) });
+  const hover = (id, extra) => { timers.length = 0; shown.length = 0; env.window.__cceRowHover(session(id, extra), el(), true); timers.forEach((f) => f()); return shown.slice(); };
+  const got = [hover('A'), hover('B'), hover('C'), hover('Z', { archived: sig(true) }), hover('R', { isRemote: sig(true) })];
+  const want = [['Group: Release\nSession ID: A'], ['Group: Ungrouped\nSession ID: B'], ['Group: Docs\nSession ID: C'],
+    ['Group: Archived sessions\nSession ID: Z'], ['Session ID: R']];
+  if (JSON.stringify(got) === JSON.stringify(want)) {
+    ok('hovering a row shows the section the list puts it under - its group, Ungrouped or Archived sessions - and its session ID');
+  } else bad(`the hover text was ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
   timers.length = 0; shown.length = 0;
   env.window.__cceRowHover(session('A'), el(), true);
   env.window.__cceRowHover(session('A'), el(), false);
