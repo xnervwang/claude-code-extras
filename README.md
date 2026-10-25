@@ -94,7 +94,7 @@ Verified against Claude Code 2.1.309 and 2.1.310.
 | **Background sessions:** This conversation's `claude --bg` sessions, each state in its own colour and counted at the top, with what each waits for, its result, and the attach and logs commands. | Agents button in the footer and its map |
 | **Scheduled prompts:** See timers this conversation set through Claude Code's scheduled tasks, with each schedule, last-fired time and prompt. | Agents button in the footer and its map |
 | **Background commands:** See a count such as `1 task` while a background build, test run or `sleep` timer runs, with the list one click away. | Footer |
-| **Tabs back after a restart:** Claude Code tabs that were open when the window closed but that VS Code did not restore, as can happen after the window lost its remote connection, are opened again when it starts. Tabs you closed stay closed. | Editor tabs |
+| **Tabs back after a restart:** Claude Code tabs that were open when the window closed but that VS Code did not restore, as can happen after the window lost its remote connection, are opened again when it starts. Tabs you closed while connected stay closed. | Editor tabs |
 | **Marks on tabs:** 🔹 after a Claude Code tab's title while Claude waits for your permission or answer, 🔸 when it finished and you have not looked yet, in the colours of the dot on the tab's icon. | Editor tab titles |
 | **Session information:** See the session ID, starting directory, transcript location and size; click a value to copy it. | Footer button |
 
@@ -163,6 +163,7 @@ Settings named `claudeCodeExtras.*` by earlier versions are copied to the same n
 - A plan file is deleted once its conversation's transcript is gone and the file has not been written for a week. Claude Code removes old transcripts, apart from those of conversations pinned on the session list.
 - Uninstalling tries to copy plans to `~/.claude/agent-work-plan-plans-<timestamp>/` before unregistering the plugin, which deletes its data directory. Uninstalling continues if the copy fails, so keep your own copy of a plan that matters.
 - Disabling the extension leaves the patch in place. Run `Work Plan for Claude Code: Remove from Claude Code (restore original files)` first.
+- If you close a Claude Code tab while the window cannot reach its remote machine, the tab opens again the next time the window starts, because the close could not be recorded. Close it again once connected.
 - An orange exclamation mark at the panel's top right means a Claude Code build changed something the patch relies on, and some panel features are not working.
 - A pinned conversation that the cleanup would have reached sorts in the session list by the later time its files were given. Uninstalling the extension deletes the pins.
 - Editor-tab panels that stay blank in every window after running version 1.0.8 or earlier: quit VS Code and delete the `CacheStorage` folders under `WebStorage` in VS Code's data folder (`~/Library/Application Support/Code` on macOS, `%APPDATA%\Code` on Windows, `~/.config/Code` on Linux).

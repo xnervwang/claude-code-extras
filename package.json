@@ -283,7 +283,7 @@
         "claudeCodeWorkPlan.reopenDroppedTabs": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Reopen the Claude Code tabs that were open when the window closed but that VS Code did not restore, as can happen after the window lost its remote connection. Tabs you closed stay closed. Takes effect the next time the window starts."
+          "markdownDescription": "Reopen the Claude Code tabs that were open when the window closed but that VS Code did not restore, as can happen after the window lost its remote connection. Tabs you closed while connected stay closed. Takes effect the next time the window starts."
         },
         "claudeCodeWorkPlan.show.openSessions": {
           "type": "boolean",
