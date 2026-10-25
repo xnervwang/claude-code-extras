@@ -4695,30 +4695,42 @@ console.log('\nopening in a tab or the sidebar from the session list');
   } else bad('the openInTabOrSidebar switch has no setting');
 }
 
-console.log('\nthe group of a row in open sessions');
+console.log('\nhover text on the session list rows');
 {
   const sig = (v) => ({ value: v });
-  const env = { window: {}, isOff: () => false, localStorage: { getItem: () => null, setItem() {} }, Date, Array, String, Math, isFinite,
-    head: { appendChild() {} }, document: { createElement: () => ({ setAttribute() {}, textContent: '' }) } };
-  const item = (id) => ({ sessionId: sig(id), summary: sig(id), lastModifiedTime: sig(Date.now()), isRemote: sig(false) });
-  env.window.__cceSessionRow = function Row() {};
-  env.window.__cceSessionList = {
-    sessions: { sessions: sig([item('A'), item('B'), item('C')]),
-      sessionGroups: sig([{ id: 'g1', name: 'Release', sessionIds: ['A', 'C'] }, { id: 'g2', name: 'Docs', sessionIds: ['C'] }, { id: 'g3', name: '', sessionIds: ['B'] }]) },
-    context: { openInEditor() {} },
-    comms: { openSessionIds: sig(['A', 'B', 'C']), sidebarSessionIds: sig([]), sessionStates: sig([]), unreadSessionKeys: sig([]), activeSessionId: sig('A') },
-  };
+  const shown = [], timers = [];
+  const env = { window: {}, isOff: (k) => env.offKey === k, offKey: '',
+    showLabel: (el, text) => shown.push(text), hideLabel: () => {},
+    setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout: () => {} };
+  env.window.__cceSessionList = { sessions: { sessionGroups: sig([{ id: 'g1', name: 'Release', sessionIds: ['A', 'C'] }, { id: 'g2', name: 'Docs', sessionIds: ['C'] }, { id: 'g3', name: '', sessionIds: ['B'] }]) } };
   vm.createContext(env);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '84-open-sessions.js'), 'utf8'), env);
-  const h = (type, props, key) => ({ type, props: props || {}, key });
-  const walk = (n, f, out = []) => { if (!n || typeof n !== 'object') return out; if (Array.isArray(n)) { n.forEach((c) => walk(c, f, out)); return out; } if (f(n)) out.push(n); walk(n.props && n.props.children, f, out); return out; };
-  const tree = env.window.__cceOpenSessions({ jsx: h, jsxs: h, cls: {} });
-  const got = walk(tree, (n) => n.props && n.props['data-cce-open-group']).map((n) => [n.props.children.props.session.sessionId.value, n.props.title]).sort();
-  const want = [['A', 'Group: Release'], ['B', 'Not in a group'], ['C', 'Group: Release, Docs']];
-  if (JSON.stringify(got) === JSON.stringify(want)) ok('hovering a row shows the group it is in, or that it is in none');
-  else bad(`the rows' titles were ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '84-row-hover.js'), 'utf8'), env);
+  const el = () => ({ isConnected: true, addEventListener() {} });
+  const session = (id) => ({ sessionId: sig(id) });
+  const hover = (id) => { timers.length = 0; shown.length = 0; env.window.__cceRowHover(session(id), el(), true); timers.forEach((f) => f()); return shown.slice(); };
+  const got = [hover('A'), hover('B'), hover('C')];
+  const want = [['Group: Release\nSession ID: A'], ['Not in a group\nSession ID: B'], ['Group: Release, Docs\nSession ID: C']];
+  if (JSON.stringify(got) === JSON.stringify(want)) ok('hovering a row, in OPEN SESSIONS or below it, shows the group it is in, or that it is in none, and its session ID');
+  else bad(`the hover text was ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  timers.length = 0; shown.length = 0;
+  env.window.__cceRowHover(session('A'), el(), true);
+  env.window.__cceRowHover(session('A'), el(), false);
+  const afterLeave = shown.length;
+  env.offKey = 'sessionHoverDetails';
+  const off = hover('A');
+  env.offKey = '';
+  if (afterLeave === 0 && timers.length === 0 && off.length === 0) ok('leaving the row before the delay shows nothing, and the switch off shows nothing');
+  else bad(`after leaving ${afterLeave} box(es) were shown; with the switch off ${JSON.stringify(off)}`);
+  const { applyEdits } = require('../src/edits');
+  const e = webview.EDITS.find((x) => x.name === 'session row hover');
+  const row = 'var Xh5=u0(function({session:J,id:Z,isActive:X},E){let g=1;return w("button",{ref:E,id:Z,className:`${b5.sessionItem} ${X?b5.active:""}`,onMouseMove:W})});';
+  const r = e ? applyEdits(row, [e]) : { error: 'no such edit' };
+  if (!r.error && r.out.includes('return w("button",{ref:E,id:Z,onMouseEnter:(cceE)=>{typeof window.__cceRowHover==="function"&&window.__cceRowHover(J,cceE.currentTarget,!0)},onMouseLeave:(cceE)=>{typeof window.__cceRowHover==="function"&&window.__cceRowHover(J,cceE.currentTarget,!1)},className:')) {
+    ok('the list\'s row component tells the page as the pointer enters and leaves a row, with the row\'s conversation');
+  } else bad(`the row hover edit gave ${r.error || r.out}`);
+  if (webview.SWITCHES.includes('sessionHoverDetails') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.sessionHoverDetails']) ok('the switch is a setting of its own');
+  else bad('the sessionHoverDetails switch has no setting');
 }
-
 console.log('\na hidden sidebar in open sessions');
 {
   const { applyEdits } = require('../src/edits');

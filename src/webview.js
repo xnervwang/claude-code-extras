@@ -219,6 +219,7 @@ const SWITCHES = [
   'openSessions',     // OPEN SESSIONS at the top of the session list
   'openInTabOrSidebar', // New in tab / New in sidebar, and Resume in tab / Resume in sidebar on the session list
   'deleteArchived',   // Delete in the Archived sessions menu
+  'sessionHoverDetails', // a session list row's group and session ID on hover
 ];
 
 /** The live stylesheet for one set of settings. */
@@ -323,6 +324,14 @@ const EDITS = [
     name: 'session row component for open sessions',
     re: /([\w$]+)=([\w$]+)\(function\(\{session:([\w$]+),id:([\w$]+),isActive:/g,
     to: (m, name, wrap, session, id) => `${name}=window.__cceSessionRow=${wrap}(function({session:${session},id:${id},isActive:`,
+  },
+  {
+    // The row component tells the page when the pointer enters and leaves a row, for its hover text (84-row-hover.js).
+    name: 'session row hover',
+    re: /(\(function\(\{session:([\w$]+),id:([\w$]+),isActive:[^]{0,4000}?return [\w$]+\("button",\{ref:[\w$]+,id:\3,)(className:`\$\{[\w$]+\.sessionItem\} )/g,
+    to: (m, head, session, id, cls) => `${head}`
+      + `onMouseEnter:(cceE)=>{typeof window.__cceRowHover==="function"&&window.__cceRowHover(${session},cceE.currentTarget,!0)},`
+      + `onMouseLeave:(cceE)=>{typeof window.__cceRowHover==="function"&&window.__cceRowHover(${session},cceE.currentTarget,!1)},${cls}`,
   },
   {
     // The panel's signal constructor, for the one piece of state OPEN SESSIONS keeps: which of its rows is being renamed.

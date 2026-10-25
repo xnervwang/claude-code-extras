@@ -290,6 +290,11 @@
           "default": true,
           "markdownDescription": "Add **Delete session…** to the right-click menu of a conversation in Archived sessions. After you confirm, it permanently deletes the conversation from disk: its transcripts, sub-agent conversations, saved tool outputs, file checkpoints (Claude Code's copies, not your files), debug log and work plan. It cannot be undone. A conversation open in a tab or the sidebar, or still running, is left alone. Takes effect without a reload."
         },
+        "claudeCodeWorkPlan.show.sessionHoverDetails": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Hovering over a conversation anywhere in the session list, including Open sessions, shows its group name (or that it is in no group) and its session ID. Takes effect without a reload."
+        },
         "claudeCodeWorkPlan.show.openSessions": {
           "type": "boolean",
           "default": true,

@@ -52,8 +52,8 @@
     if (labelBox && labelBox.parentNode) labelBox.parentNode.removeChild(labelBox);
     labelBox = null;
   };
-  var showLabel = function(el){
-    var text = el && el.getAttribute('aria-label');
+  var showLabel = function(el, given){
+    var text = typeof given === 'string' ? given : el && el.getAttribute('aria-label');
     if (!text) return;
     hideLabel();
     var box = document.createElement('div');
@@ -65,7 +65,7 @@
     s.border = '1px solid var(--app-input-border, var(--vscode-widget-border, #454545))';
     s.borderRadius = 'var(--corner-radius-large, 6px)';
     s.color = 'var(--app-primary-foreground, var(--vscode-foreground, #ccc))';
-    s.fontSize = '.9em'; s.lineHeight = '1.35';
+    s.fontSize = '.9em'; s.lineHeight = '1.35'; s.whiteSpace = 'pre-line'; s.overflowWrap = 'anywhere';
     box.textContent = text;
     document.body.appendChild(box);
     /* Measured after it is in the document, because its height depends on how many lines the text wrapped to. Above the
