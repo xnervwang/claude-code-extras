@@ -28,8 +28,9 @@ const path = require('path');
 const DAY = 86400000;
 /* The cleanup's own default when no settings file sets one. */
 const DEFAULT_DAYS = 30;
-/* How long this extension may go without running before a pinned file is lost: a window has to have been open at least
-   once in that time. Half the retention when that is shorter, so a short retention still leaves room. */
+/* How long this extension may go without running before a pinned file is lost, unless the setting says otherwise: a
+   window has to have been open at least once in that time. Half the retention when that is shorter, so a short retention
+   still leaves room and a long margin never puts a file's time at or past now. */
 const MARGIN_DAYS = 14;
 /* A modification time read back can differ from the one written by the file system's rounding. */
 const SAME_TIME_MS = 2000;
@@ -60,8 +61,10 @@ function retentionDays(files = [path.join(claudeDir(), 'settings.json'), path.jo
   return days === null ? DEFAULT_DAYS : days;
 }
 
-/** How many days short of the cleanup a pinned file is kept. */
-function marginDays(days) { return Math.min(MARGIN_DAYS, days / 2); }
+/** How many days short of the cleanup a pinned file is kept, given the margin asked for. */
+function marginDays(days, wanted = MARGIN_DAYS) {
+  return Math.min(Number.isFinite(wanted) && wanted >= 1 ? wanted : MARGIN_DAYS, days / 2);
+}
 
 const validRecord = (r) => r && typeof r === 'object' && Number.isFinite(r.real) && Number.isFinite(r.set);
 
@@ -111,11 +114,11 @@ function setPinned(file, id, on) {
  * only filled when every project folder could be read and at least one transcript was found in them, so a folder that
  * fails to list, or a projects folder that is not the one Claude Code writes to, cannot unpin anything.
  */
-async function keep({ ids, times = {}, days, projectsDir = path.join(claudeDir(), 'projects'), now = Date.now() }) {
+async function keep({ ids, times = {}, days, margin = MARGIN_DAYS, projectsDir = path.join(claudeDir(), 'projects'), now = Date.now() }) {
   const out = { pinned: ids.size, found: 0, touched: 0, errors: 0, updates: {}, gone: [] };
   const recorded = Object.keys(times);
   if (!ids.size && !recorded.length) return out;
-  const floor = new Date(now - days * DAY + marginDays(days) * DAY);
+  const floor = new Date(now - days * DAY + marginDays(days, margin) * DAY);
   const fsp = fs.promises;
   const refresh = async (file) => {
     try {
@@ -192,10 +195,10 @@ function applyPass(file, pass) {
  * What the page is handed: the pinned ids, each recorded [real, given] time pair, and the margin in days. Sorted, since
  * every window writes it into the same stylesheet and has to produce the same bytes.
  */
-function pageData(data, days) {
+function pageData(data, days, margin = MARGIN_DAYS) {
   const times = {};
   for (const id of Object.keys(data.times).sort()) times[id] = [Math.round(data.times[id].real), Math.round(data.times[id].set)];
-  return [data.pinned.slice().sort(), times, marginDays(days)];
+  return [data.pinned.slice().sort(), times, marginDays(days, margin)];
 }
 
 module.exports = {

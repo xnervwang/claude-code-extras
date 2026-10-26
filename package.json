@@ -250,6 +250,12 @@
           "default": true,
           "markdownDescription": "A pin at the start of each row of the session list, hollow until clicked. A pinned conversation is not deleted by Claude Code's transcript cleanup (`cleanupPeriodDays`) and is not moved to Archived sessions. Off hides the pins and stops both, and keeps what was pinned for when it is turned on again."
         },
+        "claudeCodeWorkPlan.sessionPinsMarginDays": {
+          "type": "number",
+          "default": 14,
+          "minimum": 1,
+          "markdownDescription": "Days a pinned conversation stays safe from Claude Code's transcript cleanup while no VS Code window with this extension connects to the machine that holds its transcript. Each refresh leaves its files this many days short of `cleanupPeriodDays` (Claude Code's setting, 30 days by default). A larger value covers longer gaps but sorts old pinned conversations higher in the session list; a smaller one keeps the order closer to their real activity. A value above half of `cleanupPeriodDays` counts as half."
+        },
         "claudeCodeWorkPlan.show.footerInfo": {
           "type": "boolean",
           "default": true,

@@ -106,7 +106,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 31 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 32 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 
@@ -168,7 +168,7 @@ Settings named `claudeCodeExtras.*` by earlier versions are copied to the same n
 - If you close a Claude Code tab while the window cannot reach its remote machine, the tab opens again the next time the window starts, because the close could not be recorded. Close it again once connected.
 - An orange exclamation mark at the panel's top right means a Claude Code build changed something the patch relies on, and some panel features are not working.
 - To protect a pinned conversation, the extension moves its files' modification time forward once they are old enough for the cleanup. The row still shows when the conversation was last active, but the list sorts it by the moved time. Uninstalling the extension removes the pins; the conversations stay, and the cleanup treats them as usual again.
-- Pins protect conversations only while a VS Code window with this extension connects to the machine that holds the transcripts at least once every 14 days, or every `cleanupPeriodDays` / 2 days if that is shorter. Any folder works: each window refreshes every pinned conversation on that machine a minute after it starts and every 30 minutes while it stays open. If no window connects for longer, and Claude Code runs on that machine in the meantime (in a terminal or as a background session), its cleanup can delete pinned conversations older than `cleanupPeriodDays`.
+- A pin protects a conversation only while some VS Code window with this extension connects to the machine that holds its transcript, and stays open for at least a minute, at least once every `claudeCodeWorkPlan.sessionPinsMarginDays` days (14 by default, and never more than half of `cleanupPeriodDays`). The folder the window has open does not matter: each window refreshes every pinned conversation on that machine a minute after it starts and every 30 minutes while it stays open. After a longer gap, Claude Code's cleanup can delete pinned conversations the next time Claude Code runs on that machine, in a terminal or as a background session.
 - Pins are kept on the machine that holds the transcripts. Pins on your computer do not protect a remote machine's conversations, or the other way round; a remote machine's pins are refreshed only by windows connected to it.
 - Editor-tab panels that stay blank in every window after running version 1.0.8 or earlier: quit VS Code and delete the `CacheStorage` folders under `WebStorage` in VS Code's data folder (`~/Library/Application Support/Code` on macOS, `%APPDATA%\Code` on Windows, `~/.config/Code` on Linux).
 

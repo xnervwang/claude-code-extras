@@ -4944,6 +4944,43 @@ console.log('\ndeleting an archived conversation');
   } else bad('the delete is not guarded as expected');
 }
 
+console.log('\nthe pins\' margin setting');
+{
+  const sp = require('../src/sessionpins');
+  const got = [sp.marginDays(90), sp.marginDays(90, 30), sp.marginDays(90, 60), sp.marginDays(20, 14), sp.marginDays(90, 0), sp.marginDays(90, 'x')];
+  if (JSON.stringify(got) === JSON.stringify([14, 30, 45, 10, 14, 14])) ok('the margin is the setting, 14 by default, never more than half the retention, and a value below one day falls back to 14');
+  else bad(`the margins were ${JSON.stringify(got)}`);
+  // The pass is asynchronous and this suite is not, so it runs in a child process, as the other pin passes do.
+  const script = `
+    const fs = require('fs'), os = require('os'), path = require('path');
+    const sp = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'sessionpins.js'))});
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-margin-'));
+    const id = '0ccccccc-0000-4000-8000-000000000000', DAY = 86400000, now = Date.UTC(2026, 9, 26);
+    (async () => {
+      try {
+        fs.mkdirSync(path.join(root, '-p'));
+        const f = path.join(root, '-p', id + '.jsonl');
+        fs.writeFileSync(f, '{}');
+        const old = new Date(now - 80 * DAY);
+        fs.utimesSync(f, old, old);
+        await sp.keep({ ids: new Set([id]), days: 90, margin: 30, projectsDir: root, now });
+        process.stdout.write(JSON.stringify({ age: Math.round((now - fs.statSync(f).mtimeMs) / DAY) }));
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
+  let m;
+  try { m = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); }
+  catch (e) { m = { error: e.message }; }
+  if (m.age === 60) ok('a pass with a 30-day margin under a 90-day retention gives an 80-day-old pinned file the age of 60 days');
+  else bad(`the margin pass gave ${JSON.stringify(m)}`);
+  if (sp.pageData({ pinned: [], times: {} }, 90, 30)[2] === 30) ok('the page is told the same margin, for the pin\'s hover text');
+  else bad('the page was not told the margin');
+  const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const setting = require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.sessionPinsMarginDays'];
+  if (setting && setting.default === 14 && setting.minimum === 1 && /margin: pinMargin\(\)/.test(extSrc) && /retentionDays\(\), pinMargin\(\)\)/.test(extSrc)) {
+    ok('the setting, 14 by default, reaches both the pass and the page');
+  } else bad('the margin setting is not wired as expected');
+}
+
 console.log('\nthe patch markers follow the code');
 {
   /* A marker that stays the same while what patching writes changes leaves the old patch in place, and every step

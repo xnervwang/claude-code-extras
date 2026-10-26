@@ -56,6 +56,7 @@ const LATENCY_KEY = 'claudeCodeExtras.latencyOffset';
 const THRESHOLD_SETTING = PREFIX + 'latencyThresholdSeconds';
 const LATENCY_ON_SETTING = PREFIX + 'recordOpenLatency';
 const PINS_SETTING = PREFIX + 'sessionPins';
+const PIN_MARGIN_SETTING = PREFIX + 'sessionPinsMarginDays';
 const REOPEN_SETTING = PREFIX + 'reopenDroppedTabs';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
@@ -218,6 +219,7 @@ function start(context, renamed) {
      machine that holds the transcripts, and every window reads and writes the same one. */
   const pinsFile = () => path.join(context.globalStorageUri.fsPath, sessionPins.FILE);
   const pinsOn = () => !removed() && cfg().get(PINS_SETTING, true) !== false;
+  const pinMargin = () => cfg().get(PIN_MARGIN_SETTING, sessionPins.MARGIN_DAYS);
   const options = () => {
     const off = switchedOff();
     return {
@@ -225,7 +227,7 @@ function start(context, renamed) {
       off,
       tasks: readTasks(knownDirs()),
       background: off.includes('backgroundSessions') ? [] : background.collect(),
-      pins: pinsOn() ? sessionPins.pageData(sessionPins.read(pinsFile()), sessionPins.retentionDays()) : null,
+      pins: pinsOn() ? sessionPins.pageData(sessionPins.read(pinsFile()), sessionPins.retentionDays(), pinMargin()) : null,
     };
   };
   const writeLiveNow = () => {
@@ -384,7 +386,7 @@ function start(context, renamed) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();
       /* A switch has to reach the panel the moment it is flipped, which is what writing the stylesheet does. */
-      const touched = [SETTING, COLOR_SETTING, EDGE_SETTING, PINS_SETTING]
+      const touched = [SETTING, COLOR_SETTING, EDGE_SETTING, PINS_SETTING, PIN_MARGIN_SETTING]
         .concat(webview.SWITCHES.map((k) => PREFIX + 'show.' + k));
       if (!touched.some((k) => e.affectsConfiguration(k))) return;
       const c = cfg().get(COLOR_SETTING, '');
@@ -735,7 +737,7 @@ function start(context, renamed) {
     try {
       const file = pinsFile();
       const now = sessionPins.read(file);
-      const r = await sessionPins.keep({ ids: new Set(now.pinned), times: now.times, days: sessionPins.retentionDays() });
+      const r = await sessionPins.keep({ ids: new Set(now.pinned), times: now.times, days: sessionPins.retentionDays(), margin: pinMargin() });
       const changed = sessionPins.applyPass(file, r);
       if (r.touched || r.errors || r.gone.length) {
         log.appendLine(`pinned conversations: ${r.found} of ${r.pinned} found, ${r.touched} file(s) given a later `
@@ -747,6 +749,10 @@ function start(context, renamed) {
     } finally { keeping = false; }
   };
   let keepSoon = 0, toldStale = false;
+  /* A wider margin moves pinned files forward on the next pass, so that pass is not left waiting half an hour. */
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+    if (e.affectsConfiguration(PIN_MARGIN_SETTING) && !keepSoon) keepSoon = setTimeout(() => { keepSoon = 0; keepPinned(); }, 5000);
+  }));
   /*
    * Called by the patched host from inside its own message handling, so the work is put off rather than done there.
    *
