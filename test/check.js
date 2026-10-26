@@ -4823,6 +4823,17 @@ console.log('\ntabs VS Code did not restore');
   if (JSON.stringify(got) === JSON.stringify(want)) {
     ok('a recorded conversation is reopened only when it is shown nowhere, no restored tab carries its title, it was not guessed, and its transcript is there');
   } else bad(`the tabs to reopen were ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  // A conversation running in another window waits; it is reopened once it runs nowhere and is not shown here.
+  const rec2 = [{ sessionId: id(1), title: 'Gone' }, { sessionId: id(2), title: 'Running in the old window' }, { sessionId: id(3), title: 'Open here' }];
+  const sp2 = dropped.split({ record: rec2, shown: [id(3), id(2)], elsewhere: [id(2)], labels: [], exists: () => true });
+  const ids = (l) => l.map((t) => t.sessionId);
+  const st1 = dropped.settle({ waiting: sp2.later, shown: [id(3), id(2)], elsewhere: [id(2)], labels: [] });
+  const st2 = dropped.settle({ waiting: st1.waiting, shown: [id(3)], elsewhere: [], labels: [] });
+  const st3 = dropped.settle({ waiting: sp2.later, shown: [id(3), id(2)], elsewhere: [], labels: [] });
+  if (JSON.stringify([ids(sp2.now), ids(sp2.later), ids(st1.ready), ids(st1.waiting), ids(st2.ready), ids(st3.ready), ids(st3.waiting)])
+      === JSON.stringify([[id(1)], [id(2)], [], [id(2)], [id(2)], [], []])) {
+    ok('a dropped tab whose conversation runs in another window waits, is reopened once it runs nowhere, and is let go if it gets shown here meanwhile');
+  } else bad(`the waiting tabs went ${JSON.stringify([ids(sp2.now), ids(sp2.later), ids(st1.ready), ids(st1.waiting), ids(st2.ready), ids(st3.ready), ids(st3.waiting)])}`);
   const many = Array.from({ length: 30 }, (_, i) => ({ sessionId: `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`, title: 't' + i }));
   if (dropped.find({ record: many, shown: [], labels: [], exists: () => true }).length === dropped.LIMIT) ok(`no more than ${dropped.LIMIT} are reopened at once`);
   else bad('the limit on reopened tabs did not hold');
@@ -4847,7 +4858,8 @@ console.log('\ntabs VS Code did not restore');
     env.globalThis = env;
     vm.createContext(env);
     vm.runInContext(r.out + ';new V({getPanelTabSessions:()=>[{sessionId:"a"},{sessionId:"b"}]});', env);
-    if (JSON.stringify(env.__cceTabsAtStart) === '[{"sessionId":"a"},{"sessionId":"b"}]' && JSON.stringify(env.__cceSessionsShown()) === '["p","a","w","s"]') {
+    if (JSON.stringify(env.__cceTabsAtStart) === '[{"sessionId":"a"},{"sessionId":"b"}]' && JSON.stringify(env.__cceSessionsShown()) === '["p","a","w","s"]'
+        && JSON.stringify(env.__cceSessionsElsewhere()) === '["w"]') {
       ok('the patched host hands over its tab record as read, before dropping missing tabs, and what is shown now in tabs, restored tabs, other windows and the sidebar');
     } else bad(`the host handed over ${JSON.stringify(env.__cceTabsAtStart)} and ${env.__cceSessionsShown && JSON.stringify(env.__cceSessionsShown())}`);
   }

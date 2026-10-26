@@ -60,4 +60,33 @@ function find({ record, shown, labels, strip = (t) => t, exists = transcriptExis
   return out;
 }
 
-module.exports = { find, transcriptExists, LIMIT };
+/*
+ * The record's entries to reopen now, and those to look at again: a conversation running in another window is shown
+ * there, but when that window is one the dev desktop is about to end, it stops running there within minutes.
+ */
+function split({ record, shown, elsewhere, labels, strip = (t) => t, exists = transcriptExists, limit = LIMIT }) {
+  const away = new Set(Array.isArray(elsewhere) ? elsewhere : []);
+  const all = Array.isArray(shown) ? shown : [];
+  const now = find({ record, shown: [...all, ...away], labels, strip, exists, limit });
+  const later = find({ record, shown: all.filter((id) => !away.has(id)), labels, strip, exists, limit })
+    .filter((t) => away.has(t.sessionId));
+  return { now, later };
+}
+
+/*
+ * Of the entries being looked at again, those to reopen now - running nowhere and shown nowhere - and those still to
+ * wait for. One shown here by now, opened by hand or by Claude Code, is neither.
+ */
+function settle({ waiting, shown, elsewhere, labels, strip = (t) => t }) {
+  const away = new Set(Array.isArray(elsewhere) ? elsewhere : []);
+  const here = new Set(Array.isArray(shown) ? shown : []);
+  const titles = new Set((Array.isArray(labels) ? labels : []).map(strip));
+  const ready = [], still = [];
+  for (const t of Array.isArray(waiting) ? waiting : []) {
+    if (away.has(t.sessionId)) still.push(t);
+    else if (!here.has(t.sessionId) && !titles.has(t.title)) ready.push(t);
+  }
+  return { ready, waiting: still };
+}
+
+module.exports = { find, split, settle, transcriptExists, LIMIT };

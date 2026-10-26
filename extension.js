@@ -804,13 +804,41 @@ function start(context, renamed) {
     if (globalThis.__ccePinnedIds) delete globalThis.__ccePinnedIds;
   } });
   /*
-   * Claude Code tabs VS Code did not bring back (src/droppedtabs.js), looked for once, after Claude Code has started: by
-   * then VS Code has put back the tabs it kept and Claude Code has matched them to their conversations. They open where
-   * Claude Code opens a tab, and the tab that was in front is put back in front.
+   * Claude Code tabs VS Code did not bring back (src/droppedtabs.js), looked for after Claude Code has started: by then
+   * VS Code has put back the tabs it kept and Claude Code has matched them to their conversations. They open where Claude
+   * Code opens a tab, and the tab that was in front is put back in front.
+   *
+   * A conversation still running in another window is not opened a second time. After a reload that window is often the
+   * same window before it lost its connection: the dev desktop keeps its extension host, and the conversations running
+   * in it, for five minutes once a new window connects, and then ends them. So such a tab is looked at again for a while,
+   * and opened once its conversation is running nowhere.
    */
   const FOCUS_GROUP = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth']
     .map((n) => `workbench.action.focus${n}EditorGroup`);
+  const DROPPED_WAIT_MS = 10 * 60000, DROPPED_RECHECK_MS = 15000;
   const isClaudeTab = (t) => t.input instanceof vscode.TabInputWebview && String(t.input.viewType).includes('claudeVSCodePanel');
+  const claudeLabels = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs.filter(isClaudeTab).map((t) => t.label));
+  const stripMark = (t) => tabdot.withDot(t, 'plain', false);
+  const reopenTabs = async (list, why) => {
+    const group = vscode.window.tabGroups.activeTabGroup, front = group && group.activeTab;
+    const at = front ? group.tabs.indexOf(front) : -1, column = group && group.viewColumn;
+    let reopened = 0;
+    for (const t of list) {
+      try {
+        await vscode.commands.executeCommand('claude-vscode.editor.open', t.sessionId, undefined, undefined, undefined, t.fullEditor,
+          { programmatic: 'pin-to-panel' });
+        reopened++;
+      } catch (e) { log.appendLine(`reopening "${t.title}" (${t.sessionId}): ${e && e.message}`); }
+    }
+    log.appendLine(`Reopened ${reopened} Claude Code tab(s) VS Code did not restore${why}: ${list.map((t) => `"${t.title}"`).join(', ')}`);
+    if (reopened) vscode.window.setStatusBarMessage(`Reopened ${reopened} Claude Code tab${reopened === 1 ? '' : 's'} VS Code did not restore`, 10000);
+    if (at >= 0 && FOCUS_GROUP[column - 1]) {
+      try {
+        await vscode.commands.executeCommand(FOCUS_GROUP[column - 1]);
+        await vscode.commands.executeCommand('workbench.action.openEditorAtIndex', at);
+      } catch (_) { /* the reopened tab stays in front */ }
+    }
+  };
   let droppedTries = 0, droppedTimer = setTimeout(function lookForDropped() {
     droppedTimer = undefined;
     const atStart = globalThis.__cceTabsAtStart, shown = globalThis.__cceSessionsShown;
@@ -819,40 +847,32 @@ function start(context, renamed) {
       return;
     }
     if (!enabled() || removed() || cfg().get(REOPEN_SETTING, true) === false) return;
-    let lost;
+    const elsewhere = () => { try { return typeof globalThis.__cceSessionsElsewhere === 'function' ? globalThis.__cceSessionsElsewhere() : []; } catch (_) { return []; } };
+    let lost, waiting;
     try {
-      lost = droppedTabs.find({
-        record: atStart, shown: shown(),
-        labels: vscode.window.tabGroups.all.flatMap((g) => g.tabs.filter(isClaudeTab).map((t) => t.label)),
-        strip: (t) => tabdot.withDot(t, 'plain', false),
-      });
+      ({ now: lost, later: waiting } = droppedTabs.split({ record: atStart, shown: shown(), elsewhere: elsewhere(), labels: claudeLabels(), strip: stripMark }));
     } catch (e) { log.appendLine('looking for Claude Code tabs VS Code did not restore: ' + (e && e.message)); return; }
-    if (!lost.length) return;
-    const group = vscode.window.tabGroups.activeTabGroup, front = group && group.activeTab;
-    const at = front ? group.tabs.indexOf(front) : -1, column = group && group.viewColumn;
-    (async () => {
-      let reopened = 0;
-      for (const t of lost) {
-        try {
-          await vscode.commands.executeCommand('claude-vscode.editor.open', t.sessionId, undefined, undefined, undefined, t.fullEditor,
-            { programmatic: 'pin-to-panel' });
-          reopened++;
-        } catch (e) { log.appendLine(`reopening "${t.title}" (${t.sessionId}): ${e && e.message}`); }
-      }
-      log.appendLine(`Reopened ${reopened} Claude Code tab(s) VS Code did not restore: ${lost.map((t) => `"${t.title}"`).join(', ')}`);
-      if (reopened) vscode.window.setStatusBarMessage(`Reopened ${reopened} Claude Code tab${reopened === 1 ? '' : 's'} VS Code did not restore`, 10000);
-      if (at >= 0 && FOCUS_GROUP[column - 1]) {
-        try {
-          await vscode.commands.executeCommand(FOCUS_GROUP[column - 1]);
-          await vscode.commands.executeCommand('workbench.action.openEditorAtIndex', at);
-        } catch (_) { /* the reopened tab stays in front */ }
-      }
-    })();
+    if (lost.length) reopenTabs(lost, '').catch(() => {});
+    if (!waiting.length) return;
+    log.appendLine(`Waiting to reopen ${waiting.length} Claude Code tab(s) VS Code did not restore, whose conversation is still running in `
+      + `another window: ${waiting.map((t) => `"${t.title}"`).join(', ')}`);
+    const until = Date.now() + DROPPED_WAIT_MS;
+    droppedTimer = setTimeout(function recheck() {
+      droppedTimer = undefined;
+      let ready = [];
+      try {
+        ({ ready, waiting } = droppedTabs.settle({ waiting, shown: shown(), elsewhere: elsewhere(), labels: claudeLabels(), strip: stripMark }));
+      } catch (_) { waiting = []; }
+      if (ready.length) reopenTabs(ready, ' once its conversation stopped running elsewhere').catch(() => {});
+      if (waiting.length && Date.now() < until) droppedTimer = setTimeout(recheck, DROPPED_RECHECK_MS);
+      else if (waiting.length) log.appendLine(`Not reopened, still running in another window: ${waiting.map((t) => `"${t.title}"`).join(', ')}`);
+    }, DROPPED_RECHECK_MS);
   }, 5000);
   context.subscriptions.push({ dispose: () => {
     if (droppedTimer) clearTimeout(droppedTimer);
     if (globalThis.__cceTabsAtStart) delete globalThis.__cceTabsAtStart;
     if (globalThis.__cceSessionsShown) delete globalThis.__cceSessionsShown;
+    if (globalThis.__cceSessionsElsewhere) delete globalThis.__cceSessionsElsewhere;
   } });
   /*
    * Archived conversations deleted from disk, asked for from the Archived sessions menu (src/deletesession.js). Nothing
