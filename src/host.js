@@ -148,10 +148,12 @@ const EDITS = [
       + '...this.liveElsewhereSessions.map((cceL)=>cceL.sessionId),...this.sidebarChatSessionIds()],'
       + 'globalThis.__cceSessionsElsewhere=()=>this.liveElsewhereSessions.map((cceL)=>cceL.sessionId),'
       + 'globalThis.__cceSessionsChanged=()=>{for(let cceC of this.allComms)try{cceC.sendSessionStoreChanged()}catch(e){}},'
+      + 'globalThis.__cceSendSessionStates=()=>{try{this.broadcastSessionStates()}catch(e){}},'
       + 'this.reconcileRememberedTabSessions()',
   },
   /*
-   * Whether the sidebar's conversation can be seen, sent with the open conversations to every panel. A hidden sidebar
+   * Whether the sidebar's conversation can be seen, and the tabs closed recently in this workspace
+   * (src/recentclosed.js), sent with the open conversations to every panel. A hidden sidebar
    * keeps its conversation loaded, so the host still lists it among the sidebar's; OPEN SESSIONS leaves it out while the
    * sidebar is hidden (src/page/84-open-sessions.js). The state goes out with every update of the open conversations,
    * and the sidebar showing or hiding sends one.
@@ -166,7 +168,14 @@ const EDITS = [
     name: 'session states message carries whether the sidebar is shown',
     re: /sendSessionStates\(([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)\{let ([\w$]+)=\{type:"request",channelId:"",requestId:([\w$]+)\(\),request:\{type:"session_states_update",([^{}]*?),sidebarSessionIds:\6\}\}/g,
     to: (m, a, b, c, d, e, f, z, id, fields) => `sendSessionStates(${a},${b},${c},${d},${e},${f},cceShown){let ${z}={type:"request",channelId:"",`
-      + `requestId:${id}(),request:{type:"session_states_update",${fields},sidebarSessionIds:${f},cceSidebarShown:cceShown}}`,
+      + `requestId:${id}(),request:{type:"session_states_update",${fields},sidebarSessionIds:${f},cceSidebarShown:cceShown,`
+      + 'cceRecentClosed:(()=>{try{return typeof globalThis.__cceRecentClosed==="function"?globalThis.__cceRecentClosed():void 0}catch(e){return void 0}})()}}',
+  },
+  {
+    // A tab the person closed, as Claude Code notes it for its own reopen-closed command, reaches this extension too.
+    name: 'closed tab reaches this extension',
+    re: /if\(!this\.discardedReplacements\.has\(([\w$]+)\)\)this\.pushRecentlyClosedSession\(([\w$]+),([\w$]+),!!([\w$]+)\)/g,
+    to: (m, panel, id) => `${m},globalThis.__cceClosedHook&&globalThis.__cceClosedHook(${id})`,
   },
   {
     name: 'sidebar showing or hiding updates the open conversations',

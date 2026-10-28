@@ -120,9 +120,46 @@
     return false;
   };
 
+  /* The session list's factories and section classes as the last render handed them over: Recently closed draws at
+     the end of the same render (84-recent-closed.js), where the edit has no names of its own to pass. */
+  var lastListUi = null;
+  /*
+   * A session-list row for one conversation, drawn with the list's own row component - pin, dates, rename and archive
+   * included - or null when the component or the conversation's item is missing. `open` is what a click does.
+   */
+  var listRowFor = function(ui, src, row, idPrefix, open){
+    var Row = window.__cceSessionRow, store = src.sessions;
+    if (!Row || !row.item) return null;
+    var noop = function(){};
+    var renaming = renamingNow();
+    var active = src.comms.activeSessionId && src.comms.activeSessionId.value;
+    var archived = !!(row.item.archived && row.item.archived.value);
+    return ui.jsx(Row, {
+      id: idPrefix + row.id, session: row.item,
+      isActive: row.id === active, isHighlighted: false, isSelected: false, isRenaming: renaming === row.id, searchQuery: '',
+      onClick: function(){ open(row); },
+      onFocus: noop, onMouseMove: noop, draggable: false,
+      onKeyDown: function(e){ if (e && e.key === 'Enter' && (e.metaKey || e.ctrlKey || e.shiftKey)) { e.preventDefault(); open(row); } },
+      onStartRename: openRenaming ? function(){ setRenaming(row.id); } : void 0,
+      onFinishRename: function(item, text){
+        setRenaming(null);
+        var t = String(text || '').replace(/^\s+|\s+$/g, '');
+        if (t && t !== row.title && store && typeof store.renameSession === 'function') store.renameSession(row.id, t);
+      },
+      onCancelRename: function(){ setRenaming(null); },
+      // As the list decides it: archive for a conversation that is not archived, unarchive for one that is.
+      onArchive: !archived && store && typeof store.archiveSession === 'function' ? function(item){ store.archiveSession(item); } : void 0,
+      onUnarchive: archived && store && typeof store.unarchiveSession === 'function' ? function(item){ store.unarchiveSession(item); } : void 0,
+      currentCwd: src.context.defaultCwd && src.context.defaultCwd.value,
+      openState: row.state,
+    }, row.id);
+  };
+
   window.__cceOpenSessions = function(ui){
     try {
-      var renaming = renamingNow();
+      lastListUi = ui;
+      // Read during the render, so a rename started here draws the row again.
+      renamingNow();
       if (isOff('openSessions')) return null;
       var src = window.__cceSessionList;
       if (!ui || typeof ui.jsx !== 'function' || typeof ui.jsxs !== 'function' || !src || !src.comms || !src.context) return null;
@@ -135,37 +172,15 @@
         head.appendChild(openStyle);
       }
       var F = ui.jsx, W = ui.jsxs, c = ui.cls || {}, l = window.__cceListCls || {}, Dot = window.__cceStatusDot;
-      var Row = window.__cceSessionRow, store = src.sessions;
       var active = src.comms.activeSessionId && src.comms.activeSessionId.value;
       var collapsed = openCollapsed();
       var open = function(row){
         openFollowSkip = row.id;
         try { src.context.openInEditor(row.id, void 0, { openState: row.state, isRemote: false }); } catch (e) { /* nothing opens */ }
       };
-      var noop = function(){};
       var body = rows.map(function(row){
-        if (Row && row.item) {
-          var archived = !!(row.item.archived && row.item.archived.value);
-          return F(Row, {
-            id: 'cce-open-' + row.id, session: row.item,
-            isActive: row.id === active, isHighlighted: false, isSelected: false, isRenaming: renaming === row.id, searchQuery: '',
-            onClick: function(){ open(row); },
-            onFocus: noop, onMouseMove: noop, draggable: false,
-            onKeyDown: function(e){ if (e && e.key === 'Enter' && (e.metaKey || e.ctrlKey || e.shiftKey)) { e.preventDefault(); open(row); } },
-            onStartRename: openRenaming ? function(){ setRenaming(row.id); } : void 0,
-            onFinishRename: function(item, text){
-              setRenaming(null);
-              var t = String(text || '').replace(/^\s+|\s+$/g, '');
-              if (t && t !== row.title && store && typeof store.renameSession === 'function') store.renameSession(row.id, t);
-            },
-            onCancelRename: function(){ setRenaming(null); },
-            // As the list decides it: archive for a conversation that is not archived, unarchive for one that is.
-            onArchive: !archived && store && typeof store.archiveSession === 'function' ? function(item){ store.archiveSession(item); } : void 0,
-            onUnarchive: archived && store && typeof store.unarchiveSession === 'function' ? function(item){ store.unarchiveSession(item); } : void 0,
-            currentCwd: src.context.defaultCwd && src.context.defaultCwd.value,
-            openState: row.state,
-          }, row.id);
-        }
+        var drawn = listRowFor(ui, src, row, 'cce-open-', open);
+        if (drawn) return drawn;
         return W('button', {
           type: 'button', className: (l.sessionItem || '') + (row.id === active && l.active ? ' ' + l.active : ''),
           'data-cce-open-row': row.id, title: row.title,

@@ -4993,6 +4993,106 @@ console.log('\nthe pins\' margin setting');
   } else bad('the margin setting is not wired as expected');
 }
 
+console.log('\nrecently closed sessions');
+{
+  const rc = require('../src/recentclosed');
+  const { applyEdits } = require('../src/edits');
+  const id = (n) => `0000000${n}-0000-4000-8000-000000000000`;
+  let list = [];
+  list = rc.record(list, id(1), 100); list = rc.record(list, id(2), 200); list = rc.record(list, id(1), 300); list = rc.record(list, 'not-an-id', 400);
+  const page = rc.pageData(list, 10), none = rc.pageData(list, 0), big = rc.pageData(list, 999);
+  if (JSON.stringify(page) === JSON.stringify({ max: 10, ids: [id(1), id(2)] }) && none.max === 0 && big.max === rc.KEEP) {
+    ok('a closed tab goes first and only once, a malformed ID is ignored, and the page is told how many to show, 0 hiding the section');
+  } else bad(`the closed list was ${JSON.stringify(page)}, ${JSON.stringify(none)}, ${JSON.stringify(big)}`);
+  let many = [];
+  for (let i = 0; i < 70; i++) many = rc.record(many, `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`, i);
+  if (many.length === rc.KEEP && many[0].id.startsWith('00000069')) ok(`no more than ${rc.KEEP} closings are kept`);
+  else bad(`${many.length} closings were kept`);
+
+  // The host: a closing reaches this extension; the list rides along with every update of the open conversations.
+  const he = host.EDITS.find((e) => e.name === 'closed tab reaches this extension');
+  const hsrc = 'function d($,Z,q,X){if(!this.discardedReplacements.has($))this.pushRecentlyClosedSession(Z,q,!!X)}';
+  const hr = he ? applyEdits(hsrc, [he]) : { error: 'no such edit' };
+  const henv = { closed: [], pushed: [] };
+  henv.globalThis = henv;
+  henv.__cceClosedHook = (x) => henv.closed.push(x);
+  if (hr.error) bad('the closed-tab edit did not apply: ' + hr.error);
+  else {
+    vm.createContext(henv);
+    vm.runInContext(hr.out + ';var o={discardedReplacements:new Set(["p2"]),pushRecentlyClosedSession(z){pushed.push(z)}};d.call(o,"p1","S1",1,0);d.call(o,"p2","S2",1,0);', henv);
+    if (JSON.stringify(henv.closed) === '["S1"]' && JSON.stringify(henv.pushed) === '["S1"]') ok('a tab the person closed reaches this extension as Claude Code notes it, and a replaced tab does not');
+    else bad(`closings reported ${JSON.stringify(henv.closed)}, noted ${JSON.stringify(henv.pushed)}`);
+  }
+  const se = host.EDITS.find((e) => e.name === 'session states message carries whether the sidebar is shown');
+  const sr = applyEdits('class C{send(m){this.m=m}sendSessionStates($,J,Q,X,Y,W){let z={type:"request",channelId:"",requestId:l$(),request:{type:"session_states_update",sessions:$,activeSessionId:J,openSessionIds:Q,unreadSessionKeys:X,liveElsewhereSessions:Y,sidebarSessionIds:W}};this.send(z)}}', [se]);
+  const senv = { l$: () => 'i' };
+  senv.globalThis = senv;
+  vm.createContext(senv);
+  vm.runInContext(sr.out + ';var c=new C();globalThis.__cceRecentClosed=()=>({max:3,ids:["a"]});c.sendSessionStates([],1,[],[],[],[],true);var one=c.m.request.cceRecentClosed;'
+    + 'globalThis.__cceRecentClosed=()=>{throw new Error("x")};c.sendSessionStates([],1,[],[],[],[],true);var two=c.m.request.cceRecentClosed;', senv);
+  if (JSON.stringify(senv.one) === '{"max":3,"ids":["a"]}' && senv.two === undefined) ok('every update of the open conversations carries the closed list, and a failing list leaves the update as it was');
+  else bad(`the update carried ${JSON.stringify(senv.one)} and ${JSON.stringify(senv.two)}`);
+
+  // The panel: the section goes after Session manager, and the closed list is kept as updates arrive.
+  const we = webview.EDITS.find((e) => e.name === 'recently closed section');
+  const wr = we ? applyEdits('F(f91,{listFilter:$.x,onUpdateListFilter:J1})]})]})}function Oh5(){}', [we]) : { error: 'no such edit' };
+  if (!wr.error && wr.out.startsWith('F(f91,{listFilter:$.x,onUpdateListFilter:J1})]}),(typeof window.__cceRecentClosedSection==="function"?window.__cceRecentClosedSection():null)]})}function Oh5')) {
+    ok('Recently closed is drawn after the Session manager section, as the panel\'s last child');
+  } else bad(`the section edit gave ${wr.error || wr.out}`);
+  const ke = webview.EDITS.find((e) => e.name === 'sidebar shown for open sessions');
+  const kr = applyEdits('function h($){switch($.request.type){case"session_states_update":if(this.sessionStates.value=$.request.sessions,this.activeSessionId.value=1,$.request.openSessionIds!==void 0)this.openSessionIds.value=$.request.openSessionIds;break}}', [ke]);
+  const kenv = { window: {} };
+  vm.createContext(kenv);
+  vm.runInContext(kr.out + ';const o={sessionStates:{},activeSessionId:{},openSessionIds:{}};h.call(o,{request:{type:"session_states_update",sessions:[],cceRecentClosed:{max:2,ids:["a"]}}});', kenv);
+  if (JSON.stringify(kenv.window.__cceRecentClosed) === '{"max":2,"ids":["a"]}') ok('the panel keeps the closed list each update brings');
+  else bad(`the panel kept ${JSON.stringify(kenv.window.__cceRecentClosed)}`);
+
+  // The section itself, drawn from the two fragments it shares code with.
+  const sig = (v) => ({ value: v });
+  const store = { data: {}, getItem(k) { return this.data[k] ?? null; }, setItem(k, v) { this.data[k] = String(v); } };
+  const env = { window: {}, isOff: () => false, localStorage: store, Date, Array, String, Math, isFinite, Number,
+    head: { appendChild() {} }, document: { createElement: () => ({ setAttribute() {}, textContent: '' }) } };
+  const item = (n, extra) => ({ sessionId: sig(id(n)), summary: sig('t' + n), lastModifiedTime: sig(Date.now()), isRemote: sig(false), ...(extra || {}) });
+  env.window.__cceSessionRow = function Row() {};
+  env.window.__cceSessionList = {
+    sessions: { sessions: sig([item(1), item(2), item(3), item(4), item(5, { isRemote: sig(true) })]) }, context: { openInEditor: (...a) => env.opened.push(a) },
+    comms: { openSessionIds: sig([id(2)]), sidebarSessionIds: sig([id(3)]), sessionStates: sig([]), unreadSessionKeys: sig([]), activeSessionId: sig(id(2)) },
+  };
+  env.opened = [];
+  vm.createContext(env);
+  for (const f of ['84-open-sessions.js', '84-recent-closed.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', f), 'utf8'), env);
+  const h = (type, props, key) => ({ type, props: props || {}, key });
+  const ui = { jsx: h, jsxs: h, cls: { sectionToggle: 'st' } };
+  const walk = (n, f, out = []) => { if (!n || typeof n !== 'object') return out; if (Array.isArray(n)) { n.forEach((c) => walk(c, f, out)); return out; } if (f(n)) out.push(n); walk(n.props && n.props.children, f, out); return out; };
+  env.window.__cceOpenSessions(ui);
+  const draw = (data, shown) => { env.window.__cceRecentClosed = data; env.window.__cceSidebarShown = shown; return env.window.__cceRecentClosedSection(); };
+  const rowsOf = (t) => walk(t, (n) => n.type === env.window.__cceSessionRow).map((n) => n.props.session.sessionId.value.slice(7, 8));
+  const t1 = draw({ max: 10, ids: [id(4), id(3), id(2), id(9), id(5), id(1)] }, true);
+  const t2 = draw({ max: 1, ids: [id(4), id(1)] }, true);
+  const t3 = draw({ max: 10, ids: [id(3), id(1)] }, false);
+  const t0 = draw({ max: 0, ids: [id(1)] }, true), tNone = draw({ max: 10, ids: [id(2)] }, true);
+  const got = JSON.stringify([rowsOf(t1), rowsOf(t2), rowsOf(t3), t0, tNone, t1 && t1.props['data-cce-collapsed']]);
+  const want = JSON.stringify([['4', '1'], ['4'], ['3', '1'], null, null, '1']);
+  if (got === want) {
+    ok('Recently closed lists closed conversations most recent first, not those open in a tab or the shown sidebar, not unknown or remote ones, as many as asked, collapsed at first, and nothing when there is none or the count is 0');
+  } else bad(`Recently closed drew ${got}, expected ${want}`);
+  const r1 = walk(t1, (n) => n.type === env.window.__cceSessionRow)[0];
+  r1.props.onClick();
+  const toggle = walk(t1, (n) => n.props && n.props.className === 'st')[0];
+  const root = { attrs: { 'data-cce-collapsed': '1' }, getAttribute(k) { return this.attrs[k]; }, setAttribute(k, v) { this.attrs[k] = v; } };
+  toggle.props.onClick({ currentTarget: { closest: () => root, setAttribute() {}, querySelector: () => null } });
+  const reopened = draw({ max: 10, ids: [id(4)] }, true);
+  if (env.opened.length === 1 && env.opened[0][0] === id(4) && store.data['cce.recentClosedExpanded'] === '1' && reopened.props['data-cce-collapsed'] === '0') {
+    ok('a click opens the conversation, and the section opened stays open the next time it is drawn');
+  } else bad(`clicking opened ${JSON.stringify(env.opened)}; expanded ${store.data['cce.recentClosedExpanded']}`);
+  const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const setting = require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.recentClosedSessions'];
+  if (setting && setting.default === 10 && setting.minimum === 0 && /context\.workspaceState\.update\(recentClosed\.KEY, recentList\)/.test(extSrc)
+      && /recentClosed\.pageData\(recentList, enabled\(\) && !removed\(\) \? cfg\(\)\.get\(RECENT_SETTING, 10\) : 0\)/.test(extSrc)) {
+    ok('the closed list is kept per workspace, and the setting, 10 by default, says how many to show');
+  } else bad('the closed list is not wired as expected');
+}
+
 console.log('\nthe patch markers follow the code');
 {
   /* A marker that stays the same while what patching writes changes leaves the old patch in place, and every step

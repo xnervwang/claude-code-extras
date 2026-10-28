@@ -32,6 +32,7 @@ const tabdot = require('./src/tabdot');
 const sessionPins = require('./src/sessionpins');
 const droppedTabs = require('./src/droppedtabs');
 const deleteSession = require('./src/deletesession');
+const recentClosed = require('./src/recentclosed');
 const ADAPTERS = require('./src/adapters');
 const removal = require('./src/removal');
 const PACKAGE = require('./package.json');
@@ -58,6 +59,7 @@ const LATENCY_ON_SETTING = PREFIX + 'recordOpenLatency';
 const PINS_SETTING = PREFIX + 'sessionPins';
 const PIN_MARGIN_SETTING = PREFIX + 'sessionPinsMarginDays';
 const REOPEN_SETTING = PREFIX + 'reopenDroppedTabs';
+const RECENT_SETTING = PREFIX + 'recentClosedSessions';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
   enabled: PREFIX + 'workPlan',
@@ -929,6 +931,28 @@ function start(context, renamed) {
   context.subscriptions.push({ dispose: () => {
     if (globalThis.__cceDeleteHook) delete globalThis.__cceDeleteHook;
     if (globalThis.__cceSessionsChanged) delete globalThis.__cceSessionsChanged;
+  } });
+  /*
+   * The tabs closed in this workspace, kept across reloads for Recently closed at the end of the session list
+   * (src/recentclosed.js). The patched host reports each tab the person closes and asks for the list each time it tells
+   * the panels which conversations are open, so a closing shows at once.
+   */
+  let recentList = context.workspaceState.get(recentClosed.KEY, []);
+  globalThis.__cceClosedHook = (id) => {
+    try {
+      recentList = recentClosed.record(recentList, id);
+      Promise.resolve(context.workspaceState.update(recentClosed.KEY, recentList)).catch(() => {});
+    } catch (_) { /* the list stays as it was */ }
+  };
+  globalThis.__cceRecentClosed = () => recentClosed.pageData(recentList, enabled() && !removed() ? cfg().get(RECENT_SETTING, 10) : 0);
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+    if (e.affectsConfiguration(RECENT_SETTING) || e.affectsConfiguration(SETTING)) {
+      try { if (typeof globalThis.__cceSendSessionStates === 'function') globalThis.__cceSendSessionStates(); } catch (_) { /* next update */ }
+    }
+  }), { dispose: () => {
+    if (globalThis.__cceClosedHook) delete globalThis.__cceClosedHook;
+    if (globalThis.__cceRecentClosed) delete globalThis.__cceRecentClosed;
+    if (globalThis.__cceSendSessionStates) delete globalThis.__cceSendSessionStates;
   } });
   refreshPlans();
   paintBadge();

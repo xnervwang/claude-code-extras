@@ -10,6 +10,16 @@
       "shapes": {
         "Claude Code panel / tool result": "2.1.285 and later: setToolResult takes options"
       }
+    },
+    "2.1.311": {
+      "shapes": {
+        "Claude Code panel / tool result": "2.1.285 and later: setToolResult takes options"
+      }
+    },
+    "2.1.312": {
+      "shapes": {
+        "Claude Code panel / tool result": "2.1.285 and later: setToolResult takes options"
+      }
     }
   }
 }

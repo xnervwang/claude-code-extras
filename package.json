@@ -301,6 +301,13 @@
           "default": true,
           "markdownDescription": "Hovering over a conversation in the session list shows its session ID and where it sits in the list below Open sessions: its group, Ungrouped or Archived sessions. Rows in Open sessions show the same. Takes effect without a reload."
         },
+        "claudeCodeWorkPlan.recentClosedSessions": {
+          "type": "integer",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 50,
+          "markdownDescription": "Maximum number of conversations listed in **Recently closed**, the last section of the session list: those whose Claude Code editor tabs you closed in this workspace, most recent first. Conversations open again are not listed and do not count toward it. 0 hides the section. Takes effect without a reload."
+        },
         "claudeCodeWorkPlan.show.openSessions": {
           "type": "boolean",
           "default": true,

@@ -354,6 +354,12 @@ const EDITS = [
       + `{let cceD=typeof window.__cceDeleteItem==="function"?window.__cceDeleteItem(${keys}):null;if(cceD)${items}.push(cceD)}return ${items}}`,
   },
   {
+    // Recently closed after the Session manager section, at the end of the panel (84-recent-closed.js).
+    name: 'recently closed section',
+    re: /onUpdateListFilter:([\w$]+)\}\)\]\}\)\]\}\)\}function /g,
+    to: (m, f) => `onUpdateListFilter:${f}})]}),(typeof window.__cceRecentClosedSection==="function"?window.__cceRecentClosedSection():null)]})}function `,
+  },
+  {
     // The panel's open request, carrying where the session list's two buttons and two Resume items asked for.
     name: 'open request says where',
     re: /openInEditor\(([\w$]+),([\w$]+),([\w$]+)\)\{return this\.sendRequest\(\{type:"open_in_editor",sessionId:\1,newSessionGroupId:\2,usage:\3\}\)\}/g,
@@ -361,10 +367,12 @@ const EDITS = [
       + `return this.sendRequest({type:"open_in_editor",sessionId:${id},newSessionGroupId:${group},usage:${usage},cceWhere:cceW})}`,
   },
   {
-    // Whether the sidebar's conversation can be seen, as the patched host sends it; OPEN SESSIONS reads it as it draws.
+    // Whether the sidebar's conversation can be seen and the tabs closed recently, as the patched host sends them; OPEN
+    // SESSIONS and Recently closed read them as they draw.
     name: 'sidebar shown for open sessions',
     re: /case"session_states_update":if\(this\.sessionStates\.value=([\w$]+)\.request\.sessions,/g,
-    to: (m, msg) => `case"session_states_update":if(window.__cceSidebarShown=${msg}.request.cceSidebarShown,this.sessionStates.value=${msg}.request.sessions,`,
+    to: (m, msg) => `case"session_states_update":if(window.__cceSidebarShown=${msg}.request.cceSidebarShown,`
+      + `window.__cceRecentClosed=${msg}.request.cceRecentClosed,this.sessionStates.value=${msg}.request.sessions,`,
   },
   {
     // New session becomes New in tab and New in sidebar (86-open-in-tab-or-sidebar.js); the page returning null keeps it.
