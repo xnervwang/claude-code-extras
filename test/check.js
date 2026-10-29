@@ -2180,6 +2180,52 @@ console.log('\nwhat the Stop hook says, and how often');
     else bad(`with no transcript the hook exited ${r.status} and said ${JSON.stringify(r.said.slice(0, 120))}`);
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
+  /* The client writes into the user's place too: a loaded skill's text and a scheduled wake-up are isMeta, a compaction
+     leaves its summary as isCompactSummary, and an interruption is a line of its own. Counted as the user speaking, one
+     at the end of a turn moved the turn's start to after all its work, and summaries made a worker spoken to once look
+     like a conversation spoken to three times. */
+  {
+    const said = [
+      { type: 'user', isMeta: true, sourceToolUseID: 't1', message: { content: [{ type: 'text', text: 'Base directory for this skill: /x' }] } },
+      { type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } },
+      { type: 'user', isCompactSummary: true, message: { content: 'This session is being continued from a previous conversation.' } },
+    ].map((row) => {
+      const t = stage(10, { nodes: [{ title: 'x', state: 'todo' }] });
+      fs.appendFileSync(t.transcript, JSON.stringify(Object.assign({ timestamp: '2026-01-01T00:09:00.000Z' }, row)) + '\n');
+      const r = run(t);
+      fs.rmSync(t.dir, { recursive: true, force: true });
+      return r.said.includes('neither read nor updated');
+    });
+    if (said.every(Boolean)) ok('a skill loaded, an interruption or a summary at the end of a turn does not restart it');
+    else bad(`after a skill, an interruption and a summary the reminder spoke ${JSON.stringify(said)}`);
+  }
+  {
+    const t = stage(40, null, 1);
+    const lines = fs.readFileSync(t.transcript, 'utf8').trimEnd().split('\n');
+    const summary = (n) => JSON.stringify({ type: 'user', isCompactSummary: true, timestamp: `2025-12-31T00:0${n}:00.000Z`,
+      message: { content: 'This session is being continued from a previous conversation.' } });
+    fs.writeFileSync(t.transcript, [summary(1), summary(2)].concat(lines).join('\n') + '\n');
+    const r = run(t);
+    if (!r.said && !r.marked) ok('a worker spoken to once is not counted as spoken to again by two compactions');
+    else bad(`two summaries and one message drew an offer: ${JSON.stringify(r.said.slice(0, 80))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
+  {
+    /* With a plan, the injection hook marks when the turn began, and nothing written into the user's place can move it.
+       Calls from before that mark belong to the turn before. */
+    const t = stage(0, { nodes: [{ title: 'x', state: 'todo' }] });
+    const call = (at) => JSON.stringify({ type: 'assistant', timestamp: at,
+      message: { content: [{ type: 'tool_use', name: 'Write', input: {} }] } });
+    for (let i = 0; i < 10; i++) fs.appendFileSync(t.transcript, call(`2026-01-01T00:02:1${i}.000Z`) + '\n');
+    fs.appendFileSync(t.transcript, call('2026-01-01T00:05:00.000Z') + '\n');
+    fs.writeFileSync(path.join(t.data, session + '.turn'), JSON.stringify({ prompt: 'p-mark', began: Date.parse('2026-01-01T00:04:00Z') / 1000 }));
+    const marked = cp.spawnSync('python3', [hook, t.data], { encoding: 'utf8', input: JSON.stringify({ session_id: session,
+      transcript_path: t.transcript, hook_event_name: 'Stop', prompt_id: 'p-mark' }) }).stdout.trim();
+    const other = run(t).said;
+    if (!marked && other.includes('neither read nor updated')) ok('the turn starts where the injection hook marked it, when the mark is for this turn');
+    else bad(`with the mark: ${JSON.stringify(marked.slice(0, 80))}; without it: ${JSON.stringify(other.slice(0, 80))}`);
+    fs.rmSync(t.dir, { recursive: true, force: true });
+  }
   {
     /* A file that is not there, or is nonsense, leaves the plugin on its own defaults - it ships without this extension. */
     const t = stage(40, null, 3, { offerMinTurns: 'lots', offerMinToolCalls: 0 });

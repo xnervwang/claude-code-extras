@@ -56,7 +56,8 @@ import sys
 sys.dont_write_bytecode = True
 
 from changes import changes
-from plan_path import NUDGED_SUFFIX, OFFERED_SUFFIX, epoch, open_tail, plan_file, settings, side_file, write_quietly
+from plan_path import (NUDGED_SUFFIX, OFFERED_SUFFIX, epoch, open_tail, plan_file, settings, side_file, turn_began,
+                       write_quietly)
 
 # Every threshold this uses is in plan_path.DEFAULTS, where the editor's settings can override it.
 
@@ -75,26 +76,35 @@ def changed(row):
 
 
 def spoke(row):
-    """True when this row is the user actually saying something, rather than a tool handing a result back.
+    """True when this row is the user actually saying something, rather than a tool handing a result back or the client
+    writing in the user's place.
 
-    Both are recorded as `user`, which is why this is asked in two places and not inlined at either.
+    All of these are recorded as `user`. What the client writes there is marked isMeta - a loaded skill's text, a
+    scheduled wake-up, a note that an image was resized - or isCompactSummary for the summary a compaction leaves, and an
+    interruption is a line of its own that starts "[Request interrupted". Counted as the user, one transcript read 180
+    more turns than were spoken, a skill loaded at the end of a turn moved the turn's start to after all its work, and a
+    worker spoken to once read as spoken to three times after two compactions.
     """
-    if row.get("type") != "user":
+    if row.get("type") != "user" or row.get("isMeta") or row.get("isCompactSummary"):
         return False
-    content = (row.get("message") or {}).get("content")
-    if isinstance(content, str):
-        return True
+    message = row.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
     if isinstance(content, list):
-        return any(isinstance(b, dict) and b.get("type") == "text" for b in content)
-    return False
+        texts = [str(b.get("text", "")) for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        if not texts:
+            return False
+        content = "".join(texts)
+    return isinstance(content, str) and not content.lstrip().startswith("[Request interrupted")
 
 
-def turn_shape(tail, plan=""):
-    """When this turn began, how many tools it used, how many things it changed, how often the user has spoken, and
-    whether it went to the plan.
+def turn_shape(tail, plan="", began=None):
+    """When this turn began, as seconds, how many tools it used, how many things it changed, how often the user has
+    spoken, and whether it went to the plan.
 
-    The turn begins at the last message the user sent, so the transcript is walked from the end and stops there. Reading
-    it whole would mean parsing megabytes on every turn, so only the tail is read.
+    With a plan, the injection hook has marked when the turn began (`began`, from plan_path.turn_began), and the walk back
+    from the end of the transcript stops at the first line older than that; the count of turns is not needed then and is
+    not taken. Without that mark the turn begins at the last message the user sent. Reading the transcript whole would
+    mean parsing megabytes on every turn, so only the tail is read, and only lines that could be a call or the user.
 
     That tail is also where the count of turns comes from, and it is a lower bound rather than a total: a conversation
     long enough to overflow the window has more turns than are visible here. The bound is in the safe direction - it can
@@ -104,9 +114,11 @@ def turn_shape(tail, plan=""):
     also in the text this plugin injects at the start of every turn, so a search across whole rows would find it every
     time and the reminder would never be able to fire at all.
     """
-    started, tools, changes, turns, reached = None, 0, 0, 0, False
+    started, tools, changes, turns, reached = began, 0, 0, 0, False
+    in_turn = True
     for line in tail.lines(TURN_TAIL):
-        if '"type"' not in line:
+        used_tool = '"tool_use"' in line
+        if not used_tool and '"user"' not in line:
             continue
         try:
             row = json.loads(line)
@@ -114,12 +126,16 @@ def turn_shape(tail, plan=""):
             continue
         if not isinstance(row, dict):
             continue
-        if spoke(row):
+        if began is not None:
+            at = epoch(row.get("timestamp"))
+            if at is not None and at < began:
+                break
+        elif spoke(row):
             turns += 1
-            if started is None:
-                started = row.get("timestamp")
+            if in_turn:
+                in_turn, started = False, epoch(row.get("timestamp"))
             continue
-        if started is None and '"tool_use"' in line:
+        if in_turn and used_tool:
             tools += 1
             changes += changed(row)
             if plan and plan in line:
@@ -201,11 +217,17 @@ def main():
     tail = open_tail(payload.get("transcript_path"))
     if tail is None:
         return 0
-    started, tools, changes, turns, reached = turn_shape(tail, path)
-    if not started:
-        return 0
     if not os.path.exists(path):
+        # Offered once already: nothing left to say, and nothing worth reading the transcript for.
+        if os.path.exists(side_file(path, OFFERED_SUFFIX)):
+            return 0
+        started, tools, _, turns, _ = turn_shape(tail)
+        if started is None:
+            return 0
         return offer_once(payload, path, tools, turns, limits)
+    started, tools, changes, turns, reached = turn_shape(tail, path, turn_began(path, payload))
+    if started is None:
+        return 0
     if changes < limits["nudgeMinChanges"]:
         return 0
     # Reading the plan settles it as much as writing does. Reconciling begins by looking, and a turn that looked and
@@ -214,14 +236,11 @@ def main():
     # conversation whose plan was already correct, which is precisely how a reminder stops being read.
     if reached:
         return 0
-    began = epoch(started)
-    if began is None:
-        return 0
     try:
         touched = os.stat(path).st_mtime
     except Exception:
         return 0
-    if touched >= began:
+    if touched >= started:
         return 0
     if said_already(path, touched):
         return 0

@@ -17,10 +17,11 @@ nothing, and the file itself is there for anyone who wants the whole thing.
 Silence is the normal case. A conversation that keeps no plan gets nothing, so installing this plugin costs nothing
 until something starts writing one.
 
-It also leaves a mark beside the plan saying which turn this is and when it began, for the hook that watches the turn
-(remind-work-plan.py). The mark is written once the plan has been read, before anything here can decide to stay quiet
-about its rows: a plan whose rows are all closed injects nothing, and new work started in that turn is exactly what the
-other hook is for. A conversation with no plan, or one whose plan does not parse, gets no mark.
+It also leaves a mark beside the plan saying which turn this is and when it began, for the hooks that watch the turn:
+remind-work-plan.py after each batch of tool calls, and nudge-work-plan.py at its end, which takes the turn's start from
+it. The mark is written once the plan has been read, before anything here can decide to stay quiet about its rows: a
+plan whose rows are all closed injects nothing, and new work started in that turn is exactly what those hooks are for. A
+conversation with no plan, or one whose plan does not parse, gets no mark.
 """
 import json
 import sys
