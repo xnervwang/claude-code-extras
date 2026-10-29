@@ -18,12 +18,11 @@ Silence is the normal case. A conversation that keeps no plan gets nothing, so i
 until something starts writing one.
 
 It also leaves a mark beside the plan saying which turn this is and when it began, for the hook that watches the turn
-(remind-work-plan.py). That is written before anything here can decide to stay quiet: a plan whose rows are all closed
-injects nothing, and new work started in that turn is exactly what the other hook is for.
+(remind-work-plan.py). The mark is written once the plan has been read, before anything here can decide to stay quiet
+about its rows: a plan whose rows are all closed injects nothing, and new work started in that turn is exactly what the
+other hook is for. A conversation with no plan, or one whose plan does not parse, gets no mark.
 """
 import json
-import os
-import shlex
 import sys
 import time
 
@@ -31,7 +30,7 @@ import time
 # plugin directory, and a hook that runs on every turn should leave nothing behind in a directory the platform manages.
 sys.dont_write_bytecode = True
 
-from plan_path import OPEN_STATES, epoch, plan_file, settings, write_turn
+from plan_path import OPEN_STATES, any_in, children, epoch, listed, plan_file, row_command, settings, write_turn
 
 GLYPH = {"discussing": "?", "todo": "o", "doing": ">", "waiting": "~", "parked": "=", "done": "+", "dropped": "x"}
 # Enough for a plan a person reads; a runaway file must not turn every turn into a wall of text.
@@ -40,8 +39,6 @@ MAX_ROWS = 40
 # three days is not being done, and nothing else on the row shows that. Measured on the machine this was written on, the
 # six rows then `doing` included two added four days earlier, and four whose own notes said they were waiting on someone.
 TIMED = ("doing", "waiting")
-# The command that changes a row, given with its full path every turn so it never has to be found.
-ROW_TOOL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plan-row.py")
 
 
 def age(seconds):
@@ -64,7 +61,7 @@ def rows(nodes, depth, out, now, prefix=""):
     # only appended, so the end of the file is the current work. Reversing here also means the cap below drops the oldest
     # rows rather than the newest, which is the half worth keeping.
     numbered = [("%s%d" % (prefix + "." if prefix else "", i + 1), node)
-                for i, node in enumerate(nodes or [])]
+                for i, node in enumerate(listed(nodes))]
     for num, node in reversed(numbered):
         if len(out) >= MAX_ROWS:
             return
@@ -74,7 +71,7 @@ def rows(nodes, depth, out, now, prefix=""):
         title = str(node.get("title", "")).strip()
         if not title:
             continue
-        kids = node.get("children") or []
+        kids = children(node)
         # A closed row is kept only while something under it is still open, since that is what says where to return to.
         if state not in OPEN_STATES and not any_open(kids):
             continue
@@ -91,23 +88,18 @@ def rows(nodes, depth, out, now, prefix=""):
 
 
 def any_open(nodes):
-    return any(isinstance(n, dict) and (n.get("state", "todo") in OPEN_STATES or any_open(n.get("children")))
-               for n in nodes or [])
-
-
-def any_in(nodes, state):
-    return any(isinstance(n, dict) and (n.get("state") == state or any_in(n.get("children"), state))
-               for n in nodes or [])
+    return any(isinstance(n, dict) and (n.get("state", "todo") in OPEN_STATES or any_open(children(n)))
+               for n in listed(nodes))
 
 
 def counts(nodes, acc=None):
     acc = acc if acc is not None else {}
-    for node in nodes or []:
+    for node in listed(nodes):
         if not isinstance(node, dict):
             continue
         state = node.get("state", "todo")
         acc[state] = acc.get(state, 0) + 1
-        counts(node.get("children"), acc)
+        counts(children(node), acc)
     return acc
 
 
@@ -133,7 +125,7 @@ def main():
     prompt = payload.get("prompt_id")
     if isinstance(prompt, str) and prompt:
         write_turn(path, {"prompt": prompt, "began": now, "changes": 0, "reminded": False})
-    nodes = plan.get("nodes") or []
+    nodes = listed(plan.get("nodes"))
     out = []
     rows(nodes, 0, out, now)
     if not out:
@@ -143,7 +135,7 @@ def main():
     closed = n.get("done", 0) + n.get("dropped", 0)
     if closed:
         head += " · %d closed" % closed
-    command = "python3 %s %s" % (shlex.quote(ROW_TOOL), shlex.quote(path))
+    command = row_command(path)
     # What is said about `doing` is here rather than only in the skill because here is the one moment that comes BEFORE
     # the work, and the skill is rarely loaded at all. A row marked as the work starts shows up in the tree while the
     # turn runs, which is the whole point of the state.

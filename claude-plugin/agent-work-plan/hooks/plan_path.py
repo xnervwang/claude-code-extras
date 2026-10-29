@@ -8,11 +8,14 @@ Shared rather than written into each: one hook reads the file, another watches i
 first leaves beside it, and the command that changes a row writes it - so two copies of any of this that drifted apart
 would leave one of them looking at a path, a state or a mark that nobody writes, and nothing would say so.
 """
+import contextlib
 import datetime
 import json
 import os
 import re
+import shlex
 import sys
+import time
 
 # The platform gives every plugin a data directory named <plugin>-<marketplace>, and hooks.json passes ours in as
 # ${CLAUDE_PLUGIN_DATA}. This is that same name spelled out, for the case where the expansion did not happen. It is
@@ -139,12 +142,84 @@ def detail_over(value):
     return None
 
 
-def latest_reply_matches(transcript_path, pattern, tail=256 * 1024):
+"""The end of a transcript, read once per run and shared by every question that run asks of it.
+
+A transcript runs to hundreds of megabytes and every answer wanted here is near its end, so a run reads back from the
+end only as far as its questions need. Only the main thread's turns are in that file: a sub-agent keeps a transcript of
+its own, under <session>/subagents/, so nothing read here can be a sub-agent's.
+"""
+TAIL_START = 64 * 1024           # first window tried when reading back
+TAIL_MAX = 1024 * 1024           # give up past this; the answer is not worth more
+
+
+class Tail:
+    """The last bytes of one transcript, read backwards in windows that grow fourfold, and kept once read.
+
+    Each question gives its own limit, and a second question starts from what the first one already read rather than
+    reading it again.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self.size = os.path.getsize(path)
+        self.start = self.size
+        self.data = b""
+
+    def _reach(self, limit):
+        """Hold more of the end, up to `limit` bytes of it. False when there is nothing more to read within that."""
+        held = self.size - self.start
+        want = min(self.size, limit, max(TAIL_START, held * 4))
+        if want <= held:
+            return False
+        start = self.size - want
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(start)
+                more = fh.read(self.start - start)
+        except OSError:
+            return False
+        self.data = more + self.data
+        self.start = start
+        return True
+
+    def lines(self, limit=TAIL_MAX):
+        """The lines in the last `limit` bytes, newest first. A line that begins before that is not given at all."""
+        floor = max(0, self.size - limit)
+        end = self.size
+        while True:
+            base, data = self.start, self.data
+            cut = end - base
+            nl = data.rfind(b"\n", 0, cut)
+            while nl >= 0 and base + nl + 1 >= floor:
+                yield data[nl + 1:cut].decode("utf-8", "replace")
+                cut, end = nl, base + nl
+                nl = data.rfind(b"\n", 0, cut)
+            if nl >= 0:
+                return
+            if base == 0:
+                if floor == 0:
+                    yield data[:cut].decode("utf-8", "replace")
+                return
+            if base <= floor or not self._reach(limit):
+                return
+
+
+def open_tail(path):
+    """The end of the transcript at `path`, or None when there is no file to read."""
+    if not isinstance(path, str) or not path or not os.path.isfile(path):
+        return None
+    try:
+        return Tail(path)
+    except OSError:
+        return None
+
+
+def latest_reply_matches(tail, pattern, reply=None):
     """Whether the newest reply with any text in it matches `pattern`. False for an empty or unusable pattern.
 
-    Turns made of tool calls alone are passed over, so a relayed reply followed by a few commands still counts as the
-    latest one. Only the tail of the transcript is read: the answer is always near its end, and a transcript runs to
-    hundreds of megabytes.
+    `reply` is that reply's text when the event hands it over - Stop does, as last_assistant_message - and then nothing is
+    read. Otherwise it is looked for in the transcript, where turns made of tool calls alone are passed over, so a relayed
+    reply followed by a few commands still counts as the latest one.
     """
     if not pattern:
         return False
@@ -152,26 +227,23 @@ def latest_reply_matches(transcript_path, pattern, tail=256 * 1024):
         rx = re.compile(pattern)
     except re.error:
         return False
-    try:
-        size = os.path.getsize(transcript_path)
-        with open(transcript_path, "rb") as fh:
-            fh.seek(max(0, size - tail))
-            chunk = fh.read().decode("utf-8", "replace")
-    except (OSError, TypeError):
+    if isinstance(reply, str) and reply.strip():
+        return bool(rx.search(reply))
+    if tail is None:
         return False
-    for line in reversed(chunk.split("\n")):
+    for line in tail.lines(TAIL_MAX):
         if '"assistant"' not in line:
             continue
         try:
             row = json.loads(line)
         except ValueError:
             continue
-        if row.get("type") != "assistant":
+        if not isinstance(row, dict) or row.get("type") != "assistant":
             continue
         content = (row.get("message") or {}).get("content")
         if not isinstance(content, list):
             continue
-        text = "".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+        text = "".join(str(p.get("text", "")) for p in content if isinstance(p, dict) and p.get("type") == "text")
         if text.strip():
             return bool(rx.search(text))
     return False
@@ -185,60 +257,187 @@ has grown well past where it last said it.
 """
 USAGE_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 
-TAIL_START = 64 * 1024           # first window tried when reading back
-TAIL_MAX = 1024 * 1024           # give up past this; the answer is not worth more
+
+def usage_of(line):
+    """Tokens sent on the model call a transcript line records, or None when it records none."""
+    if '"usage"' not in line:
+        return None
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(row, dict) or row.get("type") != "assistant":
+        return None
+    message = row.get("message")
+    usage = message.get("usage") if isinstance(message, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    return sum(v for v in (usage.get(k) for k in USAGE_KEYS) if isinstance(v, int))
 
 
-def tail_rows(path, window):
-    """Transcript lines from the last `window` bytes, newest first."""
-    size = os.path.getsize(path)
-    with open(path, "rb") as fh:
-        fh.seek(max(0, size - window))
-        chunk = fh.read().decode("utf-8", "replace")
-    return list(reversed(chunk.split("\n")))
-
-
-def current_context(path):
-    """Tokens sent on the main thread's most recent model call, or None.
-
-    A sub-agent writes into the same transcript, and its context is a fraction of the main thread's; reading its usage as
-    the session's would under-report by hundreds of thousands of tokens exactly when it matters.
-    """
-    window = TAIL_START
-    while window <= TAIL_MAX:
-        try:
-            rows = tail_rows(path, window)
-        except OSError:
-            return None
-        for line in rows:
-            if '"usage"' not in line:
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if row.get("type") != "assistant" or row.get("isSidechain"):
-                continue
-            u = (row.get("message") or {}).get("usage")
-            if isinstance(u, dict):
-                return sum(u.get(k) or 0 for k in USAGE_KEYS)
-        if window >= os.path.getsize(path):
-            return None
-        window *= 4
+def current_context(tail):
+    """Tokens sent on the conversation's most recent model call, or None when none is recorded within TAIL_MAX."""
+    if tail is None:
+        return None
+    for line in tail.lines(TAIL_MAX):
+        tokens = usage_of(line)
+        if tokens is not None:
+            return tokens
     return None
 
 
-def plan_file(payload):
+"""What a plan is called, and what the hooks keep beside it.
+
+A plan is <session id>.json. The extension's sweep (src/workplan.js) recognises a plan and every file below by the same
+pattern, so a name it would not recognise is a file nobody would ever clean up.
+"""
+SESSION_ID = r"[0-9A-Fa-f][0-9A-Fa-f-]{7,}"
+SESSION_NAME = re.compile(r"^%s$" % SESSION_ID)
+PLAN_NAME = re.compile(r"^%s\.json$" % SESSION_ID)
+
+TURN_SUFFIX = ".turn"            # the turn now running (see below)
+NUDGED_SUFFIX = ".nudged"        # what the end-of-turn reminder last spoke about (nudge-work-plan.py)
+OFFERED_SUFFIX = ".offered"      # that a conversation with no plan was offered one (nudge-work-plan.py)
+WATERMARK_SUFFIX = ".watermark"  # which context marks have asked (refresh-work-plan.py)
+TOLD_SUFFIX = ".tz"              # what the user's time zone was last told as (tell-time-zone.py)
+LOCK_SUFFIX = ".lock"            # appended to the plan's own name, not put in place of .json (see plan_lock)
+
+
+def plan_file(payload, directory=None):
     """This conversation's file, named by its session id - which is unique across every project on a machine.
 
     So there is no grouping directory and none is derived: the earlier shape reconstructed one from the transcript path,
     where the project part is a starting directory with every character that is not a letter or a digit replaced, and
-    that substitution cannot be reversed.
+    that substitution cannot be reversed. `directory` is for a caller that has been handed the data directory itself.
     """
     session = str(payload.get("session_id") or "").strip()
-    if not session or os.sep in session or session in (".", ".."):
+    if not SESSION_NAME.match(session):
         return None
-    return os.path.join(data_dir(), session + ".json")
+    return os.path.join(directory or data_dir(), session + ".json")
+
+
+def side_file(plan, suffix):
+    """A file the hooks keep beside `plan`, swept with it when the conversation is gone."""
+    return os.path.splitext(plan)[0] + suffix
+
+
+def write_atomic(path, text):
+    """Write `text` whole and rename it into place, so a reader never sees half of it. Raises when it could not.
+
+    The temporary file carries the process id, so two processes writing the same file never write into one temporary.
+    """
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_quietly(path, text):
+    """write_atomic for a hook, which must never fail on a write. True when the file is there."""
+    try:
+        write_atomic(path, text)
+        return True
+    except Exception:
+        return False
+
+
+"""How a plan's rows are walked.
+
+The file is the user's and is edited by hand, so anything can stand where a list of rows belongs. A walk that trusted it
+would raise on every prompt until the file was fixed.
+"""
+
+
+def listed(value):
+    """`value` when it is a list of rows, else no rows."""
+    return value if isinstance(value, list) else []
+
+
+def children(node):
+    """A row's children, or none when the row has none or holds something other than a list there."""
+    return listed(node.get("children")) if isinstance(node, dict) else []
+
+
+def any_in(nodes, state):
+    """Whether any row among `nodes`, at any depth, is in `state`."""
+    return any(isinstance(n, dict) and (n.get("state") == state or any_in(children(n), state)) for n in listed(nodes))
+
+
+# The command that changes a row, beside this file, given with its full path so it never has to be found.
+ROW_TOOL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plan-row.py")
+
+
+def row_command(plan):
+    """The command line that changes a row of `plan`, both paths quoted for the shell."""
+    return "python3 %s %s" % (shlex.quote(ROW_TOOL), shlex.quote(plan))
+
+
+"""The lock around a read, change and write of a plan.
+
+The row command reads the whole file, changes one row and writes all of it back, and the extension does the same when a
+row is changed from the tree. Two of those at once would each write what they read, and the one that wrote first would be
+lost without a word. So each holds <plan file>.lock - a directory, since making one either succeeds or fails, at once,
+on every file system - for the whole span, and the extension takes the same lock by the same rules.
+
+A lock is never allowed to stop work. One older than LOCK_STALE was left by a process that died holding it, and is
+removed. One that stays held past LOCK_WAIT is given up on and the write goes ahead without it: a lost change is the
+lesser harm next to an agent, or a person's edit, that cannot go on.
+"""
+LOCK_STALE = 10
+LOCK_WAIT = 2.0
+LOCK_POLL = 0.025
+
+
+@contextlib.contextmanager
+def plan_lock(plan, on_miss=None):
+    """Hold the lock on `plan` for the body of a `with`. `on_miss` is called with a reason when it was not taken."""
+    lock = plan + LOCK_SUFFIX
+    deadline = time.monotonic() + LOCK_WAIT
+    held = False
+    while True:
+        try:
+            os.mkdir(lock)
+            held = True
+            break
+        except FileExistsError:
+            pass
+        except FileNotFoundError:
+            # No directory, so no plan in it for anyone else to be changing.
+            break
+        except OSError as e:
+            if on_miss:
+                on_miss("could not make %s (%s)" % (lock, e.strerror or e))
+            break
+        if time.monotonic() >= deadline:
+            if on_miss:
+                on_miss("%s was still held after %g seconds" % (lock, LOCK_WAIT))
+            break
+        try:
+            stale = time.time() - os.stat(lock).st_mtime > LOCK_STALE
+        except OSError:
+            continue
+        if stale:
+            try:
+                os.rmdir(lock)
+                continue
+            except OSError:
+                pass
+        time.sleep(LOCK_POLL)
+    try:
+        yield held
+    finally:
+        if held:
+            try:
+                os.rmdir(lock)
+            except OSError:
+                pass
 
 
 def now_stamp():
@@ -280,11 +479,10 @@ it - the plan is the user's and the model's file, and no hook writes to it.
 A turn is named by the prompt id the platform puts on every hook's input: one id from a prompt until the next, the same on
 every event in between. A mark carrying any other id is from an earlier turn, and reads as no mark at all.
 """
-TURN_SUFFIX = ".turn"
 
 
 def turn_file(plan):
-    return os.path.splitext(plan)[0] + TURN_SUFFIX
+    return side_file(plan, TURN_SUFFIX)
 
 
 def read_turn(plan):
@@ -297,17 +495,15 @@ def read_turn(plan):
 
 
 def write_turn(plan, turn):
-    """Write the mark whole and rename it into place, so a reader never sees half of it. True when it is there."""
-    path = turn_file(plan)
-    tmp = "%s.%d.tmp" % (path, os.getpid())
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(turn, fh)
-        os.replace(tmp, path)
-        return True
-    except Exception:
-        try:
-            os.remove(tmp)
-        except Exception:
-            pass
-        return False
+    """True when the mark is there."""
+    return write_quietly(turn_file(plan), json.dumps(turn))
+
+
+def turn_began(plan, payload):
+    """When the turn this event belongs to began, as seconds, from the mark beside `plan`; None without a matching one."""
+    prompt = payload.get("prompt_id")
+    turn = read_turn(plan) if isinstance(prompt, str) and prompt else None
+    if not turn or turn.get("prompt") != prompt:
+        return None
+    began = turn.get("began")
+    return float(began) if isinstance(began, (int, float)) and not isinstance(began, bool) else None

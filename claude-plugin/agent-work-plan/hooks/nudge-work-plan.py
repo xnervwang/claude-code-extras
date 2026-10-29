@@ -56,9 +56,12 @@ import sys
 sys.dont_write_bytecode = True
 
 from changes import changes
-from plan_path import plan_file, settings
+from plan_path import NUDGED_SUFFIX, OFFERED_SUFFIX, epoch, open_tail, plan_file, settings, side_file, write_quietly
 
 # Every threshold this uses is in plan_path.DEFAULTS, where the editor's settings can override it.
+
+# How far back from the end of the transcript the turn, and the user's turns before it, are looked for.
+TURN_TAIL = 2 * 1024 * 1024
 
 
 def changed(row):
@@ -86,7 +89,7 @@ def spoke(row):
     return False
 
 
-def turn_shape(transcript, plan=""):
+def turn_shape(tail, plan=""):
     """When this turn began, how many tools it used, how many things it changed, how often the user has spoken, and
     whether it went to the plan.
 
@@ -101,43 +104,27 @@ def turn_shape(transcript, plan=""):
     also in the text this plugin injects at the start of every turn, so a search across whole rows would find it every
     time and the reminder would never be able to fire at all.
     """
-    try:
-        with open(transcript, "rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            window = min(size, 2 * 1024 * 1024)
-            fh.seek(size - window)
-            lines = fh.read().decode("utf-8", "replace").split("\n")
-    except Exception:
-        return None, 0, 0, 0, False
-    rows = []
-    for line in lines:
+    started, tools, changes, turns, reached = None, 0, 0, 0, False
+    for line in tail.lines(TURN_TAIL):
         if '"type"' not in line:
             continue
         try:
-            rows.append((json.loads(line), '"tool_use"' in line, line))
+            row = json.loads(line)
         except Exception:
             continue
-    started, tools, changes, reached = None, 0, 0, False
-    for row, used_tool, line in reversed(rows):
+        if not isinstance(row, dict):
+            continue
         if spoke(row):
-            started = row.get("timestamp")
-            break
-        if used_tool:
+            turns += 1
+            if started is None:
+                started = row.get("timestamp")
+            continue
+        if started is None and '"tool_use"' in line:
             tools += 1
             changes += changed(row)
             if plan and plan in line:
                 reached = True
-    return started, tools, changes, sum(1 for row, _, _ in rows if spoke(row)), reached
-
-
-def iso_to_epoch(stamp):
-    try:
-        import datetime
-        return datetime.datetime.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S").replace(
-            tzinfo=datetime.timezone.utc).timestamp()
-    except Exception:
-        return None
+    return started, tools, changes, turns, reached
 
 
 def speak(payload, text):
@@ -157,14 +144,14 @@ def offer_once(payload, path, tools, turns, limits):
     """
     if tools < limits["offerMinToolCalls"] or turns < limits["offerMinTurns"]:
         return 0
-    marker = os.path.splitext(path)[0] + ".offered"
+    marker = side_file(path, OFFERED_SUFFIX)
     if os.path.exists(marker):
         return 0
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(marker, "w"):
-            pass
     except Exception:
+        return 0
+    if not write_quietly(marker, ""):
         return 0
     return speak(payload, (
         "This conversation is keeping no work plan. You have spoken %d times and this turn used %d tools, which is "
@@ -189,18 +176,14 @@ def said_already(path, touched):
 
     Failing to read or write the marker means speaking. Silence is the outcome worth being sure about.
     """
-    marker = os.path.splitext(path)[0] + ".nudged"
+    marker = side_file(path, NUDGED_SUFFIX)
     try:
         with open(marker) as fh:
             if fh.read().strip() == repr(touched):
                 return True
     except Exception:
         pass
-    try:
-        with open(marker, "w") as fh:
-            fh.write(repr(touched))
-    except Exception:
-        pass
+    write_quietly(marker, repr(touched))
     return False
 
 
@@ -215,7 +198,10 @@ def main():
     limits = settings()
     if not limits["enabled"]:
         return 0
-    started, tools, changes, turns, reached = turn_shape(payload.get("transcript_path") or "", path)
+    tail = open_tail(payload.get("transcript_path"))
+    if tail is None:
+        return 0
+    started, tools, changes, turns, reached = turn_shape(tail, path)
     if not started:
         return 0
     if not os.path.exists(path):
@@ -228,7 +214,7 @@ def main():
     # conversation whose plan was already correct, which is precisely how a reminder stops being read.
     if reached:
         return 0
-    began = iso_to_epoch(started)
+    began = epoch(started)
     if began is None:
         return 0
     try:

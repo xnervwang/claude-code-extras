@@ -33,7 +33,7 @@ import sys
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
 
-from plan_path import latest_reply_matches, plan_file, settings
+from plan_path import latest_reply_matches, open_tail, plan_file, settings
 
 
 def message(plan):
@@ -64,8 +64,7 @@ def main():
     plan = plan_file(payload)
     if not plan or not os.path.isfile(plan):
         return 0
-    transcript = payload.get("transcript_path")
-    if transcript and latest_reply_matches(transcript, limits["quietWhenReplyMatches"]):
+    if latest_reply_matches(open_tail(payload.get("transcript_path")), limits["quietWhenReplyMatches"]):
         return 0
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SessionStart",

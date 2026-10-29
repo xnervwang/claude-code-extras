@@ -18,20 +18,20 @@ first, which is the step that gets skipped or invented. A cost like that is a re
 at the end of the turn, and `doing` is the one state that cannot wait that long.
 
 Which row, and which state, is decided by whoever runs it; nothing here judges what the work is. The file is read
-immediately before it is written, so a correction the user made by hand a moment ago is kept rather than reverted.
+immediately before it is written, so a correction the user made by hand a moment ago is kept rather than reverted, and
+the plan's lock is held from that read to the write (see plan_lock), so a change made at the same moment by another run
+or by the extension is not written over.
 """
 import argparse
 import json
 import os
-import re
 import sys
 
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
 
-from plan_path import CLOSED_STATES, MAX_DETAIL_CHARS, MAX_DETAIL_LINES, STATES, detail_over, now_stamp, settings
-
-PLAN_NAME = re.compile(r"^[0-9A-Fa-f][0-9A-Fa-f-]{7,}\.json$")
+from plan_path import (CLOSED_STATES, MAX_DETAIL_CHARS, MAX_DETAIL_LINES, PLAN_NAME, STATES, detail_over, now_stamp,
+                       plan_lock, settings, write_atomic)
 
 
 class Refused(Exception):
@@ -112,18 +112,7 @@ def load(path, may_create):
 
 def save(path, plan):
     """Write the whole file and rename it into place, so the tree never reads half of one."""
-    tmp = "%s.%d.tmp" % (path, os.getpid())
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(plan, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except Exception:
-            pass
-        raise
+    write_atomic(path, json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
 
 
 def run(args):
@@ -133,6 +122,17 @@ def run(args):
     if not settings(os.path.dirname(path))["enabled"]:
         raise Refused("Work plans are switched off for this editor (claudeCodeWorkPlan.workPlan), so nothing reads this "
                       "file. Track what is left in your reply instead.")
+    if args.action == "add":
+        # The first row of a conversation can come before anything has made the plugin's data directory.
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        except OSError as e:
+            raise Refused("Could not create %s for the plan (%s)." % (os.path.dirname(path), e.strerror or e))
+    with plan_lock(path, lambda why: print("Going ahead without the plan's lock: %s." % why, file=sys.stderr)):
+        return change(path, args)
+
+
+def change(path, args):
     plan = load(path, args.action == "add")
     now = now_stamp()
     if args.action == "set":

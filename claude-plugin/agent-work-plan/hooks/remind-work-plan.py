@@ -39,7 +39,6 @@ begins (see plan_path.py). Without that mark there is nothing to go on, and this
 """
 import json
 import os
-import shlex
 import sys
 
 # Set before the import below: see inject-work-plan.py. A hook that runs after every batch of tool calls leaves no
@@ -47,14 +46,7 @@ import sys
 sys.dont_write_bytecode = True
 
 from changes import changes
-from plan_path import plan_file, read_turn, settings, write_turn
-
-ROW_TOOL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plan-row.py")
-
-
-def any_doing(nodes):
-    return any(isinstance(n, dict) and (n.get("state") == "doing" or any_doing(n.get("children")))
-               for n in nodes or [])
+from plan_path import any_in, plan_file, read_turn, row_command, settings, write_turn
 
 
 def count(value):
@@ -102,7 +94,7 @@ def main():
         return 0
     if not isinstance(plan, dict):
         return 0
-    if any_doing(plan.get("nodes")):
+    if any_in(plan.get("nodes"), "doing"):
         turn["settled"] = True
         write_turn(path, turn)
         return 0
@@ -111,7 +103,7 @@ def main():
     # one outcome worth avoiding; silence is the safe side.
     if not write_turn(path, turn):
         return 0
-    command = "python3 %s %s" % (shlex.quote(ROW_TOOL), shlex.quote(path))
+    command = row_command(path)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": payload.get("hook_event_name", "PostToolBatch"),
         "additionalContext": (

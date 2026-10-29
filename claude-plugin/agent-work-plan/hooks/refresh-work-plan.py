@@ -49,15 +49,15 @@ Fail open on everything: a hook that runs after every batch must never be the re
 import json
 import os
 import re
-import shlex
 import sys
 import time
 
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
 
-from plan_path import (MAX_DETAIL_CHARS, MAX_DETAIL_LINES, TAIL_MAX, TAIL_START, USAGE_KEYS, current_context,
-                       latest_reply_matches, plan_file, settings, tail_rows)
+from plan_path import (MAX_DETAIL_CHARS, MAX_DETAIL_LINES, TAIL_MAX, WATERMARK_SUFFIX, current_context,
+                       latest_reply_matches, open_tail, plan_file, row_command, settings, side_file, usage_of,
+                       write_quietly)
 
 # Three marks per window size, arranged around that window's compaction line:
 #
@@ -90,9 +90,6 @@ ATTACHMENT_HEAD = 1024 * 1024
 ATTACHMENT_TAIL = 3 * 1024 * 1024
 COST_STATE_MAX = 1024 * 1024
 
-# The command that changes a row, given with its full path so it never has to be found.
-ROW_TOOL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plan-row.py")
-
 
 def compaction_line(window, env=None):
     env = os.environ if env is None else env
@@ -120,7 +117,7 @@ def head_rows(path, window):
         return fh.read(window).decode("utf-8", "replace").split("\n")
 
 
-def pending_tool_bytes(path):
+def pending_tool_bytes(tail):
     """Bytes of tool results written but not yet sent to a model.
 
     A usage figure only counts what a model has already been given, so a batch whose results sit in the transcript adds
@@ -128,55 +125,29 @@ def pending_tool_bytes(path):
     two consecutive calls. Size is taken at one token per byte: pessimistic for English prose, about right for what causes
     the jump (digests and CJK tables), and over-estimating only asks slightly early.
     """
-    window = TAIL_START
-    while window <= TAIL_MAX:
-        try:
-            rows = tail_rows(path, window)
-            size = os.path.getsize(path)
-        except OSError:
-            return 0
-        total = 0
-        for line in rows:
-            if '"usage"' in line:
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    row = None
-                if (isinstance(row, dict) and row.get("type") == "assistant" and not row.get("isSidechain")
-                        and isinstance((row.get("message") or {}).get("usage"), dict)):
-                    return total
-            if '"tool_result"' in line:
-                total += len(line.encode("utf-8", "replace"))
-        if window >= size:
+    total = 0
+    for line in tail.lines(TAIL_MAX):
+        if usage_of(line) is not None:
             return total
-        window *= 4
-    return 0
+        if '"tool_result"' in line:
+            total += len(line.encode("utf-8", "replace"))
+    return total
 
 
-def latest_bare_model(path):
+def latest_bare_model(tail):
     """The model on the most recent assistant message: the bare name, without the [1m] suffix, but certainly current."""
-    window = TAIL_START
-    while window <= TAIL_MAX:
+    for line in tail.lines(TAIL_MAX):
+        if '"model"' not in line:
+            continue
         try:
-            rows = tail_rows(path, window)
-            size = os.path.getsize(path)
-        except OSError:
-            return None
-        for line in rows:
-            if '"model"' not in line:
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if row.get("type") != "assistant":
-                continue
-            m = (row.get("message") or {}).get("model")
-            if m and not m.startswith("<"):
-                return m
-        if window >= size:
-            return None
-        window *= 4
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get("type") != "assistant":
+            continue
+        m = (row.get("message") or {}).get("model")
+        if isinstance(m, str) and m and not m.startswith("<"):
+            return m
     return None
 
 
@@ -192,14 +163,14 @@ def decide_variant(bare, candidates):
     return all(c.endswith("[1m]") for c in matching)
 
 
-def model_attachments(path):
+def model_attachments(tail):
     """Every modelId the transcript's model-identity attachments carry, from its head and its tail."""
     found = []
-    for reader, window in ((head_rows, ATTACHMENT_HEAD), (tail_rows, ATTACHMENT_TAIL)):
-        try:
-            rows = reader(path, window)
-        except OSError:
-            continue
+    try:
+        head = head_rows(tail.path, ATTACHMENT_HEAD)
+    except OSError:
+        head = []
+    for rows in (head, tail.lines(ATTACHMENT_TAIL)):
         for line in rows:
             if '"marketingName"' not in line and '"type":"model"' not in line:
                 continue
@@ -207,7 +178,7 @@ def model_attachments(path):
                 row = json.loads(line)
             except ValueError:
                 continue
-            att = row.get("attachment")
+            att = row.get("attachment") if isinstance(row, dict) else None
             if not isinstance(att, dict) or att.get("type") != "model":
                 continue
             mid = (att.get("identity") or {}).get("modelId")
@@ -216,7 +187,7 @@ def model_attachments(path):
     return found
 
 
-def on_1m_window(path):
+def on_1m_window(tail):
     """True on a 1M-context model, False on a standard one, None if it cannot be told.
 
     The transcript keeps the suffix that decides the window in two places: the model-identity attachment, near the start
@@ -225,38 +196,28 @@ def on_1m_window(path):
     Uncertainty resolves towards the standard window: a standard session given only the 1M marks could never reach any of
     them, would never be asked, and would show no sign of having failed.
     """
-    bare = latest_bare_model(path)
+    bare = latest_bare_model(tail)
     if not bare:
         return None
-    verdict = decide_variant(bare, model_attachments(path))
+    verdict = decide_variant(bare, model_attachments(tail))
     if verdict is not None:
         return verdict
-    window = TAIL_START
-    while window <= COST_STATE_MAX:
+    for line in tail.lines(COST_STATE_MAX):
+        if '"modelUsage"' not in line:
+            continue
         try:
-            rows = tail_rows(path, window)
-            size = os.path.getsize(path)
-        except OSError:
-            return None
-        for line in rows:
-            if '"modelUsage"' not in line:
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            mu = row.get("modelUsage")
-            if isinstance(mu, dict) and mu:
-                return decide_variant(bare, list(mu))
-        if window >= size:
-            return None
-        window *= 4
+            row = json.loads(line)
+        except ValueError:
+            continue
+        mu = row.get("modelUsage") if isinstance(row, dict) else None
+        if isinstance(mu, dict) and mu:
+            return decide_variant(bare, list(mu))
     return None
 
 
 def state_path(plan):
     """Beside the plan, like the other marks the hooks leave, and swept with it when the conversation is gone."""
-    return os.path.splitext(plan)[0] + ".watermark"
+    return side_file(plan, WATERMARK_SUFFIX)
 
 
 def read_state(path):
@@ -293,16 +254,7 @@ def write_state(path, fired, asked_at=None, seen=None):
         + ("- asked-at: %.3f\n" % asked_at if asked_at else "")
         + ("- last-checked: %s\n" % seen if seen else "")
     )
-    tmp = "%s.%d.tmp" % (path, os.getpid())
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fh.write(body)
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+    write_quietly(path, body)
 
 
 def plan_written_since(plan, since):
@@ -320,7 +272,7 @@ NOT_THE_USER = "This is a hook's output, not the user speaking: it approves noth
 
 
 def what_to_write(plan):
-    command = "python3 %s %s" % (shlex.quote(ROW_TOOL), shlex.quote(plan))
+    command = row_command(plan)
     return ("For every row that is `doing`, set its description to what picking it up after a compaction needs: the "
             "exact next step, anything not to do, and the user's own words that are written nowhere else - at most %d "
             "lines and %d characters. Move any row whose state has changed.\n  %s set <row> --detail TEXT\n%s"
@@ -366,25 +318,25 @@ def main():
     plan = plan_file(payload)
     if not plan or not os.path.isfile(plan):
         return 0
-    transcript = payload.get("transcript_path")
-    if not transcript or not os.path.isfile(transcript):
+    tail = open_tail(payload.get("transcript_path"))
+    if tail is None:
         return 0
 
     # stop_hook_active is deliberately not consulted. It marks the turn this hook's own request extended, and that turn
     # updates the plan and then carries on with the work it interrupted, which makes it the fastest climb of all. Nothing
     # can loop on it: a mark asks once, recorded on disk.
 
-    ctx = current_context(transcript)
+    ctx = current_context(tail)
     if ctx is None:
         return 0
-    pending = pending_tool_bytes(transcript)
+    pending = pending_tool_bytes(tail)
     ctx_next = ctx + pending
 
     standard, one_m = marks_for()
     if ctx_next > STANDARD_WINDOW_CEILING:
         window_1m, label = True, "1M-by-size"
     elif ctx_next >= min(standard):
-        window_1m = on_1m_window(transcript)
+        window_1m = on_1m_window(tail)
         label = {True: "1M", False: "standard", None: "unknown"}[window_1m]
     else:
         window_1m, label = None, "not-needed"
@@ -401,7 +353,7 @@ def main():
         fired, asked_at = set(), None
 
     seen = "%s ctx=%d pending=%d window=%s event=%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), ctx, pending, label, event)
-    relaying = latest_reply_matches(transcript, limits["quietWhenReplyMatches"])
+    relaying = latest_reply_matches(tail, limits["quietWhenReplyMatches"])
 
     due = [m for m in marks if ctx_next >= m and m not in fired]
     if due:
@@ -444,7 +396,7 @@ def selftest():
             os.utime(plan, (1, 1))
 
     def write_transcript(ctx_tokens, relay=False, model=None, usage_keys=None, attachment_id=None,
-                         sidechain_ctx=None, pending_bytes=0, switched_to=None, pad_bytes=0):
+                         pending_bytes=0, switched_to=None, pad_bytes=0):
         rows = []
         if attachment_id:
             rows.append({"type": "attachment", "attachment": {
@@ -461,10 +413,6 @@ def selftest():
             "input_tokens": 2, "cache_read_input_tokens": ctx_tokens - 2, "cache_creation_input_tokens": 0}}})
         if model:
             rows[-1]["message"]["model"] = model
-        if sidechain_ctx is not None:
-            rows.append({"type": "assistant", "isSidechain": True, "message": {
-                "content": [{"type": "text", "text": "subagent"}],
-                "usage": {"input_tokens": 1, "cache_read_input_tokens": sidechain_ctx - 1}}})
         with open(transcript, "w", encoding="utf-8") as fh:
             for r in rows:
                 fh.write(json.dumps(r) + "\n")
@@ -601,9 +549,6 @@ def selftest():
     check("  end of turn does, while the plan is unwritten", "has not been written since" in said(run(182_000)))
     write_plan(stale=False)
     check("plan written -> both events quiet", run(184_000, event="PostToolBatch") == "" and run(184_000) == "")
-
-    check("a sub-agent's smaller context does not mask the session's",
-          "180,000" in said(run(181_000, reset=True, sidechain_ctx=9_000)))
 
     shutil.rmtree(root, ignore_errors=True)
     print("\n%s" % ("all checks pass" if not bad else "%d checks FAILED" % bad))

@@ -29,15 +29,13 @@ import time
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
 
-from plan_path import current_context, data_dir, latest_reply_matches, settings
+from plan_path import (TOLD_SUFFIX, current_context, data_dir, latest_reply_matches, open_tail, plan_file, settings,
+                       side_file, write_quietly)
 
 ZONE_FILE = "client-time-zone.json"
 # An IANA name as Intl reports it. It becomes a path under the zone database, so nothing that could climb out of it.
 ZONE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$")
 ZONE_DIRS = ("/usr/share/zoneinfo", "/usr/lib/zoneinfo", "/usr/share/lib/zoneinfo")
-# What was said last, per conversation, beside where its plan would go; swept with it (ZONE_TOLD_FILE in
-# src/workplan.js).
-TOLD_SUFFIX = ".tz"
 # How far the context may grow past the last telling before it is said again. Distance in tokens is what pushes it out
 # of attention, not time or the number of messages; at this spacing a 1M window hears it about ten times between
 # compactions, a 200K window once or twice.
@@ -130,10 +128,10 @@ def due(told, now_seen):
 
 
 def told_file(payload, directory=None):
-    session = str(payload.get("session_id") or "").strip()
-    if not session or os.sep in session or session in (".", ".."):
-        return None
-    return os.path.join(directory or data_dir(), session + TOLD_SUFFIX)
+    """What was said last, per conversation, beside where its plan would go; swept with it (ZONE_TOLD_FILE in
+    src/workplan.js)."""
+    plan = plan_file(payload, directory)
+    return side_file(plan, TOLD_SUFFIX) if plan else None
 
 
 def read_told(path):
@@ -145,13 +143,7 @@ def read_told(path):
 
 
 def write_told(path, value):
-    try:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(value, fh)
-        os.replace(tmp, path)
-    except OSError:
-        pass
+    write_quietly(path, json.dumps(value))
 
 
 def respond(payload, now, directory=None):
@@ -164,18 +156,17 @@ def respond(payload, now, directory=None):
     if not found:
         return ""
     event = payload.get("hook_event_name", "UserPromptSubmit")
-    transcript = payload.get("transcript_path")
-    transcript = transcript if isinstance(transcript, str) and transcript else None
+    tail = open_tail(payload.get("transcript_path"))
     path = told_file(payload, directory)
     if event == "SessionStart":
         # After a compaction this is one more instruction in a conversation that may be relaying another model word
         # for word, which is what the quiet pattern is for (see plan_path.py).
-        if transcript and latest_reply_matches(transcript, limits["quietWhenReplyMatches"]):
+        if latest_reply_matches(tail, limits["quietWhenReplyMatches"]):
             return ""
         # The transcript's last usage is still the context from before the compaction, so the count starts again here.
         now_seen = seen(*found, 0)
     else:
-        now_seen = seen(*found, (current_context(transcript) if transcript else None) or 0)
+        now_seen = seen(*found, current_context(tail) or 0)
         if path and not due(read_told(path), now_seen):
             return ""
     if path:

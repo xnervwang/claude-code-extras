@@ -26,7 +26,7 @@ import sys
 # installed plugin directory.
 sys.dont_write_bytecode = True
 
-from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, data_dir, settings
+from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, PLAN_NAME, data_dir, settings
 from plan_path import detail_over as over
 
 # Enough of a title to recognise the row by; a rejection has to say which description, not merely that there was one.
@@ -110,7 +110,7 @@ def guarded(path):
         return False
     if os.path.dirname(here) != os.path.realpath(data_dir()):
         return False
-    return bool(re.match(r"^[0-9A-Fa-f][0-9A-Fa-f-]{7,}\.json$", os.path.basename(here)))
+    return bool(PLAN_NAME.match(os.path.basename(here)))
 
 
 def main():

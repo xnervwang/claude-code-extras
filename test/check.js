@@ -2829,6 +2829,21 @@ console.log('\nwhat the injected block says about the work in hand');
     if (!allClosed.text && allClosed.mark && allClosed.mark.prompt === 'p-17b') ok('a plan with nothing open injects nothing, and still marks the turn');
     else bad(`with nothing open: injected ${allClosed.text.length} bytes, mark ${JSON.stringify(allClosed.mark)}`);
   }
+  {
+    /* The file is edited by hand, so anything can stand where a row's children belong, and a walk that trusted it raised
+       on every prompt until the file was fixed. */
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-inj-'));
+    fs.writeFileSync(path.join(dir, session + '.json'), JSON.stringify({ nodes: [
+      { title: 'numbered', state: 'todo', children: 5 }, { title: 'keyed', state: 'doing', children: { a: 1 } }] }));
+    const r = cp.spawnSync('python3', [path.join(hooks, 'inject-work-plan.py'), dir], {
+      encoding: 'utf8', input: JSON.stringify({ session_id: session, hook_event_name: 'UserPromptSubmit' }),
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+    let text = '';
+    try { text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) {}
+    if (r.status === 0 && rowOf(text, 'numbered') && rowOf(text, 'keyed')) ok('rows whose children are not a list are drawn, and the hook does not fail');
+    else bad(`children that are not a list: status ${r.status}, ${JSON.stringify(((r.stderr || '') + text).slice(-200))}`);
+  }
 }
 
 /* ── 18. the reminder when a turn starts working ──
@@ -2958,6 +2973,17 @@ console.log('\nthe reminder when a turn starts working');
     if (!batch({ dir }, 'p1', [E, E])) ok('a conversation with no plan is not told anything');
     else bad('a conversation with no plan was told to mark a row');
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+  {
+    const t = stage([{ title: 'a', state: 'todo', children: 5 }]);
+    begin(t, 'p1');
+    const r = cp.spawnSync('python3', [path.join(hooks, 'remind-work-plan.py'), t.dir], {
+      encoding: 'utf8', input: JSON.stringify({ session_id: session, prompt_id: 'p1', hook_event_name: 'PostToolBatch',
+        tool_calls: [E, E] }),
+    });
+    if (r.status === 0 && spoke(r.stdout)) ok('a row whose children are not a list is walked past, and the reminder still speaks');
+    else bad(`children that are not a list: status ${r.status}, ${JSON.stringify(((r.stderr || '') + r.stdout).slice(-200))}`);
+    done(t);
   }
 }
 
@@ -3104,6 +3130,56 @@ console.log('\nthe row command');
     } else bad(`refusals: ${[long, tall, none].map((r) => r.status).join(',')}, file changed ${fs.readFileSync(t.file, 'utf8') !== before}`);
     done(t);
   }
+  {
+    /* Each run reads the whole file, changes its row and writes all of it back, so two at once without a lock each write
+       what they read and the later one drops the earlier one's change - 14 times in 20 when this was measured with two. */
+    const t = stage(plan());
+    const n = 16;
+    const r = cp.spawnSync('python3', ['-c', [
+      'import subprocess, sys',
+      'ps = [subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2], "add", "todo", "r%d" % i]) for i in range(int(sys.argv[3]))]',
+      'sys.exit(max(p.wait() for p in ps))',
+    ].join('\n'), tool, t.file, String(n)], { encoding: 'utf8' });
+    const kept = read(t).nodes.length - plan().nodes.length;
+    const strays = fs.readdirSync(t.dir).filter((f) => /\.(lock|tmp)$/.test(f));
+    if (r.status === 0 && kept === n && !strays.length) ok(`${n} runs at once each keep their row, and leave no lock or temporary file behind`);
+    else bad(`${n} runs at once: status ${r.status}, ${kept} rows kept, left ${JSON.stringify(strays)}`);
+    done(t);
+  }
+  {
+    /* A lock older than ten seconds was left by a run that died holding it, and is taken over at once. One still held is
+       waited on for two seconds and then gone around, saying so: a missed lock must never stop the work. Either way the
+       other holder's lock is not removed for it. */
+    const t = stage(plan());
+    const lock = t.file + '.lock';
+    fs.mkdirSync(lock);
+    const old = Date.now() / 1000 - 60;
+    fs.utimesSync(lock, old, old);
+    let at = Date.now();
+    const stale = row(t, 'set', '1', 'doing');
+    const staleMs = Date.now() - at;
+    const staleGone = !fs.existsSync(lock);
+    fs.rmSync(lock, { recursive: true, force: true });
+    fs.mkdirSync(lock);
+    at = Date.now();
+    const held = row(t, 'set', '1', 'done');
+    const heldMs = Date.now() - at;
+    if (stale.status === 0 && staleGone && staleMs < 1500 && held.status === 0 && heldMs >= 1900
+      && read(t).nodes[0].state === 'done' && fs.existsSync(lock) && /without the plan's lock/.test(held.stderr)) {
+      ok('a lock left behind is taken over at once, and one still held is waited on, then gone around, saying so');
+    } else bad(`left-behind lock: status ${stale.status} in ${staleMs} ms, removed ${staleGone}; held lock: status `
+      + `${held.status} in ${heldMs} ms, said ${JSON.stringify(held.stderr)}`);
+    done(t);
+  }
+  {
+    /* The first row of a conversation can come before anything has made the plugin's data directory. */
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-row-'));
+    const file = path.join(dir, 'data', session + '.json');
+    const r = cp.spawnSync('python3', [tool, file, 'add', 'doing', 'first'], { encoding: 'utf8' });
+    if (r.status === 0 && fs.existsSync(file)) ok('the first row, added where the data directory does not exist yet, makes it');
+    else bad(`add with no data directory: status ${r.status}, ${JSON.stringify((r.stderr || '').slice(-200))}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /* ── 19a. where the hook settings are written ──
@@ -3199,6 +3275,33 @@ console.log("\nthe reader's time zone, told to the model");
       && /tellTimeZone: PREFIX \+ 'tellClaudeYourTimeZone'/.test(ext) && /"tellTimeZone": True/.test(defaults)) {
     ok('a reported zone is written where the hook reads it, never as empty, and the setting reaches the hook');
   } else bad('extension.js does not write client-time-zone.json into planDir() on a report, or does not pass tellClaudeYourTimeZone to the hooks');
+}
+
+/* ── 19d. one copy of what the hooks share ──
+   Reading the end of a transcript, writing a file whole, the name a plan is given, the names of the files kept beside it,
+   the walk over a row's children and the command line that changes a row each exist once, in plan_path.py. Copies of
+   them drifted apart before: one atomic write used a fixed temporary name two processes could collide on, two marker
+   files were written in place, and the plan's name was checked in two scripts and not in the function that builds it. */
+console.log('\none copy of what the hooks share');
+{
+  const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+  const scripts = fs.readdirSync(hooks).filter((f) => f.endsWith('.py') && f !== 'plan_path.py');
+  const copies = [
+    ['reads a transcript from its end', /\.seek\(/],
+    ['writes a file and renames it into place', /os\.replace\(/],
+    ['spells the session id pattern', /\[0-9A-Fa-f\]\[0-9A-Fa-f-\]\{7,\}/],
+    ['spells a side file suffix', /["']\.(turn|nudged|offered|watermark|tz|lock)["']/],
+    ['builds the row command path', /join\([^)]*["']plan-row\.py["']/],
+    ['walks children with a guard of its own', /def any_(doing|in)\(/],
+    ['parses a time of its own', /strptime\(/],
+  ];
+  const found = [];
+  for (const f of scripts) {
+    const src = fs.readFileSync(path.join(hooks, f), 'utf8');
+    for (const [what, re] of copies) if (re.test(src)) found.push(`${f} ${what}`);
+  }
+  if (!found.length) ok(`none of the ${scripts.length} other scripts keeps its own copy of what plan_path.py shares`);
+  else bad(`copies outside plan_path.py: ${found.join('; ')}`);
 }
 
 /* ── 20. how a row being worked on, or waiting, is drawn ──
