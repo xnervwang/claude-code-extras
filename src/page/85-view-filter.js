@@ -43,11 +43,23 @@
     if (VIEW === 'main') return owner === 'main';
     return owner === VIEW;
   };
+  // The owner is recorded with the filter off as well: a reply is let alone once settled only when its owner is on it
+  // (99-sweep.js), so without it every reply would be worked out again on every sweep.
   var applyOwner = function(el, owner){
-    if (isOff('footerViewFilter')) return;
     if (el.getAttribute(OWNER_ATTR) !== owner) el.setAttribute(OWNER_ATTR, owner);
+    if (isOff('footerViewFilter')) return;
     var want = ownerVisible(owner) ? '' : 'none';
     if (el.style.display !== want) el.style.display = want;
+  };
+  /* With the filter switched off, a view picked before is let go and whatever it hid is shown again. */
+  var viewFilterOff = function(){
+    if (!isOff('footerViewFilter')) return false;
+    if (VIEW !== 'all') {
+      VIEW = 'all'; SIG = '';
+      var hid = document.querySelectorAll('[' + OWNER_ATTR + ']');
+      for (var i = 0; i < hid.length; i++) if (hid[i].style.display === 'none') hid[i].style.display = '';
+    }
+    return true;
   };
   var viewLabel = function(){
     if (VIEW === 'main') return 'Main';
@@ -128,6 +140,7 @@
     }
   };
   var ensureViewControl = function(){
+    if (isOff('footerViewFilter')) { VIEWBTN = dropControl(VIEWBTN); VIEWMENU = dropControl(VIEWMENU); return; }
     if (!SEEN.length && !KNOWN.length && !VIEWBTN) return;   // nothing to switch between yet
     // Only a changed label is written: every sweep reaches this, and writing text is a mutation that starts the next one.
     if (VIEWBTN && VIEWBTN.isConnected) { var label = viewLabel(); if (VIEWBTN.textContent !== label) VIEWBTN.textContent = label; return; }

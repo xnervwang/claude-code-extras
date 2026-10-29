@@ -42,6 +42,7 @@
     var seed = bubbles[0] || document.querySelector(ASSIST) || document.querySelector(SEND);
     var found = seed ? findSession(seed) : null;
     if (found && found !== sessionRef) useSession(found);
+    viewFilterOff();
     if (!isOn()) { sweep(); return; }
     if (sessionRef) indexTitles(sessionRef);
     for (var i = 0; i < bubbles.length; i++) {

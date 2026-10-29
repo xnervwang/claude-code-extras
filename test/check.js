@@ -236,6 +236,26 @@ console.log('\nwhat the page costs, in a browser');
         ok('after the panel moves to another conversation, the newest reply\'s figures and the info box are that conversation\'s');
       } else bad('after the panel moved to another conversation: ' + (moved.error || JSON.stringify(
         { before: moved.labelBeforeSwitch, after: moved.labelAfterSwitch, info: moved.infoAfterSwitch })));
+      /* Switched off from the start, the view filter costs nothing: the owner is recorded whether or not the filter is
+         on, so the replies behind the newest still settle, and there is no button. */
+      const noFilter = harness.run(browser, { turns: SHORT, offSwitches: ['footerViewFilter'] });
+      if (!noFilter.error && noFilter.msgs === 300 && noFilter.full <= 64 && !noFilter.viewButton) {
+        ok(`with the view filter off, ${noFilter.full} of ${noFilter.msgs} replies are worked out each sweep and there is no button`);
+      } else bad('with the view filter off: ' + (noFilter.error || `${noFilter.full} of ${noFilter.msgs} replies worked out, button ${noFilter.viewButton}`));
+      /* Switched off while the page is open, the way the extension does it - the live stylesheet changes and the revision
+         probe notices: what each addition put on the page goes, rather than only not being made again. */
+      const offLive = harness.run(browser, { turns: SHORT, pickView: true,
+        flip: ['footerViewFilter', 'footerInfo', 'footerMute', 'footerPlainView'] });
+      if (!offLive.error && offLive.picked && offLive.hiddenInView > 0 && offLive.controlsBeforeFlip.length === 4
+          && offLive.hiddenAfterFlip === 0 && !offLive.controlsAfterFlip.length) {
+        ok(`switched off while open, a sub-agent view shows again the ${offLive.hiddenInView} messages it hid, and the info, mute, Focus view and view buttons go`);
+      } else bad('switching the footer additions off while open: ' + (offLive.error || JSON.stringify({ picked: offLive.picked,
+        hidden: [offLive.hiddenInView, offLive.hiddenAfterFlip], controls: [offLive.controlsBeforeFlip, offLive.controlsAfterFlip] })));
+      const tocLive = harness.run(browser, { turns: SHORT, flip: ['toc'] });
+      if (!tocLive.error && tocLive.railBeforeFlip && tocLive.keyMovedBeforeFlip && !tocLive.railAfterFlip && !tocLive.keyMovedAfterFlip) {
+        ok('the contents list switched off while open takes its rail away, and the , and . keys stop stepping');
+      } else bad('switching the contents list off while open: ' + (tocLive.error || JSON.stringify({ rail: [tocLive.railBeforeFlip,
+        tocLive.railAfterFlip], key: [tocLive.keyMovedBeforeFlip, tocLive.keyMovedAfterFlip] })));
       /* A write the page answers with a sweep that makes the write again keeps an idle page sweeping four times a second.
          Such a page never holds still long enough to count as settled, and changes things while idle. */
       const restless = runs.filter(([, r]) => !(r.settledAfter < harness.DEFAULTS.settleCapMs && r.idleSweeps === 0
@@ -790,7 +810,7 @@ console.log('\nthe model pill comparison');
 console.log('\na reopened conversation');
 {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', f), 'utf8');
-  const box = { out: {}, sessionRef: null, isOn: () => true, isOff: () => false };
+  const box = { out: {}, window: {}, sessionRef: null, isOn: () => true, isOff: () => false };
   new vm.Script(`(function(){${read('70-meter.js')}\n${read('75-turn-stats.js')}\n;` +
     'out.fillWindow = fillWindow; out.statAt = statAt;})()', { filename: 'reopened' }).runInNewContext(box);
   const session = (usage, pick) => ({
@@ -867,6 +887,50 @@ console.log('\na reopened conversation');
   const kept = box.out.statAt(first, false);
   if (/ctx 96%/.test(kept)) ok('a reply that was once the newest keeps its own figures afterwards');
   else bad(`a reply that was once the newest later showed "${kept}"`);
+}
+
+/* The usage meter's switch reaches the two edits that keep the meter on screen: with it off, the meter is Claude Code's
+   own again - hidden while more than half the window is free, its states at its own points - and the trim and outline
+   this script put on it come off. */
+console.log('\nthe usage meter, kept on screen or left to Claude Code');
+{
+  const { applyEdits } = require('../src/edits');
+  const pick = (name) => webview.EDITS.find((e) => e.name === name);
+  const code = 'function Yy5($){if($<62.5)return 50;if($<87)return 75;return 99}var AI1=null;'
+    + 'function vy0({usedTokens:$,contextWindow:J}){let Y=J>0?Math.min($/J*100,100):0,Q=AI1!==null?AI1:Y,z=100-Q;'
+    + 'if(AI1===null){if(J===0)return null;if(z>=50)return null}return"meter"}';
+  const r = applyEdits(code, [pick('context meter state thresholds'), pick('context meter always visible')]);
+  if (r.error) bad('the meter edits did not apply to the meter\'s shape: ' + r.error);
+  else {
+    const meter = (kept) => {
+      const env = { window: {} };
+      if (kept !== undefined) env.window.__cceMeterKept = () => kept;
+      vm.createContext(env);
+      vm.runInContext(r.out, env);
+      return JSON.stringify([env.Yy5(55), env.Yy5(80), env.vy0({ usedTokens: 10, contextWindow: 100 }), env.vy0({ usedTokens: 60, contextWindow: 100 })]);
+    };
+    const got = [meter(true), meter(false), meter(undefined)];
+    const want = [JSON.stringify([75, 99, 'meter', 'meter']), JSON.stringify([50, 75, null, 'meter']), JSON.stringify([50, 75, null, 'meter'])];
+    if (JSON.stringify(got) === JSON.stringify(want)) {
+      ok('kept, the meter shows at 10% used with its states at their own extents; not kept, or with no page to ask, it is Claude Code\'s own');
+    } else bad(`the meter kept, not kept and with no page to ask gave ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  }
+  let off = false;
+  const arc = { style: {}, getTotalLength: () => 100 };
+  const btn = { style: {}, getAttribute: () => '90% of context used', querySelector: () => arc, querySelectorAll: () => [arc] };
+  const env = { window: {}, isOff: (k) => off && k === 'contextMeter', isOn: () => true, fiber: () => null,
+    document: { querySelector: () => btn }, sessionRef: null };
+  vm.createContext(env);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '70-meter.js'), 'utf8'), env);
+  const kept = () => (typeof env.window.__cceMeterKept === 'function' ? env.window.__cceMeterKept() : 'not asked');
+  vm.runInContext('markCtxLow()', env);
+  const drawn = [arc.style.strokeDasharray, btn.style.outline, kept()];
+  off = true;
+  vm.runInContext('markCtxLow()', env);
+  const left = [arc.style.strokeDasharray, btn.style.outline, kept()];
+  if (drawn[0] && drawn[1] && drawn[2] === true && !left[0] && !left[1] && left[2] === false) {
+    ok('switched off, the page says the meter is not kept and takes off the trim and outline it drew');
+  } else bad(`the meter on and then off: ${JSON.stringify(drawn)} -> ${JSON.stringify(left)}`);
 }
 
 /* The breakdown behind the usage meter says it is loading only while an answer is on its way: only an answer takes the

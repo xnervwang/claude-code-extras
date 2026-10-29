@@ -260,6 +260,7 @@
     document.addEventListener('keydown', function(ev){
       if (ev.key !== ',' && ev.key !== '.') return;
       if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.shiftKey) return;
+      if (isOff('toc')) return;
       var a = document.activeElement;
       if (a) {
         var tag = a.tagName;
@@ -381,6 +382,12 @@
     return arg ? name + ' ' + arg : name;
   };
   var syncMap = function(items, compEls){
+    // Switched off, the rail and the list go and nothing is built; the keys stop with them.
+    if (isOff('toc')) {
+      RAILBOX = dropControl(RAILBOX); PANEL = dropControl(PANEL); hideTip();
+      PROMPT_EL = []; SIG = '';
+      return;
+    }
     var texts = [], nodes = [], whens = [];
     for (var i = 0; i < items.length; i++) {
       var t = items[i].text;

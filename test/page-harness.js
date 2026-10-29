@@ -76,6 +76,11 @@ const SETUP = String.raw`
       var d = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
       Object.defineProperty(img, 'src', { get: function(){ return d.get.call(img); },
         set: function(v){ if (v === '') PROBES.cancelled++; else PROBES.made++; d.set.call(img, v); } });
+      // The revision the probe reads, moved by a flip as the extension moves it when it rewrites the live stylesheet.
+      if (CFG.flip) {
+        var w = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'naturalWidth');
+        Object.defineProperty(img, 'naturalWidth', { get: function(){ return window.__cceTestRev || w.get.call(img); } });
+      }
       return img;
     };
   })();
@@ -184,7 +189,8 @@ const SETUP = String.raw`
     if (i && i % CFG.compactEvery === 0) compaction();
     var ts = t0 + i * 600000;
     user(i, ts);
-    for (var k = 0; k < 3; k++) reply(ts + 1000 * (k + 1), CFG.subagent && i === CFG.turns - 2 && k === 1 ? SUB : '');
+    var agentAt = typeof CFG.subagentTurn === 'number' ? CFG.subagentTurn : CFG.turns - 2;
+    for (var k = 0; k < 3; k++) reply(ts + 1000 * (k + 1), CFG.subagent && i === agentAt && k === 1 ? SUB : '');
   };
   for (var i = 0; i < CFG.turns; i++) turn(i);
   var addTurn = function(){ turn(CFG.turns); };
@@ -364,14 +370,72 @@ const PHASES = String.raw`
       });
     });
   };
+  var countHidden = function(){
+    var all = document.querySelectorAll('[data-testid="assistant-message"], [class*="userMessage_"]'), n = 0;
+    for (var i = 0; i < all.length; i++) if (all[i].style.display === 'none') n++;
+    return n;
+  };
+  var railShown = function(){ var r = document.getElementById('cce-toc-rail'); return !!r && r.style.display !== 'none'; };
+  var tocRows = function(){
+    var p = document.getElementById('cce-toc'), l = p && p.children[1];
+    return l ? Array.prototype.map.call(l.children, function(r){ return r.textContent; }) : [];
+  };
+  /* One sub-agent picked in the view filter as a person does it: the button, then the agent's row in its menu. */
+  var pickView = function(){
+    var btn = document.querySelector('[data-cce-view]');
+    if (btn) btn.click();
+    var rows = document.querySelectorAll('#cce-view-menu > div'), row = null;
+    for (var i = 0; i < rows.length; i++) if (rows[i].textContent === 'Survey the hooks') row = rows[i];
+    R.picked = !!row;
+    if (row) row.click();
+    later(600, function(){
+      R.hiddenInView = countHidden(); R.railInView = railShown(); R.tocInView = tocRows();
+      next();
+    });
+  };
+  /* Switches turned off while the page is open, the way the extension does it: the live stylesheet changes and the
+     revision probe sees a new number. Then what is left of each: the times, what the view hid, the contents rail and
+     its keys, and the footer controls. */
+  var controls = function(){
+    return ['info', 'mute', 'focus-btn', 'view'].filter(function(k){ return !!document.querySelector('[data-cce-' + k + ']'); });
+  };
+  /* The key that steps to the next of your messages, pressed with the conversation scrolled to its top. */
+  var pressNext = function(done){
+    var sc = document.getElementById('list');
+    sc.scrollTop = 0;
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '.', bubbles: true }));
+    later(400, function(){ done(sc.scrollTop !== 0); });
+  };
+  var flipped = function(){
+    R.railBeforeFlip = railShown(); R.controlsBeforeFlip = controls();
+    pressNext(function(moved){
+      R.keyMovedBeforeFlip = moved;
+      later(1500, function(){
+        document.documentElement.setAttribute('data-cce-test-flip', '');
+        window.__cceTestRev = 2;
+        later(4500, function(){
+          readTimes('AfterFlip');
+          R.hiddenAfterFlip = countHidden(); R.railAfterFlip = railShown(); R.controlsAfterFlip = controls();
+          pressNext(function(movedAfter){ R.keyMovedAfterFlip = movedAfter; next(); });
+        });
+      });
+    });
+  };
   if (CFG.clickFocus) STEPS.push(clickFocus);
   if (CFG.switchSession) STEPS.push(switched);
+  if (CFG.pickView) STEPS.push(pickView);
+  if (CFG.flip) STEPS.push(flipped);
   later(500, function(){ settle(-1, 0, 500); });
 `;
 
+/* The switches a run turns off, as custom properties: from the start in a style of the page's own, or behind an
+   attribute in the live stylesheet that a flip puts on the root. */
+const offRules = (keys) => (keys || []).map((k) => `--cce-off-${k}:1;`).join('');
+
 function page(cfg, script) {
-  // With efforts, the page is pointed at its own folder as the panel's, which is where they are read from.
-  return '<!doctype html><html><head>' + (cfg.efforts ? '<link rel="stylesheet" href="index.css">' : '')
+  // With efforts or a flip, the page is pointed at its own folder as the panel's, which is where they are read from.
+  return '<!doctype html><html><head>' + (cfg.efforts || cfg.flip ? '<link rel="stylesheet" href="index.css">' : '')
+    + (cfg.offSwitches ? '<style>:root{' + offRules(cfg.offSwitches) + '}</style>' : '')
     + '</head><body><pre id="out"></pre>'
     + '<div id="list" style="overflow-y:auto;height:600px"></div>'
     + '<form><div class="inputRow_r1">'
@@ -386,8 +450,9 @@ function page(cfg, script) {
 }
 
 /**
- * One stand-in panel, run to the end. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent, switchSession,
- * and the phase lengths. Resolves to the page's counts, or { error } saying why there are none.
+ * One stand-in panel, run to the end. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent, subagentTurn,
+ * switchSession, offSwitches (off from the start), pickView, flip (switches turned off later), and the phase lengths.
+ * Resolves to the page's counts, or { error } saying why there are none.
  */
 const DEFAULTS = { turns: 100, compactEvery: 20, focus: true, subagent: true, settleCapMs: 6000, idleMs: 3000, grows: 8 };
 
@@ -404,7 +469,16 @@ function run(browser, cfg, script) {
         `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${full.efforts.height || 7}"></svg>`);
       fs.writeFileSync(path.join(dir, wv.EFFORT_PREFIX + full.efforts.sid + '.css'), full.efforts.css);
     }
-    const steps = (full.clickFocus ? 1000 : 0) + (full.switchSession ? 2000 : 0);
+    if (full.flip) {
+      const wv = require('../src/webview');
+      fs.writeFileSync(path.join(dir, 'index.css'), '');
+      if (!full.efforts) {
+        fs.writeFileSync(path.join(dir, 'claude-code-extras.rev.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="7"></svg>');
+      }
+      fs.writeFileSync(path.join(dir, 'claude-code-extras.css'), `:root[data-cce-test-flip]{${offRules(full.flip)}}\n` + wv.liveCss({ enabled: true }));
+    }
+    const steps = (full.clickFocus ? 1000 : 0) + (full.switchSession ? 2000 : 0) + (full.pickView ? 1000 : 0)
+      + (full.flip ? 8500 : 0);
     const budget = full.settleCapMs + full.idleMs + full.grows * 300 + 3000 + steps;
     /* No --user-data-dir. Headless already starts from a temporary profile of its own, which is what keeps it apart
        from a browser the person is using; naming a directory instead makes it set that up as a lasting profile, and

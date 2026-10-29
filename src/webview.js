@@ -20,8 +20,9 @@
  *                      conversation whose files were given a later time, the time it was really last active.
  *   session pin        A pin at the start of every row of the session list (src/sessionpins.js says what
  *                      pinning does).
- *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and drop the guard
- *                      that hides the meter while more than half the window is still free.
+ *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and let go of the
+ *                      guard that hides the meter while more than half the window is still free - both only while the
+ *                      page says the meter is kept.
  *   agent map          Three: a section for this session's scheduled prompts, the footer button opening for a
  *                      schedule even with no agent, and a label that then does not read "0 agents".
  *
@@ -300,6 +301,10 @@ function buildBody() {
 
 const SCRIPT_BODY = buildBody();
 
+/* What the two meter edits ask the page from the meter's render: whether the meter is kept on screen (70-meter.js). A
+   page without the function gets Claude Code's own meter. */
+const METER_KEPT = '(typeof window.__cceMeterKept==="function"&&window.__cceMeterKept())';
+
 const EDITS = [
   {
     /* OPEN SESSIONS reads what the session list itself reads: the store of sessions, the context that opens one, and the
@@ -461,17 +466,21 @@ const EDITS = [
     // The three artwork states cover half, three quarters and almost all of the circle, but the component picks
     // them at 62.5% and 87% - so between 50% and 62.5% used it draws a half arc that cannot express the figure,
     // and the reading stalls. Choosing each state at the limit of what its arc can show removes both stalls; the
-    // in-page script then trims the chosen arc to the exact figure.
+    // in-page script then trims the chosen arc to the exact figure. With the meter's switch off the page answers no
+    // (70-meter.js) and the component's own points stand.
     name: 'context meter state thresholds',
-    re: /if\(([\w$]+)<[\d.]+\)return 50;if\(\1<[\d.]+\)return 75;return 99/g,
-    to: (m, pct) => `if(${pct}<=50)return 50;if(${pct}<=75)return 75;return 99`,
+    re: /if\(([\w$]+)<([\d.]+)\)return 50;if\(\1<([\d.]+)\)return 75;return 99/g,
+    to: (m, pct, half, most) =>
+      `if(${METER_KEPT}?${pct}<=50:${pct}<${half})return 50;if(${METER_KEPT}?${pct}<=75:${pct}<${most})return 75;return 99`,
   },
   {
-    // The meter hides itself while more than half the window is free. Only that clause goes; the one that
-    // suppresses it before a real window size has arrived stays, since the figure is meaningless without one.
+    // The meter hides itself while more than half the window is free. Only that clause gives way, and only while the
+    // page says the meter is kept; the one that suppresses it before a real window size has arrived stays, since the
+    // figure is meaningless without one.
     name: 'context meter always visible',
-    re: /if\(([\w$]+)===null\)\{if\(([\w$]+)===0\)return null;if\(([\w$]+)>=\d+\)return null\}/g,
-    to: (m, override, window) => `if(${override}===null){if(${window}===0)return null}`,
+    re: /if\(([\w$]+)===null\)\{if\(([\w$]+)===0\)return null;if\(([\w$]+)>=(\d+)\)return null\}/g,
+    to: (m, override, window, free, limit) =>
+      `if(${override}===null){if(${window}===0)return null;if(!${METER_KEPT}&&${free}>=${limit})return null}`,
   },
   {
     /*

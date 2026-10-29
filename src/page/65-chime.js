@@ -78,7 +78,7 @@
                       : 'Chimes are muted - click to hear a chime when a turn finishes');
   };
   var ensureMute = function(){
-    if (isOff('footerMute')) return;
+    if (isOff('footerMute')) { MUTE = dropControl(MUTE); return; }
     if (MUTE && MUTE.isConnected) { paintMute(); return; }
     var send = document.querySelector(SEND);
     if (!send) return;

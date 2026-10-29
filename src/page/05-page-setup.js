@@ -90,6 +90,13 @@
   var setStyle = function(el, prop, value){
     if (el && el.style[prop] !== value) el.style[prop] = value;
   };
+  /* A control of ours whose switch has been turned off is taken off the page and forgotten: only no longer drawing it
+     again would leave the one already there, still working. Its hover text goes too, since the pointer leaving a
+     control that is no longer there is never reported. */
+  var dropControl = function(el){
+    if (el && el.parentNode) { el.parentNode.removeChild(el); hideLabel(); }
+    return null;
+  };
 
   // ── live settings: stylesheet + revision probe from the panel's own folder ──
   var fallback = null, sheet = null, loadedOnce = false, lastRev = -1;
