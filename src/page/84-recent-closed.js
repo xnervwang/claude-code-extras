@@ -2,7 +2,7 @@
 // Copyright (c) 2026, Xnerv Wang
 // All rights reserved.
 
-// Recently closed above OPEN SESSIONS: the Claude Code tabs last closed in this workspace, most recent first, leaving
+// RECENTLY CLOSED above OPEN SESSIONS: the Claude Code tabs last closed in this workspace, most recent first, leaving
 // out any open again in a tab or the shown sidebar. Collapsed until opened.
 // Fragment of the in-page script - see README.md in this folder.
 
@@ -90,7 +90,7 @@
               ui.Chevron ? F('span', { 'data-cce-open-chevron': c.sectionChevronExpanded || '', style: { display: 'inline-flex' },
                 children: F(ui.Chevron, { className: (c.sectionChevron || '') + (collapsed ? '' : ' ' + (c.sectionChevronExpanded || '')) }),
               }) : null,
-              F('span', { className: c.sectionLabel || '', children: 'Recently closed' }),
+              F('span', { className: c.sectionLabel || '', children: 'RECENTLY CLOSED' }),
               F('span', { 'data-cce-recent-count': '1', children: String(body.length) }),
             ],
           }) }),
