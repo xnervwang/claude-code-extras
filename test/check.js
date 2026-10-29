@@ -154,7 +154,7 @@ else bad('hot loop lost its early exit — the fiber walk will run to full depth
      on a long conversation. */
   const toc = page('45-toc.js');
   const sync = toc.slice(toc.indexOf('var syncMap = function'));
-  const settled = sync.indexOf('if (sig === SIG) return;'), compared = sync.indexOf('compareDocumentPosition');
+  const settled = sync.indexOf('if (sig === SIG && sameEntries(nodes, texts, whens)) return;'), compared = sync.indexOf('compareDocumentPosition');
   if (settled > 0 && compared > settled && sync.includes('while (lo < hi)')) {
     ok('compaction rules are placed only when the contents list is rebuilt, by halving');
   } else bad('compaction rules are placed before the signature check, or by walking every prompt');
@@ -319,6 +319,20 @@ console.log('\nwhat the page costs, in a browser');
         ok(`four times the conversation: ${(long.fiber / short.fiber).toFixed(1)}x the walking, the same queries, at most 64 replies worked out`);
       } else bad(`four times the conversation: walking ${short.fiber} -> ${long.fiber}, queries per sweep ${perSweep(short)} -> `
         + `${perSweep(long)}, replies worked out ${short.full} -> ${long.full}`);
+      /* Each of your messages is walked up to its message and has its time formatted once: past the newest, a sweep reads
+         what was kept for it, so neither grows with how many messages there are. Formatting is counted in dates made. */
+      const datesPer = (r) => r.growDates / Math.max(1, r.growSweeps);
+      if (long.fiber <= short.fiber * 1.1 && datesPer(long) <= datesPer(short) * 1.1) {
+        ok(`your messages are walked and timed once each: four times as many leave ${long.fiber} steps and ${datesPer(long)} dates a sweep`);
+      } else bad(`with four times as many messages, the steps up React trees went ${short.fiber} -> ${long.fiber} and the dates `
+        + `made per sweep ${datesPer(short)} -> ${datesPer(long)}`);
+      /* In a sub-agent's view the contents list is that agent's tool calls, those of its replies far behind the newest
+         included. */
+      const early = harness.run(browser, { turns: SHORT, subagentTurn: 5, pickView: true });
+      if (!early.error && early.picked && early.railInView && early.tocInView.length === 1 && /Bash ls$/.test(early.tocInView[0])) {
+        ok('in the view of a sub-agent whose reply is far behind the newest, the contents list holds its tool call');
+      } else bad('the contents list in the view of an early sub-agent: ' + (early.error || JSON.stringify(
+        { picked: early.picked, rail: early.railInView, rows: (early.tocInView || []).slice(0, 3) })));
       /* A new prompt rebuilds the contents list, and placing each compaction rule may take one halving of the prompts. */
       const bound = (r) => r.compactions * (Math.ceil(Math.log2(r.prompts + 1)) + 1);
       if (short.rebuildCdp > 0 && short.rebuildCdp <= bound(short) && long.rebuildCdp <= bound(long)) {
@@ -738,6 +752,7 @@ console.log('\nthe top and bottom buttons');
     getComputedStyle: (el) => ({ overflowY: el === scroller ? 'auto' : 'visible' }),
     setInterval: (f) => { ticks.push(f); return ticks.length; },
     clearInterval: () => {},
+    setTimeout: () => 0, clearTimeout: () => {},
   };
   new vm.Script(`(function(){${fragment}\n;PROMPT_EL.push(message); out.jumpEdge = jumpEdge;})()`, { filename: '45-toc.js' })
     .runInNewContext(box);
@@ -751,6 +766,33 @@ console.log('\nthe top and bottom buttons');
   box.out.jumpEdge(false);
   if (scroller.scrollTop === 0) ok('to the top lands at the very start');
   else bad(`to the top left the view at ${scroller.scrollTop}`);
+
+  /* One hold at a time, and a hold begun by a key outlives that key. The , and . keys start a hold from a keydown
+     listener on the document, and the same keydown reaches the window after it - where a listener added during that
+     dispatch is called too. */
+  {
+    const live = new Set(), soon = new Map(), heard = [];
+    let iv = 0, to = 0;
+    const env = Object.assign({}, box, { out: {},
+      window: { scrollY: 0, innerHeight: 0, removeEventListener: (t, f) => { const i = heard.indexOf(f); if (i >= 0) heard.splice(i, 1); },
+        addEventListener: (t, f) => { if (t === 'keydown') heard.push(f); } },
+      setInterval: () => { live.add(++iv); return iv; }, clearInterval: (id) => { live.delete(id); },
+      setTimeout: (f) => { soon.set(++to, f); return to; }, clearTimeout: (id) => { soon.delete(id); } });
+    new vm.Script(`(function(){${fragment}\n;PROMPT_EL.push(message); out.jumpEdge = jumpEdge;})()`, { filename: '45-toc.js' })
+      .runInNewContext(env);
+    const nextTurn = () => { const due = [...soon.values()]; soon.clear(); due.forEach((f) => f()); };
+    const key = (k) => heard.slice().forEach((f) => f({ key: k }));
+    env.out.jumpEdge(true); env.out.jumpEdge(false);
+    const one = live.size;
+    nextTurn(); key('x');
+    const stoppedByKey = live.size === 0;
+    env.out.jumpEdge(true);
+    key('.');
+    const outlived = live.size;
+    if (one === 1 && stoppedByKey && outlived === 1) {
+      ok('a second jump stops the first one\'s hold, a key pressed afterwards stops a hold, and the key that began one does not');
+    } else bad(`holds: ${one} running after two jumps, stopped by a later key ${stoppedByKey}, ${outlived} left after the key that began it`);
+  }
 }
 
 console.log('\nthe model pill comparison');

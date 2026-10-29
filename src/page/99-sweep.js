@@ -14,6 +14,9 @@
    * the conversation. Weak, so nothing is held after the panel drops the block.
    */
   var PROMPT_OF = new WeakMap();
+  /* A sub-agent's reply's tool calls, as entries of the contents list, kept when the reply is worked out in full so that
+     a settled reply of the agent in view still has its calls listed - the way UUIDS_OF keeps what its efforts need. */
+  var ACTS_OF = new WeakMap();
 
   // A line that begins with what used to follow the time: the tag's or the figures' own leading space goes with it.
   var lead = function(v){ return v ? v.replace(/^\s+/, '') : v; };
@@ -59,9 +62,10 @@
     if (!isOn()) { sweep(); return; }
     if (sessionRef) indexTitles(sessionRef);
     for (var i = 0; i < bubbles.length; i++) {
-      var b = bubbles[i], c = ctxOf(b);
-      if (!c.message) continue;
-      var g = groups.get(c.message); if (!g) { g = []; groups.set(c.message, g); }
+      // A row already built for a block carries the block's message, so only the blocks without one are walked up to it.
+      var b = bubbles[i], kept = PROMPT_OF.get(b), msg = kept ? kept.message : ctxOf(b).message;
+      if (!msg) continue;
+      var g = groups.get(msg); if (!g) { g = []; groups.set(msg, g); }
       g.push(b);
     }
     var tB = clock();
@@ -89,8 +93,9 @@
           var line = textOf(b, b === lastBubble);
           // An attachment or an image carries no line, so it gets no row - and a message that is only an attachment
           // keeps its mark through the block below rather than being skipped altogether.
-          // null until made: a mark can rightly be empty, and an empty one must not be made again on every sweep.
-          row = { node: b, top: b, ts: m.timestamp, text: line, mark: null };
+          // null until made: a mark can rightly be empty, and an empty one must not be made again on every sweep. The
+          // message is kept for grouping the blocks, and the time the contents list shows is added by syncMap.
+          row = { node: b, top: b, ts: m.timestamp, text: line, mark: null, message: m, when: null };
           if (!live) PROMPT_OF.set(b, row);
         }
         if (live || row.mark === null) {
@@ -137,6 +142,7 @@
           applyOwner(msgs[j], own0);
           if (own0 !== 'main' && !seenSet[own0]) { seenSet[own0] = 1; seen.push(own0); }
           if (ownerVisible(own0)) shownRows++;
+          if (agentView && own0 === VIEW) { var tools0 = ACTS_OF.get(msgs[j]); if (tools0) acts.push.apply(acts, tools0); }
           if (msgs[j].getAttribute(SETTLED_ATTR) !== '1') {
             var held = msgs[j].querySelectorAll('[' + ATTR + ']');
             for (var q = 0; q < held.length; q++) marked.delete(held[q]);
@@ -147,7 +153,7 @@
         }
       }
       fullMsgs++;
-      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '', figured = false;
+      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '', figured = false, tools = null;
       blocks += rows.length;
       for (var r = 0; r < rows.length; r++) {
         var row = rows[r], cx = ctxOf(row), v = '';
@@ -169,8 +175,8 @@
         if (annot) {
           var t = cx.block.content && cx.block.content.type;
           v = isOff('timestamps') ? '' : fmt(cx.message.timestamp);
-          if (agentView && own === VIEW && (t === 'tool_use' || t === 'server_tool_use')) {
-            acts.push({ node: row, ts: cx.message.timestamp, text: toolLabel(cx.block.content) });
+          if (own !== 'main' && (t === 'tool_use' || t === 'server_tool_use')) {
+            (tools || (tools = [])).push({ node: row, ts: cx.message.timestamp, text: toolLabel(cx.block.content), when: null });
           }
           if (v && (t === 'tool_use' || t === 'server_tool_use') && typeof cx.block.cceResultAt === 'number') v += '\u2192' + fmt(cx.block.cceResultAt).replace(/^(\d{4}\/)?\d\d\/\d\d /, '');
         }
@@ -191,6 +197,10 @@
         set(row, lead(v));
       }
       if (uus.length) UUIDS_OF.set(msgs[j], uus);
+      if (tools) {
+        ACTS_OF.set(msgs[j], tools);
+        if (agentView && own === VIEW) acts.push.apply(acts, tools);
+      }
     }
     // Compaction blocks belong to the main thread, so a sub-agent view hides them too.
     var cps = document.querySelectorAll(COMPACT);

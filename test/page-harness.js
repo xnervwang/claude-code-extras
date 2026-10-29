@@ -58,7 +58,13 @@ function findBrowser() {
    that ships. */
 const SETUP = String.raw`
   window.requestAnimationFrame = function(cb){ return setTimeout(function(){ cb(performance.now()); }, 16); };
-  var COUNT = { cdp: 0, qsa: 0, text: 0 };
+  var COUNT = { cdp: 0, qsa: 0, text: 0, dates: 0 };
+  /* Dates made, which is what formatting a time costs: counted to tell a sweep that formats only what is new from one
+     that formats every message again. */
+  (function(){
+    var RealDate = window.Date;
+    window.Date = class extends RealDate { constructor(...a) { super(...a); COUNT.dates++; } };
+  })();
   /* Every request the revision poll starts, and every one it gives up on. With stallProbe the request is never answered,
      which is what a stalled webview resource looks like to the page; without it the real load goes ahead and only the
      count is taken, which is how the slower rate for a backgrounded window is measured. */
@@ -213,7 +219,7 @@ const SETUP = String.raw`
 const PHASES = String.raw`
   var R = { script: !!window.__cceStats };
   var stats = function(){ return window.__cceStats ? window.__cceStats() : null; };
-  var snap = function(){ var s = stats(); return { n: s ? s.n : -1, cdp: COUNT.cdp, qsa: COUNT.qsa, text: COUNT.text }; };
+  var snap = function(){ var s = stats(); return { n: s ? s.n : -1, cdp: COUNT.cdp, qsa: COUNT.qsa, text: COUNT.text, dates: COUNT.dates }; };
   var finish = function(){ document.getElementById('out').textContent = 'CCE-' + 'RESULT:' + JSON.stringify(R); };
   var later = function(ms, f){
     setTimeout(function(){ try { f(); } catch (e) { R.error = String(e && e.stack || e); finish(); } }, ms);
@@ -323,6 +329,7 @@ const PHASES = String.raw`
     b = snap();
     var s = stats(), last = s && s.last;
     R.growSweeps = b.n - a.n; R.growCdp = b.cdp - a.cdp; R.growQsa = b.qsa - a.qsa; R.growText = b.text - a.text;
+    R.growDates = b.dates - a.dates;
     R.fiber = last ? last.fiber : -1; R.full = last ? last.full : -1;
     R.msgs = last ? last.msgs : -1; R.bubbles = last ? last.bubbles : -1;
     a = snap();

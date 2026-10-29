@@ -9,6 +9,8 @@
   // your own messages (time plus opening words). Clicking a row scrolls that message into view.
   // Built from the node list the stamper already gathered, so it adds no DOM query of its own.
   var HANDLE = null, PANEL = null, PLIST = null, PFILTER = null, TIP = null, SIG = '';
+  // What the list was last built from, compared entry by entry on the next sweep instead of folded into one string.
+  var SIG_NODES = [], SIG_TEXTS = [], SIG_WHENS = [];
   var outsideWired = false, MUTE = null, RAILBOX = null, PROMPT_EL = [];
   var ROWS = [];  // {row, hay} for the filter box
   /* The rail's sizes, and the gap the open list keeps from the right edge so that it never covers the rail. The glyph
@@ -109,16 +111,23 @@
   // Put the view somewhere and keep it there until it stays: `go` moves it, `there` says it has arrived, `alive` says the
   // thing it is aiming at still exists. Shared by the message arrows and the top and bottom buttons, which face the same
   // panel effects pulling the view away from where it was sent.
+  // One hold at a time: a second jump started before the first has settled stops it, rather than leaving two pulling the
+  // view to different places.
+  var holdStop = null;
   var holdScroll = function(target, go, there, alive){
+    if (holdStop) holdStop();
     go();
-    var tries = 0, still = 0, tick = 0;
+    var tries = 0, still = 0, tick = 0, arm = 0;
     var stop = function(){
       if (tick) clearInterval(tick);
-      tick = 0;
+      if (arm) clearTimeout(arm);
+      tick = arm = 0;
+      if (holdStop === stop) holdStop = null;
       target.removeEventListener('wheel', stop);
       target.removeEventListener('touchstart', stop);
       window.removeEventListener('keydown', stop);
     };
+    holdStop = stop;
     tick = setInterval(function(){
       if ((alive && !alive()) || ++tries > SETTLE_TRIES) { stop(); return; }
       if (there()) {
@@ -130,7 +139,9 @@
     }, SETTLE_MS);
     target.addEventListener('wheel', stop, { passive: true });
     target.addEventListener('touchstart', stop, { passive: true });
-    window.addEventListener('keydown', stop);
+    /* A key heard from the next turn on. A hold the , or . key starts begins while that keydown is still on its way up
+       to the window, and a listener added to the window now would hear it there and stop the hold at once. */
+    arm = setTimeout(function(){ arm = 0; window.addEventListener('keydown', stop); }, 0);
   };
   var landOn = function(el){
     if (!el || !el.isConnected) return;
@@ -381,6 +392,14 @@
     if (arg.length > 34) arg = arg.slice(0, 34) + '..';
     return arg ? name + ' ' + arg : name;
   };
+  /* Whether the entries are those the list was last built from. Compared from the end, where a new message lands. */
+  var sameEntries = function(nodes, texts, whens){
+    if (nodes.length !== SIG_NODES.length) return false;
+    for (var k = nodes.length - 1; k >= 0; k--) {
+      if (nodes[k] !== SIG_NODES[k] || texts[k] !== SIG_TEXTS[k] || whens[k] !== SIG_WHENS[k]) return false;
+    }
+    return true;
+  };
   var syncMap = function(items, compEls){
     // Switched off, the rail and the list go and nothing is built; the keys stop with them.
     if (isOff('toc')) {
@@ -392,8 +411,12 @@
     for (var i = 0; i < items.length; i++) {
       var t = items[i].text;
       if (!t) continue;
+      // The time is formatted once and kept on the entry, which lives as long as its block for every message but the
+      // newest.
+      var when = items[i].when;
+      if (typeof when !== 'string') when = items[i].when = fmt(items[i].ts);
       /* Landing goes to where the message starts, which is not always the block the text was read from. */
-      texts.push(t); nodes.push(items[i].top || items[i].node); whens.push(fmt(items[i].ts));
+      texts.push(t); nodes.push(items[i].top || items[i].node); whens.push(when);
     }
     if (!texts.length) {
       if (RAILBOX) RAILBOX.style.display = 'none';
@@ -402,13 +425,13 @@
     }
     // Compaction rules belong to the conversation timeline, not to a single agent's tool trace.
     var comps = (VIEW === 'all' || VIEW === 'main') ? (compEls || []) : [];
-    var sig = VIEW + '|' + texts.length + '|' + comps.length + '|' + texts.map(function(t, k){ return whens[k] + t.slice(0, 12); }).join('\x1f');
+    var sig = VIEW + '|' + comps.length;
     ensureUI();
     RAILBOX.style.display = 'flex';
     if (panelOpen()) fitPanel();
     PROMPT_EL = nodes;
-    if (sig === SIG) return;
-    SIG = sig;
+    if (sig === SIG && sameEntries(nodes, texts, whens)) return;
+    SIG = sig; SIG_NODES = nodes; SIG_TEXTS = texts; SIG_WHENS = whens;
     /*
      * Compaction points are timeline landmarks, so they get a rule in the list, placed by document order against the
      * prompts. Placed here, after the signature has said the list must be rebuilt, and by halving rather than walking:
