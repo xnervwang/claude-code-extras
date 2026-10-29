@@ -550,6 +550,30 @@ console.log('\nshape selection');
     } else if (got.index === want) ok(what);
     else bad(`${what}: expected shape ${want + 1}, got ${got.error || 'shape ' + (got.index + 1)}`);
   }
+  /* Without the g flag a match returns the first match and its groups, so two places read as one and the edit would be
+     made at the first of them. */
+  const lone = pickShape('aaa then aaa', { name: 'no flag', re: /aaa/, to: () => 'X' });
+  if (lone.error && /g flag/.test(lone.error)) ok('a pattern without the g flag is refused rather than counted wrong');
+  else bad(`a pattern without the g flag gave ${JSON.stringify(lone)}`);
+  /* The bundle is several megabytes and the patch runs on the editor's extension host, so it is scanned once per shape:
+     the count finds the match, and the replacement is made there without a second pass over the whole file. */
+  {
+    const { applyEdits } = require('../src/edits');
+    let passes = 0;
+    class Counting extends RegExp {
+      [Symbol.match](s) { passes++; return super[Symbol.match](s); }
+      [Symbol.matchAll](s) { passes++; return super[Symbol.matchAll](s); }
+      [Symbol.replace](s, r) { passes++; return super[Symbol.replace](s, r); }
+    }
+    const src = 'k1 (?) k2 a=1;b=2 k3';
+    const r = applyEdits(src, [
+      { name: 'function', re: new Counting('(?<=k2 )a=(\\d);b=(\\d)', 'g'), to: (m, x, y, at, whole) => `b=${y};a=${x}@${at}/${whole.length}` },
+      { name: 'string', re: /k(3)/g, to: 'K$1' },
+    ]);
+    const want = src.replace(/(?<=k2 )a=(\d);b=(\d)/g, (m, x, y, at, whole) => `b=${y};a=${x}@${at}/${whole.length}`).replace(/k(3)/g, 'K$1');
+    if (r.out === want && passes === 1) ok('each edit scans the bundle once and is made where that scan found it, as a replace would make it');
+    else bad(`applying edits gave ${JSON.stringify(r.out)} (expected ${JSON.stringify(want)}) after ${passes} pass(es) over the source`);
+  }
 }
 
 /* ── 4. the edits, against a pristine bundle ──
@@ -3938,59 +3962,23 @@ console.log('\na panel whose bundle never arrives says so');
     if (i > csp && csp >= 0 && on.slice(i + watch.length).startsWith('<link href="style.css" rel="stylesheet">') && link > i) {
       ok('the watch goes into the panel\'s HTML word for word, with its nonce, after the policy and just ahead of the stylesheet');
     } else bad('the watch is not where it should be in the generated HTML');
-    const clear = '<script nonce="n0nce">' + host.CACHE_CLEAR + '</script>';
-    const c = on.indexOf(clear);
-    if (c > csp && c < i) ok('the cache clearing goes in ahead of the watch, with the same nonce');
-    else bad('the cache clearing is not ahead of the watch in the generated HTML');
     const zone = '<script nonce="n0nce">' + host.PANEL_TZ + '</script>';
     const z = on.indexOf(zone);
-    if (z > c && z < i) ok('the time zone report goes in after the cache clearing and ahead of the watch, with the same nonce');
-    else bad('the time zone report is not between the cache clearing and the watch in the generated HTML');
+    if (z > csp && z < i) ok('the time zone report goes in after the policy and ahead of the watch, with the same nonce');
+    else bad('the time zone report is not between the policy and the watch in the generated HTML');
+    /* The clearing of the editor's resource cache that builds up to 1.0.8 made necessary went with them; nothing of it
+       is left for every panel to run. */
+    if (!/resourceCacheCleared|caches\.keys/.test(on) && !('CACHE_CLEAR' in host)
+      && !fs.existsSync(path.join(__dirname, '..', 'src', 'panel-cache-clear.js'))) {
+      ok('the panel\'s HTML no longer carries the one-off clearing of the resource cache');
+    } else bad('the one-off clearing of the resource cache is still put into every panel');
     globalThis[host.LOAD_WATCH_OFF] = true;
     const off = html('n0nce', 'style.css', false, 'worker-src x');
     delete globalThis[host.LOAD_WATCH_OFF];
     const own = new Function('U', 'K', 'X', 'j', tpl)('n0nce', 'style.css', false, 'worker-src x');
-    if (off.replace(clear, '').replace(zone, '') === own && off.includes(clear) && off.includes(zone)) {
-      ok('with the recording turned off the HTML is Claude Code\'s own plus the cache clearing and the time zone report, '
-        + 'which are not behind that setting');
-    } else bad('with the recording turned off the HTML is not Claude Code\'s own plus the cache clearing and the time zone report');
-  }
-
-  /* The clearing itself: the editor's resource caches and nothing else, once per origin, and again if it did not finish.
-     It settles on promises, so it runs in a child process that can wait for them. */
-  const clearing = cp.spawnSync(process.execPath, ['-e', `
-    const vm = require('vm');
-    const CLEAR = ${JSON.stringify(host.CACHE_CLEAR)};
-    const run = (opts) => {
-      const deleted = [], store = Object.assign({}, opts.stored || {});
-      const env = {
-        caches: {
-          keys: () => Promise.resolve(['vscode-resource-cache-4', 'vscode-resource-cache-6', 'another-cache']),
-          delete: (n) => { deleted.push(n); return opts.fails ? Promise.reject(new Error('no')) : Promise.resolve(true); },
-        },
-        localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
-        Promise,
-      };
-      vm.createContext(env);
-      vm.runInContext(CLEAR, env);
-      return new Promise((r) => setTimeout(() => r({ deleted, store }), 20));
-    };
-    (async () => {
-      const out = [await run({}), await run({ stored: { 'cce.resourceCacheCleared': '1' } }), await run({ fails: true })];
-      process.stdout.write(JSON.stringify(out));
-    })();`], { encoding: 'utf8' });
-  let runs = null;
-  try { runs = JSON.parse(clearing.stdout); } catch (e) { bad('the clearing could not be run: ' + (clearing.stderr || e.message)); }
-  if (runs) {
-    const [first, again, failed] = runs;
-    if (JSON.stringify(first.deleted) === JSON.stringify(['vscode-resource-cache-4', 'vscode-resource-cache-6'])
-      && first.store['cce.resourceCacheCleared'] === '1') {
-      ok('the clearing deletes the editor\'s resource caches, leaves any other cache, and remembers it did');
-    } else bad(`the clearing did ${JSON.stringify(first)}`);
-    if (!again.deleted.length) ok('once done for an origin, it does not run again');
-    else bad(`it ran again: ${JSON.stringify(again.deleted)}`);
-    if (!('cce.resourceCacheCleared' in failed.store)) ok('a clearing that fails is not remembered, so the next panel tries again');
-    else bad('a failed clearing was remembered as done');
+    if (off.replace(zone, '') === own && off.includes(zone)) {
+      ok('with the recording turned off the HTML is Claude Code\'s own plus the time zone report, which is not behind that setting');
+    } else bad('with the recording turned off the HTML is not Claude Code\'s own plus the time zone report');
   }
   /* The panel's time zone: sent once from the panel, kept by the patched host, read by this extension. */
   {
@@ -5061,6 +5049,23 @@ console.log('\nrecently closed sessions');
     if (JSON.stringify(henv.closed) === '["S1"]' && JSON.stringify(henv.pushed) === '["S1"]') ok('a tab the person closed reaches this extension as Claude Code notes it, and a replaced tab does not');
     else bad(`closings reported ${JSON.stringify(henv.closed)}, noted ${JSON.stringify(henv.pushed)}`);
   }
+  /* In the bundle the closing sits in a loop inside Claude Code's onDidDispose, ahead of the broadcast of the open
+     conversations and the disposal of the panel's listeners, so a hook that throws must not skip them. */
+  {
+    const loop = 'function d($,Z,q,X){for(let F of [1]){if(!this.discardedReplacements.has($))this.pushRecentlyClosedSession(Z,q,!!X)}this.after.push(Z)}';
+    const lr = he ? applyEdits(loop, [he]) : { error: 'no such edit' };
+    const lenv = { pushed: [], after: [], threw: '' };
+    lenv.globalThis = lenv;
+    lenv.__cceClosedHook = () => { throw new Error('broken hook'); };
+    if (lr.error) bad('the closed-tab edit did not apply inside a loop: ' + lr.error);
+    else {
+      vm.createContext(lenv);
+      vm.runInContext(lr.out + ';try{d.call({discardedReplacements:new Set,pushRecentlyClosedSession(z){pushed.push(z)},after},"p","S3",1,0)}catch(e){threw=e.message}', lenv);
+      if (!lenv.threw && JSON.stringify(lenv.after) === '["S3"]' && JSON.stringify(lenv.pushed) === '["S3"]') {
+        ok('a closed-tab hook that throws leaves the rest of Claude Code\'s tab disposal running');
+      } else bad(`with a throwing hook: threw ${JSON.stringify(lenv.threw)}, then ran ${JSON.stringify(lenv.after)}`);
+    }
+  }
   const se = host.EDITS.find((e) => e.name === 'session states message carries whether the sidebar is shown');
   const sr = applyEdits('class C{send(m){this.m=m}sendSessionStates($,J,Q,X,Y,W){let z={type:"request",channelId:"",requestId:l$(),request:{type:"session_states_update",sessions:$,activeSessionId:J,openSessionIds:Q,unreadSessionKeys:X,liveElsewhereSessions:Y,sidebarSessionIds:W}};this.send(z)}}', [se]);
   const senv = { l$: () => 'i' };
@@ -5130,6 +5135,37 @@ console.log('\nrecently closed sessions');
       && /recentClosed\.pageData\(recentList, enabled\(\) && !removed\(\) \? cfg\(\)\.get\(RECENT_SETTING, 10\) : 0\)/.test(extSrc)) {
     ok('the closed list is kept per workspace, and the setting, 10 by default, says how many to show');
   } else bad('the closed list is not wired as expected');
+}
+
+/* Every window writes the same patched file, so the copy each one writes before renaming it into place has to be its
+   own: two of them sharing one temporary name truncate each other's copy, and one of the renames then fails. Read off
+   the renames a restore makes, which goes through the same writer as a patch. */
+console.log('\na patched file written by several windows at once');
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-atomic-'));
+  const file = host.hostFile(dir);
+  const renames = [];
+  const realRename = fs.renameSync;
+  const stage = () => { fs.writeFileSync(file, 'patched'); fs.writeFileSync(file + host.BACKUP_SUFFIX, 'original'); };
+  try {
+    fs.renameSync = (from, to) => { renames.push(from); return realRename.call(fs, from, to); };
+    stage(); host.restore(dir);
+    stage(); host.restore(dir);
+    fs.renameSync = () => { throw Object.assign(new Error('rename failed'), { code: 'ENOENT' }); };
+    stage();
+    let threw = '';
+    try { host.restore(dir); } catch (e) { threw = e.message; }
+    fs.renameSync = realRename;
+    const left = fs.readdirSync(dir).filter((n) => n !== 'extension.js' && n !== 'extension.js' + host.BACKUP_SUFFIX);
+    if (renames.length === 2 && renames[0] !== renames[1] && renames.every((t) => t.includes('.' + process.pid + '.'))) {
+      ok('each write goes through a temporary copy named for this process, never the same name twice');
+    } else bad(`the temporary copies were ${JSON.stringify(renames.map((t) => path.basename(t)))}`);
+    if (threw === 'rename failed' && !left.length) ok('a copy that could not be renamed into place is removed, and the failure still reported');
+    else bad(`a failed rename threw ${JSON.stringify(threw)} and left ${JSON.stringify(left)}`);
+  } finally {
+    fs.renameSync = realRename;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log('\nthe patch markers follow the code');

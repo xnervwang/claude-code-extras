@@ -18,6 +18,7 @@
  * to activate. Hence a single, minimal edit and a separate marker and backup, so a failure here
  * cannot disturb the webview patch.
  */
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -34,10 +35,6 @@ const TMP_SUFFIX = '.claude-code-extras-host.tmp';
    could still break out is the end of a script element. */
 const LOAD_WATCH = fs.readFileSync(path.join(__dirname, 'panel-load-watch.js'), 'utf8');
 if (/<\/script/i.test(LOAD_WATCH)) throw new Error('panel-load-watch.js must not contain a closing script tag');
-/* The one-time clearing of the editor's resource cache (src/panel-cache-clear.js says why). Not behind the recording
-   setting: it is what lets a panel that earlier builds left blank come back. */
-const CACHE_CLEAR = fs.readFileSync(path.join(__dirname, 'panel-cache-clear.js'), 'utf8');
-if (/<\/script/i.test(CACHE_CLEAR)) throw new Error('panel-cache-clear.js must not contain a closing script tag');
 /* The panel's time zone, sent to the host so the work plan's tree can show the reader's local time
    (src/panel-tz.js says why). Not behind any setting: without it the tree's times are in the remote machine's zone. */
 const PANEL_TZ = fs.readFileSync(path.join(__dirname, 'panel-tz.js'), 'utf8');
@@ -86,7 +83,6 @@ const EDITS = [
     name: 'panel load watch',
     re: /(script-src 'nonce-\$\{([\w$]+)\}';[\s\S]{0,600}?)(<link href="\$\{[\w$]+\}" rel="stylesheet">)/g,
     to: (m, before, nonce, link) => before
-      + '${\'<script nonce="\'+' + nonce + '+\'">\'+' + JSON.stringify(CACHE_CLEAR) + '+\'</script>\'}'
       + '${\'<script nonce="\'+' + nonce + '+\'">\'+' + JSON.stringify(PANEL_TZ) + '+\'</script>\'}'
       + '${globalThis.' + LOAD_WATCH_OFF + '?"":\'<script nonce="\'+' + nonce + '+\'">\'+'
       + JSON.stringify(LOAD_WATCH) + '+\'</script>\'}'
@@ -175,7 +171,7 @@ const EDITS = [
     // A tab the person closed, as Claude Code notes it for its own reopen-closed command, reaches this extension too.
     name: 'closed tab reaches this extension',
     re: /if\(!this\.discardedReplacements\.has\(([\w$]+)\)\)this\.pushRecentlyClosedSession\(([\w$]+),([\w$]+),!!([\w$]+)\)/g,
-    to: (m, panel, id) => `${m},globalThis.__cceClosedHook&&globalThis.__cceClosedHook(${id})`,
+    to: (m, panel, id) => `${m},(()=>{try{globalThis.__cceClosedHook&&globalThis.__cceClosedHook(${id})}catch(e){}})()`,
   },
   {
     name: 'sidebar showing or hiding updates the open conversations',
@@ -212,9 +208,9 @@ const EDITS = [
 /* As in src/webview.js: the digest says whether the host runs the code this tree produces, so an edit changed without
    the number being raised still patches again. It covers each edit's pattern and replacement and the scripts the
    replacements put into the bundle. */
-const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION}-` + require('crypto').createHash('sha256')
+const MARK = `/* CLAUDE-CODE-EXTRAS-HOST v${VERSION}-` + crypto.createHash('sha256')
   .update(EDITS.map((e) => [e.name, String(e.re), String(e.to)].join('\0')).join('\n'))
-  .update('\n').update([LOAD_WATCH, LOAD_WATCH_OFF, CACHE_CLEAR, PANEL_TZ].map(String).join('\0'))
+  .update('\n').update([LOAD_WATCH, LOAD_WATCH_OFF, PANEL_TZ].map(String).join('\0'))
   .digest('hex').slice(0, 12) + ' */';
 
 function hostFile(claudeExtensionPath) { return path.join(claudeExtensionPath, 'extension.js'); }
@@ -240,10 +236,18 @@ function status(claudeExtensionPath) {
   return 'clean';
 }
 
+/* The temporary name is this process's own: every window patches the same file, and two of them sharing one name
+   truncate each other's half-written copy and then find it gone when they rename it. A copy that could not be put in
+   place is removed, since nothing else would ever reuse its name. */
 function writeAtomic(file, text) {
-  const tmp = file + TMP_SUFFIX;
-  fs.writeFileSync(tmp, text);
-  fs.renameSync(tmp, file);
+  const tmp = `${file}${TMP_SUFFIX}.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
+  try {
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (_) { /* never written */ }
+    throw e;
+  }
 }
 
 /** Apply (or upgrade) the host patch. Returns { changed, liveChanged, message }. */
@@ -281,7 +285,7 @@ function restore(claudeExtensionPath) {
 
 module.exports = {
   id: 'anthropic.claude-code', name: 'Claude Code host',
-  VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, LOAD_WATCH, LOAD_WATCH_OFF, CACHE_CLEAR, PANEL_TZ,
+  VERSION, MARK, ANY_MARK, BACKUP_SUFFIX, EDITS, LOAD_WATCH, LOAD_WATCH_OFF, PANEL_TZ,
   patchSource, status, apply, restore, hostFile, targetFile: hostFile,
   findInstalls: require('./webview').findInstalls,
 };
