@@ -120,9 +120,6 @@
     return false;
   };
 
-  /* The session list's factories and section classes as the last render handed them over: Recently closed draws right
-     after this section in the same render (84-recent-closed.js) and takes them from here. */
-  var lastListUi = null;
   /*
    * A session-list row for one conversation, drawn with the list's own row component - pin, dates, rename and archive
    * included - or null when the component or the conversation's item is missing. `open` is what a click does.
@@ -157,7 +154,6 @@
 
   window.__cceOpenSessions = function(ui){
     try {
-      lastListUi = ui;
       // Read during the render, so a rename started here draws the row again.
       renamingNow();
       if (isOff('openSessions')) return null;

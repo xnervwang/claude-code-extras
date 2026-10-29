@@ -2,7 +2,7 @@
 // Copyright (c) 2026, Xnerv Wang
 // All rights reserved.
 
-// Recently closed below OPEN SESSIONS: the Claude Code tabs last closed in this workspace, most recent first, leaving
+// Recently closed above OPEN SESSIONS: the Claude Code tabs last closed in this workspace, most recent first, leaving
 // out any open again in a tab or the shown sidebar. Collapsed until opened.
 // Fragment of the in-page script - see README.md in this folder.
 
@@ -55,9 +55,9 @@
     return out;
   };
 
-  window.__cceRecentClosedSection = function(){
+  window.__cceRecentClosedSection = function(ui){
     try {
-      var ui = lastListUi, src = window.__cceSessionList;
+      var src = window.__cceSessionList;
       if (!ui || typeof ui.jsx !== 'function' || typeof ui.jsxs !== 'function' || !src || !src.comms || !src.context) return null;
       renamingNow();
       var rows = recentClosedNow(src, window.__cceRecentClosed);

@@ -933,7 +933,7 @@ function start(context, renamed) {
     if (globalThis.__cceSessionsChanged) delete globalThis.__cceSessionsChanged;
   } });
   /*
-   * The tabs closed in this workspace, kept across reloads for Recently closed below OPEN SESSIONS
+   * The tabs closed in this workspace, kept across reloads for Recently closed above OPEN SESSIONS
    * (src/recentclosed.js). The patched host reports each tab the person closes and asks for the list each time it tells
    * the panels which conversations are open, so a closing shows at once.
    */
