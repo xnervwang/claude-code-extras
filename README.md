@@ -90,6 +90,7 @@ Verified against Claude Code 2.1.309, 2.1.310, 2.1.311 and 2.1.312.
 | **Open in a tab or the sidebar:** **New in tab** and **New in sidebar** replace the New session button. A closed conversation's right-click menu offers **Resume in tab** and **Resume in sidebar** instead of Resume session; an open one keeps Switch to session. The choice applies to that conversation only: `claudeCode.preferredLocation` is not changed, and the Claude button at the right of the editor tabs opens where that setting says. | Session list |
 | **Delete archived conversations:** **Delete session…** in an archived conversation's right-click menu permanently deletes it from disk once you confirm: its transcripts, sub-agent conversations, saved tool outputs, file checkpoints (Claude Code's copies, not your files), debug log and work plan. It cannot be undone. A conversation open in a tab or the sidebar, or still running, is left alone. | Archived sessions in the session list |
 | **Section and session ID on hover:** Hovering over a conversation shows its session ID and where it sits in the list below Open sessions: its group, Ungrouped or Archived sessions. Rows in Open sessions show the same. | Session list |
+| **Search by session ID:** The search box also finds a conversation by part of its session ID, such as `69f9`: four or more characters, using only 0-9, a-f and hyphens. Shorter searches, and ones with other characters, match titles and branches only. | Session list |
 | **Recently closed:** The conversations whose Claude Code editor tabs you closed in this workspace, most recent first and kept across reloads; click one to open it again. The section starts collapsed. A conversation that is open again is not listed, and up to `claudeCodeWorkPlan.recentClosedSessions` are shown (10 by default). | Last section of the session list, after Archived sessions |
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
 | **Pinned conversations:** Click the pin at the start of a session-list row to keep that conversation from Claude Code's transcript cleanup (`cleanupPeriodDays`) and out of Archived sessions, as long as a window keeps connecting to its machine (see Known limits). | Session list |
@@ -107,7 +108,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 33 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 34 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 

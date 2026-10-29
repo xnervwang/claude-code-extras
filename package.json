@@ -301,6 +301,11 @@
           "default": true,
           "markdownDescription": "Hovering over a conversation in the session list shows its session ID and where it sits in the list below Open sessions: its group, Ungrouped or Archived sessions. Rows in Open sessions show the same. Takes effect without a reload."
         },
+        "claudeCodeWorkPlan.show.sessionIdSearch": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "The session list's search also finds a conversation by part of its session ID, such as `69f9`: four or more characters, using only 0-9, a-f and hyphens. Shorter searches, and ones with other characters, match titles and branches only. Takes effect without a reload."
+        },
         "claudeCodeWorkPlan.recentClosedSessions": {
           "type": "integer",
           "default": 10,

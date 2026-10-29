@@ -4733,6 +4733,44 @@ console.log('\nhover text on the session list rows');
   if (webview.SWITCHES.includes('sessionHoverDetails') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.sessionHoverDetails']) ok('the switch is a setting of its own');
   else bad('the sessionHoverDetails switch has no setting');
 }
+console.log('\nsearching the session list by session id');
+{
+  const sig = (v) => ({ value: v });
+  const env = { window: {}, isOff: (k) => env.offKey === k, offKey: '' };
+  vm.createContext(env);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '84-search-by-id.js'), 'utf8'), env);
+  const one = { sessionId: sig('69f92b14-1833-4321-8d21-58c2b8ca27a7') };
+  const m = (q) => env.window.__cceIdMatch(one, q);
+  const got = ['69f92b14', '69F92B14', ' 1833-4321 ', '58c2b8ca27a7', 'de', 'add', 'adv-design', '0000', ''].map(m);
+  const want = [true, true, true, true, false, false, false, false, false];
+  if (JSON.stringify(got) === JSON.stringify(want)) {
+    ok('part of a session ID finds its conversation; a query shorter than four characters, or one that cannot be part of an ID, does not test the ID');
+  } else bad(`ID matching gave ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  env.offKey = 'sessionIdSearch';
+  if (m('69f92b14') === false) ok('the switch off leaves the search to the title and the branch');
+  else bad('the switch off still matched the session ID');
+  env.offKey = '';
+  const { applyEdits } = require('../src/edits');
+  const e = webview.EDITS.find((x) => x.name === 'session search by id');
+  const src = 'var f=(M4,u1,mk)=>{let g0=u1.toLowerCase(),Y5=u1?M4.filter((W1)=>mk(W1).toLowerCase().includes(g0)||(W1.gitBranch.value?.toLowerCase().includes(g0)??!1)):M4;return Y5.map((W1)=>W1.sessionId.value)};';
+  const r = e ? applyEdits(src, [e]) : { error: 'no such edit' };
+  if (r.error) bad('the search edit did not apply: ' + r.error);
+  else {
+    vm.runInContext(r.out, env);
+    const rows = [
+      { sessionId: sig('69f92b14-1833-4321-8d21-58c2b8ca27a7'), gitBranch: sig('main'), t: 'Media skills' },
+      { sessionId: sig('183f7e74-ec1e-408a-b4cd-da3791f683cb'), gitBranch: sig('feature/adv'), t: 'Extension source' },
+    ];
+    const run = (q) => JSON.stringify(env.f(rows, q, (x) => x.t));
+    const got2 = [run('69f9'), run('media'), run('adv'), run('xyz')];
+    const want2 = [JSON.stringify(['69f92b14-1833-4321-8d21-58c2b8ca27a7']), JSON.stringify(['69f92b14-1833-4321-8d21-58c2b8ca27a7']),
+      JSON.stringify(['183f7e74-ec1e-408a-b4cd-da3791f683cb']), '[]'];
+    if (JSON.stringify(got2) === JSON.stringify(want2)) ok('the list\'s filter keeps its title and branch matches and adds the ID test');
+    else bad(`the patched filter gave ${JSON.stringify(got2)}, expected ${JSON.stringify(want2)}`);
+  }
+  if (webview.SWITCHES.includes('sessionIdSearch') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.sessionIdSearch']) ok('the switch is a setting of its own');
+  else bad('the sessionIdSearch switch has no setting');
+}
 console.log('\na hidden sidebar in open sessions');
 {
   const { applyEdits } = require('../src/edits');

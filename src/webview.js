@@ -220,6 +220,7 @@ const SWITCHES = [
   'openInTabOrSidebar', // New in tab / New in sidebar, and Resume in tab / Resume in sidebar on the session list
   'deleteArchived',   // Delete in the Archived sessions menu
   'sessionHoverDetails', // a session list row's group and session ID on hover
+  'sessionIdSearch',  // the session list's search also matching part of a session ID
 ];
 
 /** The live stylesheet for one set of settings. */
@@ -332,6 +333,13 @@ const EDITS = [
     to: (m, head, session, id, cls) => `${head}`
       + `onMouseEnter:(cceE)=>{typeof window.__cceRowHover==="function"&&window.__cceRowHover(${session},cceE.currentTarget,!0)},`
       + `onMouseLeave:(cceE)=>{typeof window.__cceRowHover==="function"&&window.__cceRowHover(${session},cceE.currentTarget,!1)},${cls}`,
+  },
+  {
+    // The session list's search: a conversation also matches when part of its session ID was typed. The page decides
+    // whether the query reads as part of an ID (84-search-by-id.js).
+    name: 'session search by id',
+    re: /(\.filter\(\(([\w$]+)\)=>[\w$]+\(\2\)\.toLowerCase\(\)\.includes\(([\w$]+)\)\|\|\(\2\.gitBranch\.value\?\.toLowerCase\(\)\.includes\(\3\)\?\?!1\))/g,
+    to: (m, head, session, query) => `${head}||(typeof window.__cceIdMatch==="function"&&window.__cceIdMatch(${session},${query}))`,
   },
   {
     // The panel's signal constructor, for the one piece of state OPEN SESSIONS keeps: which of its rows is being renamed.
