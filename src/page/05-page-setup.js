@@ -160,6 +160,7 @@
     if (loading && loading.href) keep[loading.href] = true;
     if (inFlight && inFlight.src) keep[inFlight.src] = true;
     if (typeof effortLink !== 'undefined' && effortLink && effortLink.href) keep[effortLink.href] = true;
+    if (typeof effortLoading !== 'undefined' && effortLoading && effortLoading.href) keep[effortLoading.href] = true;
     withCaches(function(cache){
       return cache.keys().then(function(requests){
         requests.forEach(function(r){

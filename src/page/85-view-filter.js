@@ -60,6 +60,11 @@
     return n ? 'All ' + String.fromCharCode(183) + ' ' + n : 'All';
   };
   var closeViewMenu = function(){ if (VIEWMENU) VIEWMENU.style.display = 'none'; };
+  /* A sub-agent of the conversation the panel has left is not one of the conversation it shows now. */
+  var leaveView = function(){
+    if (VIEW !== 'all' && VIEW !== 'main') { VIEW = 'all'; SIG = ''; }
+    closeViewMenu();
+  };
   var setView = function(v){
     VIEW = v;
     closeViewMenu();

@@ -228,6 +228,14 @@ console.log('\nwhat the page costs, in a browser');
       const older = harness.run(browser, { turns: 10, focusCtx: false });
       if (!older.error && older.viewButton && !older.focusButton) ok('a Claude Code build without Focus view gets no button');
       else bad('without Focus view in the panel: ' + (older.error || `the button was ${older.focusButton ? 'shown' : 'missing, and so was the view button'}`));
+      /* One panel moves between conversations in place - New and Resume in the sidebar do it - and what the page reads
+         off the session has to move with it. */
+      const moved = harness.run(browser, { turns: 30, switchSession: true });
+      if (!moved.error && /ctx 10%/.test(moved.labelBeforeSwitch) && /ctx 50%/.test(moved.labelAfterSwitch)
+          && /Session11111111-2222-4333-8444-555555555555/.test(moved.infoAfterSwitch)) {
+        ok('after the panel moves to another conversation, the newest reply\'s figures and the info box are that conversation\'s');
+      } else bad('after the panel moved to another conversation: ' + (moved.error || JSON.stringify(
+        { before: moved.labelBeforeSwitch, after: moved.labelAfterSwitch, info: moved.infoAfterSwitch })));
       /* A write the page answers with a sweep that makes the write again keeps an idle page sweeping four times a second.
          Such a page never holds still long enough to count as settled, and changes things while idle. */
       const restless = runs.filter(([, r]) => !(r.settledAfter < harness.DEFAULTS.settleCapMs && r.idleSweeps === 0
@@ -861,6 +869,53 @@ console.log('\na reopened conversation');
   else bad(`a reply that was once the newest later showed "${kept}"`);
 }
 
+/* The breakdown behind the usage meter says it is loading only while an answer is on its way: only an answer takes the
+   note away again, so one put up with nothing to wait for stays for as long as the pointer does. */
+console.log('\nthe context breakdown on the usage meter');
+{
+  const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '55-context-detail.js'), 'utf8');
+  const made = [], timers = [];
+  const el = () => {
+    const e = { style: {}, children: [], textContent: '', isConnected: true, parentElement: null,
+      appendChild(c) { this.children.push(c); c.parentElement = this; return c; },
+      addEventListener(t, f) { (this.on = this.on || {})[t] = f; },
+      getBoundingClientRect: () => ({ top: 500, bottom: 520, left: 280, right: 300 }) };
+    made.push(e);
+    return e;
+  };
+  const btn = el();
+  btn.parentElement = { children: [btn] };
+  const env = { out: {}, sessionRef: null, WeakSet, Date, window: { innerHeight: 800, innerWidth: 400 },
+    setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout: () => {},
+    document: { querySelector: () => btn, createElement: el, body: { appendChild() {} } } };
+  new vm.Script(`(function(){${fragment}\n;out.wire = wireCtxButton;`
+    + 'out.keep = function(u, k){ ctxCache = u; ctxKey = k; ctxAt = Date.now(); };})()', { filename: '55-context-detail.js' })
+    .runInNewContext(env);
+  env.out.wire();
+  const run = () => { const due = timers.splice(0); due.forEach((f) => f()); };
+  const hover = () => { btn.on.mouseenter(); run(); };
+  const leave = () => { btn.on.mouseleave(); run(); };
+  const loading = () => made.some((e) => e.id === 'cce-ctx-note' && e.style.display === 'block' && e.textContent === 'Loading breakdown...');
+  const usage = { totalTokens: 5 };
+  const usageFigures = { categories: [], totalTokens: 5, rawMaxTokens: 100, percentage: 5, model: 'opus' };
+
+  env.sessionRef = { usageData: { value: usage } };
+  hover();
+  const unaskable = loading();
+  leave();
+  env.sessionRef = { usageData: { value: usage }, getContextUsage: () => new Promise(() => {}) };
+  env.out.keep(usageFigures, '5');
+  hover();
+  const inHand = loading();
+  leave();
+  env.out.keep(null, '');
+  hover();
+  const onItsWay = loading();
+  if (!unaskable && !inHand && onItsWay) {
+    ok('no loading note with no way to ask or with the breakdown already in hand, and one while it is being asked for');
+  } else bad(`the loading note: with no way to ask ${unaskable}, with the breakdown in hand ${inHand}, while asking ${onItsWay}`);
+}
+
 /* ── the effort each reply was sent with ──
    Read by the extension from the transcripts (src/efforts.js) as the replies where it changed, handed to the page in a
    stylesheet per conversation, and carried forward by the page through its replies in order (76-effort.js). */
@@ -888,6 +943,28 @@ console.log('\nreply efforts');
     stub.out.read();
     if (sweeps === 2) ok('a table that comes back unchanged starts no sweep, and a changed one does');
     else bad(`three reads, the middle one unchanged, scheduled ${sweeps} sweeps`);
+  }
+  {
+    /* One load at a time: the one still loading when the next revision arrives is dropped, so a load nobody answers
+       does not hold a service-worker permit for good, and an older one answering late cannot replace a newer one. */
+    const links = [];
+    const headStub = { appendChild(n) { n.parentNode = headStub; links.push(n); },
+      removeChild(n) { n.parentNode = null; links.splice(links.indexOf(n), 1); } };
+    const stub = { out: {}, base: 'https://x/webview/', EFFORT_PREFIX: webview.EFFORT_PREFIX, head: headStub,
+      sigValue: () => 'dddddddd-2222-4333-8444-555555555555', forget() {}, schedule() {}, ASSIST: 'x', OWNER_ATTR: 'o', SETTLED_ATTR: 's',
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      document: { createElement: () => ({ style: {}, isConnected: true }), body: { appendChild() {} }, querySelectorAll: () => [] } };
+    new vm.Script(`(function(){${fragment}\n;out.load = loadEfforts; out.shown = function(){ return effortLink; };})()`,
+      { filename: '76-effort.js' }).runInNewContext(stub);
+    stub.out.load(1);
+    const first = links[0];
+    stub.out.load(2);
+    const second = links[links.length - 1];
+    second.onload();
+    if (typeof first.onload === 'function') first.onload();
+    if (links.length === 1 && links[0] === second && stub.out.shown() === second && first.parentNode === null) {
+      ok('a load still out when the next revision arrives is dropped, and cannot replace the newer one by answering late');
+    } else bad(`after two loads, the first answering last: ${links.length} link(s) in the head, the newer one shown: ${stub.out.shown() === second}`);
   }
   const state = {};
   const walk = [['main', 1], ['sub', 11], ['main', 2], ['main', 3], ['sub', 12], ['main', 4], ['sub', 13], ['main', 5]]

@@ -18,17 +18,31 @@
   // A line that begins with what used to follow the time: the tag's or the figures' own leading space goes with it.
   var lead = function(v){ return v ? v.replace(/^\s+/, '') : v; };
 
+  /*
+   * Everything worked out once and kept, worked out again: the rows of your messages, the replies settled with their
+   * owner recorded, and the marks inside those replies - which go back into the set a sweep rebuilds, so that the ones
+   * not given again are taken off at the end of it.
+   */
+  var resetMarks = function(){
+    PROMPT_OF = new WeakMap();
+    var owned = document.querySelectorAll('[' + OWNER_ATTR + ']');
+    for (var i = 0; i < owned.length; i++) { owned[i].removeAttribute(OWNER_ATTR); owned[i].removeAttribute(SETTLED_ATTR); }
+    var held = document.querySelectorAll('[' + ATTR + ']');
+    for (var k = 0; k < held.length; k++) marked.add(held[k]);
+  };
+
   var stamp = function(){
-    if (!isOn()) { sweep(); return; }
     var tA = clock(), wF = WALK.fiber, wT = WALK.text;
     var bubbles = document.querySelectorAll(USER), groups = new Map();
-    // The footer is the seed of last resort, and the only one a conversation with no messages in it has: the session
-    // object is a prop of the footer toolbar too. Without it an empty conversation has no session at all, which costs
-    // the info button its session id and the chimes their signals until the first message arrives.
-    if (!sessionRef) {
-      var seed = bubbles[0] || document.querySelector(ASSIST) || document.querySelector(SEND);
-      if (seed) sessionRef = findSession(seed);
-    }
+    // The session, looked up on every sweep with one walk up from the first of these that is there (useSession,
+    // 25-session.js), marks on or off: the chimes, the figures and the footer read it too. The footer is the seed of
+    // last resort, and the only one a conversation with no messages in it has: the session object is a prop of the
+    // footer toolbar too. Without it an empty conversation has no session at all, which costs the info button its
+    // session id and the chimes their signals until the first message arrives.
+    var seed = bubbles[0] || document.querySelector(ASSIST) || document.querySelector(SEND);
+    var found = seed ? findSession(seed) : null;
+    if (found && found !== sessionRef) useSession(found);
+    if (!isOn()) { sweep(); return; }
     if (sessionRef) indexTitles(sessionRef);
     for (var i = 0; i < bubbles.length; i++) {
       var b = bubbles[i], c = ctxOf(b);

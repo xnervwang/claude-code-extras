@@ -50,6 +50,12 @@
     return !!(s && s.value === true);
   };
   var wasBusy = false, hadPerm = 0, hadDialog = 0, wasWaiting = false;
+  /* Taken as they stand, without a sound: the panel moving to another conversation is not that conversation finishing a
+     turn or asking for something. */
+  var primeIdle = function(){
+    hadPerm = sigLen('permissionRequests'); hadDialog = sigLen('userDialogRequests');
+    wasWaiting = sigOn('pendingInput'); wasBusy = sigOn('busy');
+  };
   // Whether the chimes sound at all, kept in the page's own storage so the choice outlives a reload. Absent means on,
   // so a first-time panel chimes without anything having been written. Both directions swallow their errors: storage
   // can be denied, and a denied read must not take the mute button's paint down with it.

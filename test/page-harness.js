@@ -101,6 +101,9 @@ const SETUP = String.raw`
     subagentTasks: { value: new Map() },
     sessionId: { value: CFG.efforts && !CFG.efforts.sidAfterMs ? CFG.efforts.sid : '' },
   };
+  // A window and a token count, so the newest reply's figures say whose they are: 10% here, 50% in the conversation a
+  // switch moves to.
+  if (CFG.switchSession) session.usageData = { value: { totalTokens: 100000, contextWindow: 1000000 } };
   // A panel learns which conversation it shows only once the bundle has asked, which can be after the first probe; the
   // efforts then come with the next one, inside what would otherwise have been the idle spell.
   if (CFG.efforts && CFG.efforts.sidAfterMs) setTimeout(function(){ session.sessionId.value = CFG.efforts.sid; }, CFG.efforts.sidAfterMs);
@@ -185,6 +188,17 @@ const SETUP = String.raw`
   };
   for (var i = 0; i < CFG.turns; i++) turn(i);
   var addTurn = function(){ turn(CFG.turns); };
+  /* The panel moving to another conversation in place, as New and Resume in the sidebar do: another session object,
+     its own messages in place of the old ones, and the footer handed the new session. */
+  var NEXT_SID = '11111111-2222-4333-8444-555555555555';
+  var switchSession = function(){
+    var next = { agentMapAgents: { value: new Map() }, subagentTasks: { value: new Map() }, sessionId: { value: NEXT_SID },
+      usageData: { value: { totalTokens: 500000, contextWindow: 1000000 } } };
+    sessionFiber = { memoizedProps: CFG.focusCtx === false ? { session: next } : { session: next, context: focusCtx }, return: null };
+    document.querySelector('button[type="submit"]')[FIBER].return = sessionFiber;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    for (var n = 0; n < 3; n++) turn(n);
+  };
 `;
 
 /* Runs after it: three phases on the page's own clock, then the readout. Idle first - the page has booted and nothing
@@ -314,20 +328,44 @@ const PHASES = String.raw`
     b = snap();
     R.rebuildSweeps = b.n - a.n; R.rebuildCdp = b.cdp - a.cdp;
     R.prompts = CFG.turns + 1; R.compactions = compactions;
-    if (CFG.clickFocus) return clickFocus();
-    finish();
+    next();
   };
+  /* What a run asks for beyond the three phases, one step after another; each calls next() when it is done. */
+  var STEPS = [];
+  var next = function(){ var s = STEPS.shift(); if (s) s(); else finish(); };
   /* The button pressed once: what it asked of the panel, and what it says afterwards. */
   var clickFocus = function(){
     var fb = document.querySelector('[data-cce-focus-btn]');
-    if (!fb) { R.clicked = false; return finish(); }
+    if (!fb) { R.clicked = false; return next(); }
     fb.click();
     later(900, function(){
       R.clicked = true; R.focusCalls = focusCtx.calls.slice(); R.focusAfter = focusCtx.on;
       R.focusLabelAfter = fb.getAttribute('aria-label');
-      finish();
+      next();
     });
   };
+  /* The panel moving to another conversation, and what the page reads off the session afterwards: the newest reply's
+     figures and the info box. */
+  var newestBlock = function(){
+    var rs = document.querySelectorAll('[data-testid="assistant-message"]'), last = rs[rs.length - 1];
+    return last && last.children[CFG.panelStamp ? 1 : 0];
+  };
+  var switched = function(){
+    R.labelBeforeSwitch = labelOf(newestBlock());
+    switchSession();
+    later(1500, function(){
+      R.labelAfterSwitch = labelOf(newestBlock());
+      var info = document.querySelector('[data-cce-info]');
+      if (info) info.click();
+      later(300, function(){
+        var box = document.getElementById('cce-info');
+        R.infoAfterSwitch = box ? box.textContent : '';
+        next();
+      });
+    });
+  };
+  if (CFG.clickFocus) STEPS.push(clickFocus);
+  if (CFG.switchSession) STEPS.push(switched);
   later(500, function(){ settle(-1, 0, 500); });
 `;
 
@@ -348,8 +386,8 @@ function page(cfg, script) {
 }
 
 /**
- * One stand-in panel, run to the end. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent, and the phase lengths. Resolves to the
- * page's counts, or { error } saying why there are none.
+ * One stand-in panel, run to the end. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent, switchSession,
+ * and the phase lengths. Resolves to the page's counts, or { error } saying why there are none.
  */
 const DEFAULTS = { turns: 100, compactEvery: 20, focus: true, subagent: true, settleCapMs: 6000, idleMs: 3000, grows: 8 };
 
@@ -366,7 +404,8 @@ function run(browser, cfg, script) {
         `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${full.efforts.height || 7}"></svg>`);
       fs.writeFileSync(path.join(dir, wv.EFFORT_PREFIX + full.efforts.sid + '.css'), full.efforts.css);
     }
-    const budget = full.settleCapMs + full.idleMs + full.grows * 300 + 3000;
+    const steps = (full.clickFocus ? 1000 : 0) + (full.switchSession ? 2000 : 0);
+    const budget = full.settleCapMs + full.idleMs + full.grows * 300 + 3000 + steps;
     /* No --user-data-dir. Headless already starts from a temporary profile of its own, which is what keeps it apart
        from a browser the person is using; naming a directory instead makes it set that up as a lasting profile, and
        that first-run setup held every run here until the process was killed. */
