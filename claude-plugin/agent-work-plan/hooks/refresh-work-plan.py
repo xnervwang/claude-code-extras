@@ -22,10 +22,17 @@ tripwire a fast climb steps over: a single batch of tool results has moved a ses
 before the line make a net - a fast climb trips the earlier one, a slow one reaches the later one and gets a fresher
 update - and the third sits after the line for a compaction that arrives late.
 
-Each mark asks once. Falling back below a mark that has asked is how a compaction is recognised: the marks reset, and the
-next climb asks again. A mark that asked and was not answered - the plan not written since - is said again at the end of
-every turn while the context stays above it, because the whole point is that the plan is current before the client
-compacts.
+Each mark asks once. A measured context below a mark that has asked is how a compaction is recognised: the marks reset,
+and the next climb asks again. A mark that asked and was not answered - the plan not written since, with a row `doing` -
+is said once more at the end of a turn, because the whole point is that the plan is current before the client compacts.
+Only once: a Stop hook's output keeps the turn from ending, so saying it at every Stop would put another model call on a
+nearly full context after each one, up to the eight in a row the client allows before it overrides the hook.
+
+How full the context is comes from the newest model call's usage, plus the tool results written after it, which no call
+has been sent yet. Those are counted by what the results say, at four bytes a token; the transcript line they sit on also
+carries the client's own copy of each and JSON's escaping, about four times as much again. When the newest call is
+further back than the hook reads - tool results alone have filled that far, the fastest climb there is - the last context
+it measured, kept in the state file, stands in for the one it cannot see.
 
 This does not try to trigger the compaction. A hook can post nothing into a session's input channel, and /compact only
 behaves as a command when it arrives through that one; the client's own scheduler can, but it is off in the panel
@@ -55,9 +62,8 @@ import time
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
 
-from plan_path import (MAX_DETAIL_CHARS, MAX_DETAIL_LINES, TAIL_MAX, WATERMARK_SUFFIX, current_context,
-                       latest_reply_matches, open_tail, plan_file, row_command, settings, side_file, usage_of,
-                       write_quietly)
+from plan_path import (MAX_DETAIL_CHARS, MAX_DETAIL_LINES, TAIL_MAX, WATERMARK_SUFFIX, any_in, latest_reply_matches,
+                       listed, open_tail, plan_file, row_command, settings, side_file, usage_of, write_quietly)
 
 # Three marks per window size, arranged around that window's compaction line:
 #
@@ -86,9 +92,19 @@ STANDARD_WINDOW_CEILING = 200_000
 # lands in a session's first rows, and a session that switched models writes another where it switched, which can be
 # megabytes from the end; a switch further back than the tail reached leaves the window undecided, and an undecided
 # window gets the standard marks too. That costs one early request, which is cheap: the request is a command per row.
+# What was decided is kept in the state file and used again while no new identity has been written and the transcript has
+# grown by less than ATTACHMENT_TAIL, so a session in that band does not read four megabytes after every batch.
 ATTACHMENT_HEAD = 1024 * 1024
 ATTACHMENT_TAIL = 3 * 1024 * 1024
 COST_STATE_MAX = 1024 * 1024
+
+# How many bytes of a tool result make a token, for results no model has been sent yet. About right for English and
+# code; an under-estimate for CJK text, which the marks before the compaction line leave room for.
+BYTES_PER_TOKEN = 4
+
+# The context is kept in the state file only to this precision, so the file changes every few thousand tokens rather than
+# after every batch. It is only used when the newest call cannot be found, and then as a floor.
+CONTEXT_STEP = 5_000
 
 
 def compaction_line(window, env=None):
@@ -117,21 +133,40 @@ def head_rows(path, window):
         return fh.read(window).decode("utf-8", "replace").split("\n")
 
 
-def pending_tool_bytes(tail):
-    """Bytes of tool results written but not yet sent to a model.
+def text_bytes(value):
+    """Bytes of the text in a tool result's content, which is either a string or a list of blocks."""
+    if isinstance(value, str):
+        return len(value.encode("utf-8", "replace"))
+    return sum(len(str(b.get("text", "")).encode("utf-8", "replace"))
+               for b in listed(value) if isinstance(b, dict) and b.get("type") == "text")
+
+
+def result_bytes(line):
+    """Bytes of what the tool results on one transcript line say, leaving out the copy kept beside them for the client."""
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return 0
+    message = row.get("message") if isinstance(row, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    return sum(text_bytes(b.get("content")) for b in listed(content) if isinstance(b, dict) and b.get("type") == "tool_result")
+
+
+def context_of(tail):
+    """(tokens sent on the newest model call or None, tokens of the tool results written since and not yet sent).
 
     A usage figure only counts what a model has already been given, so a batch whose results sit in the transcript adds
     nothing to it - and then all of it arrives at once. That is how a session goes from 109,603 to 487,753 tokens between
-    two consecutive calls. Size is taken at one token per byte: pessimistic for English prose, about right for what causes
-    the jump (digests and CJK tables), and over-estimating only asks slightly early.
+    two consecutive calls.
     """
-    total = 0
+    pending = 0
     for line in tail.lines(TAIL_MAX):
-        if usage_of(line) is not None:
-            return total
+        tokens = usage_of(line)
+        if tokens is not None:
+            return tokens, pending // BYTES_PER_TOKEN
         if '"tool_result"' in line:
-            total += len(line.encode("utf-8", "replace"))
-    return total
+            pending += result_bytes(line)
+    return None, pending // BYTES_PER_TOKEN
 
 
 def latest_bare_model(tail):
@@ -152,15 +187,31 @@ def latest_bare_model(tail):
 
 
 def decide_variant(bare, candidates):
-    """Whether `candidates` say `bare` runs as a 1M variant; None when none of them refers to it.
+    """Whether `candidates` say `bare` runs as a 1M variant; None when none of them refers to it, or both variants do.
 
     A candidate can carry a Bedrock cross-region prefix (global.anthropic.claude-opus-4-8[1m]) while the bare name never
-    does. Model names contain no dot, so keeping what follows the last one normalises the prefixed form.
+    does. Model names contain no dot, so keeping what follows the last one normalises the prefixed form. Both variants
+    turn up when the session moved between them, and in the cost rows, which add up the whole session, even when it did not:
+    which one is current is then not something these can say.
     """
-    matching = [c for c in candidates if c.rsplit(".", 1)[-1] in (bare, bare + "[1m]")]
-    if not matching:
+    matching = {c.rsplit(".", 1)[-1] for c in candidates}
+    one_m, standard = bare + "[1m]" in matching, bare in matching
+    return None if one_m == standard else one_m
+
+
+def attachment_model(line):
+    """The modelId a model-identity attachment on this line carries, or None for any other line."""
+    if '"marketingName"' not in line and '"type":"model"' not in line:
         return None
-    return all(c.endswith("[1m]") for c in matching)
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return None
+    att = row.get("attachment") if isinstance(row, dict) else None
+    if not isinstance(att, dict) or att.get("type") != "model":
+        return None
+    mid = (att.get("identity") or {}).get("modelId")
+    return mid if isinstance(mid, str) and mid else None
 
 
 def model_attachments(tail):
@@ -172,22 +223,13 @@ def model_attachments(tail):
         head = []
     for rows in (head, tail.lines(ATTACHMENT_TAIL)):
         for line in rows:
-            if '"marketingName"' not in line and '"type":"model"' not in line:
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            att = row.get("attachment") if isinstance(row, dict) else None
-            if not isinstance(att, dict) or att.get("type") != "model":
-                continue
-            mid = (att.get("identity") or {}).get("modelId")
+            mid = attachment_model(line)
             if mid and mid not in found:
                 found.append(mid)
     return found
 
 
-def on_1m_window(tail):
+def on_1m_window(tail, bare=None):
     """True on a 1M-context model, False on a standard one, None if it cannot be told.
 
     The transcript keeps the suffix that decides the window in two places: the model-identity attachment, near the start
@@ -196,7 +238,7 @@ def on_1m_window(tail):
     Uncertainty resolves towards the standard window: a standard session given only the 1M marks could never reach any of
     them, would never be asked, and would show no sign of having failed.
     """
-    bare = latest_bare_model(tail)
+    bare = bare or latest_bare_model(tail)
     if not bare:
         return None
     verdict = decide_variant(bare, model_attachments(tail))
@@ -215,46 +257,97 @@ def on_1m_window(tail):
     return None
 
 
+def switched_since(tail, offset):
+    """Whether a model-identity attachment has been written since the transcript was `offset` bytes long."""
+    return any(attachment_model(line) for line in tail.lines(tail.size - offset + 1))
+
+
+VERDICTS = {True: "1M", False: "standard", None: "unknown"}
+
+
+def window_of(tail, state):
+    """on_1m_window, or what it said last time while that still stands: same model, no identity written since, and less
+    than ATTACHMENT_TAIL written since, so whatever decided it is still within reach."""
+    bare = latest_bare_model(tail)
+    if not bare:
+        return None
+    kept = state["window"]
+    if kept and kept[1] == bare and 0 <= tail.size - kept[2] <= ATTACHMENT_TAIL and not switched_since(tail, kept[2]):
+        return kept[0]
+    verdict = on_1m_window(tail, bare)
+    state["window"] = (verdict, bare, tail.size)
+    return verdict
+
+
 def state_path(plan):
     """Beside the plan, like the other marks the hooks leave, and swept with it when the conversation is gone."""
     return side_file(plan, WATERMARK_SUFFIX)
 
 
+def marks_in(text, key):
+    m = re.search(r"^- %s:[ \t]*(.*)$" % key, text, re.M)
+    return {int(p) for p in (m.group(1).split(",") if m else []) if p.strip().isdigit()}
+
+
 def read_state(path):
-    """Which marks have already asked, and when the last one asked. Anything unreadable is the empty state: the worst
-    that costs is one extra request, while guessing at damaged input could suppress one."""
-    empty = {"fired": set(), "asked_at": None}
+    """What the marks have done so far, the last context measured, and the window as last decided. Anything unreadable is
+    the empty state: the worst that costs is one extra request, while guessing at damaged input could suppress one."""
+    state = {"fired": set(), "asked_at": None, "nagged": set(), "context": None, "window": None}
     try:
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
     except OSError:
-        return empty
-    m = re.search(r"^- fired:[ \t]*(.*)$", text, re.M)
-    fired = {int(p) for p in (m.group(1).split(",") if m else []) if p.strip().isdigit()}
-    asked = None
-    m = re.search(r"^- asked-at:[ \t]*([0-9.]+)$", text, re.M)
+        return state
+    state["fired"] = marks_in(text, "fired")
+    state["nagged"] = marks_in(text, "nagged")
+    m = re.search(r"^- asked-at:[ \t]*([0-9]+(?:\.[0-9]+)?)$", text, re.M)
     if m:
-        try:
-            asked = float(m.group(1))
-        except ValueError:
-            asked = None
-    return {"fired": fired, "asked_at": asked}
+        state["asked_at"] = float(m.group(1))
+    m = re.search(r"^- context:[ \t]*([0-9]+)$", text, re.M)
+    if m:
+        state["context"] = int(m.group(1))
+    m = re.search(r"^- window:[ \t]*(1M|standard|unknown)[ \t]+(\S+)[ \t]+([0-9]+)$", text, re.M)
+    if m:
+        verdict = {v: k for k, v in VERDICTS.items()}[m.group(1)]
+        state["window"] = (verdict, m.group(2), int(m.group(3)))
+    return state
 
 
-def write_state(path, fired, asked_at=None, seen=None):
+def copy_state(state):
+    return dict(state, fired=set(state["fired"]), nagged=set(state["nagged"]))
+
+
+def write_state(path, state, seen):
+    marks = lambda values: ", ".join(str(v) for v in sorted(values))
+    window = state["window"]
     body = (
         "# Water-mark state\n"
         "\n"
         "Written by the hook that watches this conversation's context size. `fired` are the marks that have already\n"
-        "asked for the plan to be brought up to date, `asked-at` is when the most recent one asked, and `last-checked`\n"
-        "is the last time the hook ran at all - its presence is how you tell it is wired up while it has nothing to say.\n"
-        "The marks reset when a compaction brings the context back below one. Safe to delete.\n"
+        "asked for the plan to be brought up to date, `asked-at` is when the most recent one asked, `nagged` the marks it\n"
+        "has said again at the end of a turn or will not, `context` the last context it measured, `window` what it decided\n"
+        "about the model's window and at what transcript size, and `last-checked` when it last changed any of these - its\n"
+        "presence is how you tell it is wired up while it has nothing to say. The marks reset when a compaction brings the\n"
+        "context back below one. Safe to delete.\n"
         "\n"
-        "- fired: %s\n" % ", ".join(str(v) for v in sorted(fired))
-        + ("- asked-at: %.3f\n" % asked_at if asked_at else "")
-        + ("- last-checked: %s\n" % seen if seen else "")
+        "- fired: %s\n" % marks(state["fired"])
+        + ("- asked-at: %.3f\n" % state["asked_at"] if state["asked_at"] else "")
+        + ("- nagged: %s\n" % marks(state["nagged"]) if state["nagged"] else "")
+        + ("- context: %d\n" % state["context"] if state["context"] is not None else "")
+        + ("- window: %s %s %d\n" % (VERDICTS[window[0]], window[1], window[2]) if window else "")
+        + "- last-checked: %s\n" % seen
     )
     write_quietly(path, body)
+
+
+def has_doing(plan):
+    """Whether any row of the plan is `doing`: what the reminder at the end of a turn asks to have described."""
+    try:
+        with open(plan, encoding="utf-8") as fh:
+            body = json.load(fh)
+    except Exception:
+        return False
+    return isinstance(body, dict) and any_in(body.get("nodes"), "doing")
 
 
 def plan_written_since(plan, since):
@@ -291,11 +384,14 @@ def message(mark, ctx, plan, urgent):
     return lead + " this conversation's work plan up to date before doing anything else. " + what_to_write(plan)
 
 
-def nag(mark, ctx, plan):
+def nag(mark, ctx, plan, urgent):
+    """Split the way message() is: only a mark that can belong to a 1M window alone may say a compaction is near."""
     return ("The context is %s tokens, past the %s mark, and the work plan has not been written since that mark was "
-            "reached. An automatic compaction is a turn or two away, and what the `doing` rows do not say is left to a "
-            "lossy summary when it lands. Update it now. " % (format(ctx, ","), format(mark, ","))
-            + what_to_write(plan))
+            "reached. " % (format(ctx, ","), format(mark, ","))
+            + ("An automatic compaction is a turn or two away, and what the `doing` rows do not say is left to a lossy "
+               "summary when it lands. " if urgent else
+               "What the `doing` rows do not say when a compaction lands is left to a lossy summary. ")
+            + "Update it now. " + what_to_write(plan))
 
 
 def emit(event, text):
@@ -322,55 +418,75 @@ def main():
     if tail is None:
         return 0
 
-    # stop_hook_active is deliberately not consulted. It marks the turn this hook's own request extended, and that turn
-    # updates the plan and then carries on with the work it interrupted, which makes it the fastest climb of all. Nothing
-    # can loop on it: a mark asks once, recorded on disk.
+    path = state_path(plan)
+    state = read_state(path)
+    before = copy_state(state)
 
-    ctx = current_context(tail)
-    if ctx is None:
+    ctx, pending = context_of(tail)
+    measured = ctx is not None
+    if measured:
+        state["context"] = ctx - ctx % CONTEXT_STEP
+    elif pending:
+        ctx = state["context"] or 0
+    else:
         return 0
-    pending = pending_tool_bytes(tail)
     ctx_next = ctx + pending
 
+    # The window is judged by what was measured alone: the estimate of what is pending is a guess, and a guess past
+    # 200,000 would take the standard marks away from a standard session.
     standard, one_m = marks_for()
-    if ctx_next > STANDARD_WINDOW_CEILING:
+    if ctx > STANDARD_WINDOW_CEILING:
         window_1m, label = True, "1M-by-size"
     elif ctx_next >= min(standard):
-        window_1m = on_1m_window(tail)
-        label = {True: "1M", False: "standard", None: "unknown"}[window_1m]
+        window_1m = window_of(tail, state)
+        label = VERDICTS[window_1m]
     else:
         window_1m, label = None, "not-needed"
     marks = one_m if window_1m else standard + one_m
 
-    path = state_path(plan)
-    state = read_state(path)
-    fired, asked_at = state["fired"], state["asked_at"]
-
     # Only marks currently in force count: a mark recorded under different settings stays in the file, and comparing
-    # against one that no longer exists would keep a session from ever being asked again.
-    live = fired & set(marks)
-    if live and ctx_next < min(live):
-        fired, asked_at = set(), None
+    # against one that no longer exists would keep a session from ever being asked again. The measured context is what
+    # shows a compaction, since the first batch after one can bring a large estimate with it.
+    live = state["fired"] & set(marks)
+    if measured and live and ctx < min(live):
+        state["fired"], state["asked_at"], state["nagged"] = set(), None, set()
 
-    seen = "%s ctx=%d pending=%d window=%s event=%s" % (time.strftime("%Y-%m-%d %H:%M:%S"), ctx, pending, label, event)
-    relaying = latest_reply_matches(tail, limits["quietWhenReplyMatches"])
+    seen = "%s ctx=%d%s pending=%d window=%s event=%s" % (
+        time.strftime("%Y-%m-%d %H:%M:%S"), ctx, "" if measured else " (last measured)", pending, label, event)
+    reply = payload.get("last_assistant_message") if event == "Stop" else None
 
-    due = [m for m in marks if ctx_next >= m and m not in fired]
+    def relaying():
+        return latest_reply_matches(tail, limits["quietWhenReplyMatches"], reply)
+
+    due = [m for m in marks if ctx_next >= m and m not in state["fired"]]
     if due:
-        # Recorded even while relaying: leaving the relay must not make a mark long passed speak.
-        write_state(path, fired | set(due), None if relaying else time.time(), seen)
-        if not relaying:
+        state["fired"] |= set(due)
+        quiet = relaying()
+        if quiet:
+            # Used up without asking, and kept from the end of the turn too: leaving the relay must not make a mark
+            # long passed speak.
+            state["nagged"] |= set(due)
+        else:
+            state["asked_at"] = time.time()
+        write_state(path, state, seen)
+        if not quiet:
             mark = max(due)
             emit(event, message(mark, ctx_next, plan, mark in one_m))
         return 0
-    write_state(path, fired, asked_at, seen)
+    if state != before:
+        write_state(path, state, seen)
 
-    if event != "Stop" or relaying:
+    # Said at the end of a turn, once per mark, and never into the turn this hook's own output extended.
+    if event != "Stop" or payload.get("stop_hook_active"):
         return 0
-    behind = [m for m in sorted(fired & set(marks), reverse=True) if ctx_next >= m]
-    if not behind or plan_written_since(plan, asked_at):
+    behind = [m for m in sorted(state["fired"] & set(marks), reverse=True) if ctx_next >= m]
+    if not behind or behind[0] in state["nagged"] or plan_written_since(plan, state["asked_at"]):
         return 0
-    emit(event, nag(behind[0], ctx_next, plan))
+    if relaying() or not has_doing(plan):
+        return 0
+    state["nagged"] |= set(behind)
+    write_state(path, state, seen)
+    emit(event, nag(behind[0], ctx_next, plan, behind[0] in one_m))
     return 0
 
 
@@ -389,14 +505,18 @@ def selftest():
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"}
     me = [sys.executable, os.path.abspath(__file__), data]
 
-    def write_plan(stale):
+    def write_plan(stale, state="doing"):
         with open(plan, "w", encoding="utf-8") as fh:
-            json.dump({"nodes": [{"title": "r", "state": "doing"}]}, fh)
+            json.dump({"nodes": [{"title": "r", "state": state}]}, fh)
         if stale:
             os.utime(plan, (1, 1))
 
+    def usage(tokens):
+        return {"input_tokens": 2, "cache_read_input_tokens": tokens - 2, "cache_creation_input_tokens": 0}
+
     def write_transcript(ctx_tokens, relay=False, model=None, usage_keys=None, attachment_id=None,
-                         pending_bytes=0, switched_to=None, pad_bytes=0):
+                         pending_bytes=0, switched_to=None, pad_bytes=0, pending_lines=1, result_copy=False,
+                         then_call=None):
         rows = []
         if attachment_id:
             rows.append({"type": "attachment", "attachment": {
@@ -409,27 +529,35 @@ def selftest():
         if usage_keys:
             rows.append({"type": "cost-state", "modelUsage": {k: {"inputTokens": 1} for k in usage_keys}})
         text = "(gpt-through-opus 2026-09-05T07:16:42Z) relayed" if relay else "an ordinary reply"
-        rows.append({"type": "assistant", "message": {"content": [{"type": "text", "text": text}], "usage": {
-            "input_tokens": 2, "cache_read_input_tokens": ctx_tokens - 2, "cache_creation_input_tokens": 0}}})
+        rows.append({"type": "assistant", "message": {"content": [{"type": "text", "text": text}],
+                                                      "usage": usage(ctx_tokens)}})
         if model:
             rows[-1]["message"]["model"] = model
+        for _ in range(pending_lines if pending_bytes else 0):
+            said = "x" * max(0, pending_bytes // pending_lines - 120)
+            rows.append({"type": "user", "message": {"content": [{"type": "tool_result", "content": said}]}})
+            if result_copy:
+                rows[-1]["toolUseResult"] = {"stdout": said}
+        if then_call:
+            rows.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}],
+                                                          "usage": usage(then_call)}})
         with open(transcript, "w", encoding="utf-8") as fh:
             for r in rows:
                 fh.write(json.dumps(r) + "\n")
-            if pending_bytes:
-                fh.write(json.dumps({"type": "user", "message": {"content": [
-                    {"type": "tool_result", "content": "x" * max(0, pending_bytes - 120)}]}}) + "\n")
 
-    def run(ctx_tokens, reset=False, event="Stop", active=False, extra_env=None, **kw):
-        if reset and os.path.exists(state):
-            os.remove(state)
-        write_transcript(ctx_tokens, **kw)
-        p = {"hook_event_name": event, "session_id": sid, "transcript_path": transcript}
+    def hook(event="Stop", active=False, extra_env=None, extra=None):
+        p = dict({"hook_event_name": event, "session_id": sid, "transcript_path": transcript}, **(extra or {}))
         if active:
             p["stop_hook_active"] = True
         r = subprocess.run(me, input=json.dumps(p), stdout=subprocess.PIPE, universal_newlines=True,
                            env=dict(env, **(extra_env or {})))
         return r.stdout.strip()
+
+    def run(ctx_tokens, reset=False, event="Stop", active=False, extra_env=None, extra=None, **kw):
+        if reset and os.path.exists(state):
+            os.remove(state)
+        write_transcript(ctx_tokens, **kw)
+        return hook(event, active, extra_env, extra)
 
     def said(out):
         return json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
@@ -473,9 +601,21 @@ def selftest():
     c = said(run(196_500))
     check("plan not written since -> said again at the end of the turn", "has not been written since" in c)
     check("  and asking for nothing but the plan", not drives_compaction(c))
-    check("  and again while it is still not written", "has not been written since" in said(run(196_600)))
+    check("  without saying a compaction is a turn or two away, which a standard mark cannot know",
+          "a turn or two away" not in c)
+    check("  but only once for that mark, since saying it keeps the turn from ending", run(196_600) == "")
     write_plan(stale=False)
     check("plan written -> silent", run(196_700) == "")
+
+    # --- when the end of a turn stays quiet about a mark that was not answered ---
+    write_plan(stale=True)
+    run(171_000, reset=True, event="PostToolBatch")
+    check("not said into the turn the hook's own output extended", run(172_000, active=True) == "")
+    check("  but at the end of the next turn", "has not been written since" in said(run(172_500)))
+    write_plan(stale=True, state="todo")
+    run(171_000, reset=True, event="PostToolBatch")
+    check("with no row `doing` there is no description to bring up to date -> not said", run(172_000) == "")
+    write_plan(stale=True)
 
     # --- a compaction lands, and the climb back asks again ---
     check("after a compaction -> silent", run(6_000) == "")
@@ -484,6 +624,9 @@ def selftest():
     # --- the 1M group ---
     c = said(run(961_000, reset=True))
     check("crossing 960k -> asks, and says a compaction is close", "960,000" in c and "compaction is close" in c)
+    write_plan(stale=True)
+    run(961_000, reset=True, event="PostToolBatch")
+    check("  and said again at the end of a turn, says it is a turn or two away", "a turn or two away" in said(run(962_000)))
     check("a turn extended by a request is still checked", "170,000" in said(run(171_000, reset=True, active=True)))
 
     # --- relaying for another model ---
@@ -492,7 +635,13 @@ def selftest():
         json.dump({"quietWhenReplyMatches": relay}, fh)
     check("a reply matching the quiet pattern -> silent", run(171_000, reset=True, relay=True) == "")
     check("  and the mark is used up rather than left to speak later", "- fired: 170000" in state_text()
-          and "- asked-at:" not in state_text())
+          and "- asked-at:" not in state_text() and "- nagged: 170000" in state_text())
+    check("  so it is not said either once the relay has ended", run(172_000) == "")
+    relayed = "(gpt-through-opus 2026-09-05T07:16:42Z) relayed"
+    long_after = dict(relay=True, pending_bytes=1_200_000, pending_lines=24, then_call=171_000)
+    check("the end of a turn reads the reply from the event, however much output came after it",
+          run(171_000, reset=True, extra={"last_assistant_message": relayed}, **long_after) == "")
+    check("  where the transcript alone could not tell", "170,000" in said(run(171_000, reset=True, **long_after)))
     check("an ordinary reply under the same pattern still asks", "170,000" in said(run(171_000, reset=True)))
     with open(os.path.join(data, "config.json"), "w") as fh:
         json.dump({"enabled": False}, fh)
@@ -508,8 +657,12 @@ def selftest():
     check("1M window -> asks at its own, naming the highest crossed", "970,000" in said(run(981_000, **opus1m)))
     check("standard window -> keeps its marks",
           "180,000" in said(run(181_000, reset=True, model="claude-sonnet-5", usage_keys=["claude-sonnet-5"])))
-    check("model switched mid-session -> treated as standard", "180,000" in said(run(
-        181_000, reset=True, model="claude-opus-5", usage_keys=["claude-opus-5", "claude-opus-5[1m]"])))
+    check("both variants in the cost rows -> undecided, which keeps the standard marks", "180,000" in said(run(
+        181_000, reset=True, model="claude-opus-5", usage_keys=["claude-opus-5", "claude-opus-5[1m]"]))
+          and "window=unknown" in state_text())
+    check("both variants among the identities -> undecided too", "180,000" in said(run(
+        181_000, reset=True, model="claude-opus-5", attachment_id="claude-opus-5", switched_to="claude-opus-5[1m]"))
+          and "window=unknown" in state_text())
     check("no identity naming the current model -> treated as standard", "180,000" in said(run(
         181_000, reset=True, model="claude-opus-5", usage_keys=["claude-fable-5"])))
     check("cross-region prefix still reads as 1M", run(
@@ -535,10 +688,58 @@ def selftest():
     check("  and the last one to 168,000, so 172,000 is past it rather than short of 170,000",
           "168,000" in c and "170,000" not in c)
 
-    # --- unconsumed tool results count ---
+    # --- unconsumed tool results count, by what they say ---
     check("120k + 30 KB pending is still under the mark -> silent", run(120_000, reset=True, pending_bytes=30_000) == "")
-    check("150k + 40 KB pending crosses 180k -> asks",
-          "180,000" in said(run(150_000, reset=True, pending_bytes=40_000)))
+    check("150k + 160 KB of results pending crosses 180k -> asks",
+          "180,000" in said(run(150_000, reset=True, pending_bytes=160_000)))
+    check("the copy of a result kept for the client is not counted",
+          run(155_000, reset=True, pending_bytes=10_000, result_copy=True) == "")
+    c = said(run(150_000, reset=True, pending_bytes=300_000))
+    check("a standard session with 300 KB of results pending keeps its marks", "195,000" in c
+          and "window=unknown" in state_text())
+    c = said(run(150_000, reset=True, pending_bytes=900_000))
+    check("  and with 900 KB is not told it passed a 1M mark", "195,000" in c and "995,000" not in c)
+
+    # --- a compaction, recognised from what was measured ---
+    run(196_000, reset=True)
+    check("after a compaction, a large first batch still lets the marks reset and ask again",
+          "180,000" in said(run(30_000, pending_bytes=640_000)))
+
+    # --- the newest call further back than the hook reads ---
+    run(140_000, reset=True)
+    c = said(run(140_000, pending_bytes=1_200_000, pending_lines=24))
+    check("results that push the newest call out of reach still trip a mark, on the last context measured",
+          "195,000" in c and "(last measured)" in state_text())
+    check("  and with nothing measured before, the results alone trip it",
+          "195,000" in said(run(140_000, reset=True, pending_bytes=1_200_000, pending_lines=24)))
+
+    # --- the state file is written when something in it changes ---
+    run(150_000, reset=True)
+    os.utime(state, (1, 1))
+    run(150_000)
+    check("a run that changes nothing leaves the state file alone", os.path.getmtime(state) == 1)
+
+    # --- the window, once decided, is remembered until something could change it ---
+    def raw(rows, append=False):
+        with open(transcript, "a" if append else "w", encoding="utf-8") as fh:
+            for r in rows:
+                fh.write(json.dumps(r) + "\n")
+
+    def call(tokens):
+        return {"type": "assistant", "message": {"model": "claude-opus-5", "usage": usage(tokens),
+                                                 "content": [{"type": "text", "text": "ok"}]}}
+
+    def identity(mid):
+        return {"type": "attachment", "attachment": {"type": "model", "identity": {"modelId": mid, "marketingName": "x"}}}
+
+    if os.path.exists(state):
+        os.remove(state)
+    raw([identity("claude-opus-5[1m]"), call(181_000)])
+    check("an identity decides the window", hook() == "" and "- window: 1M claude-opus-5 " in state_text())
+    raw([{"type": "user", "message": {"content": "p" * 2_000}}, call(182_000)])
+    check("  and what it decided stands while no identity has been written since", hook() == "")
+    raw([identity("claude-opus-5"), call(183_000)], append=True)
+    check("  until one is", "180,000" in said(hook()) and "- window: standard claude-opus-5 " in state_text())
 
     # --- the in-turn event asks but never repeats itself ---
     write_plan(stale=True)
