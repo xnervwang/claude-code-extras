@@ -2,8 +2,8 @@
 // Copyright (c) 2026, Xnerv Wang
 // All rights reserved.
 
-// Recently closed at the end of the session list: the Claude Code tabs last closed in this workspace, most recent
-// first, leaving out any open again in a tab or the shown sidebar. Collapsed until opened.
+// Recently closed below OPEN SESSIONS: the Claude Code tabs last closed in this workspace, most recent first, leaving
+// out any open again in a tab or the shown sidebar. Collapsed until opened.
 // Fragment of the in-page script - see README.md in this folder.
 
   // The list comes from this extension by way of the patched host (src/recentclosed.js), with how many to show; the

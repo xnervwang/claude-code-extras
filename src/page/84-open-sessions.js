@@ -120,8 +120,8 @@
     return false;
   };
 
-  /* The session list's factories and section classes as the last render handed them over: Recently closed draws at
-     the end of the same render (84-recent-closed.js), where the edit has no names of its own to pass. */
+  /* The session list's factories and section classes as the last render handed them over: Recently closed draws right
+     after this section in the same render (84-recent-closed.js) and takes them from here. */
   var lastListUi = null;
   /*
    * A session-list row for one conversation, drawn with the list's own row component - pin, dates, rename and archive

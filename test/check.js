@@ -4416,7 +4416,7 @@ console.log('\nopen sessions on the session list');
       'F(Ch0,{sessions:(window.__cceSessionList={sessions:V,context:U,comms:q},V),context:U,sessionStates:q.sessionStates,openSessionIds:q.openSessionIds,'],
     ['open sessions section',
       'children:[F(Lh5,{collapsed:i1,onViewUsage:R0}),F("div",{className:e7.sectionHeader,children:w("button",{className:e7.sectionToggle,onClick:()=>W0("sessions",!z0),"aria-expanded":!z0,title:z0?"Expand session manager":"Collapse session manager",children:[F(Va,{className:e7.sectionChevron}),F("span",{children:"Session manager"})]})})]',
-      'onViewUsage:R0}),(typeof window.__cceOpenSessions==="function"?window.__cceOpenSessions({jsx:F,jsxs:w,cls:e7,Chevron:Va}):null),F("div",{className:e7.sectionHeader,'],
+      'onViewUsage:R0}),(typeof window.__cceOpenSessions==="function"?window.__cceOpenSessions({jsx:F,jsxs:w,cls:e7,Chevron:Va}):null),(typeof window.__cceRecentClosedSection==="function"?window.__cceRecentClosedSection():null),F("div",{className:e7.sectionHeader,'],
     ['status dot for open sessions',
       ';function qY({state:$,ring:J=!1,title:Z,className:X}){return 1}',
       ';window.__cceStatusDot=qY;function qY({state:$,ring:J=!1,title:Z,className:X}){'],
@@ -5071,11 +5071,13 @@ console.log('\nrecently closed sessions');
   if (JSON.stringify(senv.one) === '{"max":3,"ids":["a"]}' && senv.two === undefined) ok('every update of the open conversations carries the closed list, and a failing list leaves the update as it was');
   else bad(`the update carried ${JSON.stringify(senv.one)} and ${JSON.stringify(senv.two)}`);
 
-  // The panel: the section goes after Session manager, and the closed list is kept as updates arrive.
-  const we = webview.EDITS.find((e) => e.name === 'recently closed section');
-  const wr = we ? applyEdits('F(f91,{listFilter:$.x,onUpdateListFilter:J1})]})]})}function Oh5(){}', [we]) : { error: 'no such edit' };
-  if (!wr.error && wr.out.startsWith('F(f91,{listFilter:$.x,onUpdateListFilter:J1})]}),(typeof window.__cceRecentClosedSection==="function"?window.__cceRecentClosedSection():null)]})}function Oh5')) {
-    ok('Recently closed is drawn after the Session manager section, as the panel\'s last child');
+  // The panel: the section goes right after OPEN SESSIONS, and the closed list is kept as updates arrive.
+  const we = webview.EDITS.find((e) => e.name === 'open sessions section');
+  const wr = we ? applyEdits('children:[F(Lh5,{collapsed:i1,onViewUsage:R0}),F("div",{className:e7.sectionHeader,children:w("button",{className:e7.sectionToggle,onClick:()=>W0("sessions",!z0),"aria-expanded":!z0,title:z0?"Expand session manager":"Collapse session manager",children:[F(Va,{className:e7.sectionChevron}),F("span",{children:"Session manager"})]})})]', [we]) : { error: 'no such edit' };
+  const at = (s) => (wr.out || '').indexOf(s);
+  if (!wr.error && at('__cceOpenSessions(') >= 0 && at('__cceOpenSessions(') < at('__cceRecentClosedSection()') && at('__cceRecentClosedSection()') < at('className:e7.sectionHeader')
+    && !webview.EDITS.some((e) => e.name === 'recently closed section')) {
+    ok('Recently closed is drawn right after OPEN SESSIONS, before the Session manager section, and nowhere else');
   } else bad(`the section edit gave ${wr.error || wr.out}`);
   const ke = webview.EDITS.find((e) => e.name === 'sidebar shown for open sessions');
   const kr = applyEdits('function h($){switch($.request.type){case"session_states_update":if(this.sessionStates.value=$.request.sessions,this.activeSessionId.value=1,$.request.openSessionIds!==void 0)this.openSessionIds.value=$.request.openSessionIds;break}}', [ke]);

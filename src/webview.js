@@ -308,10 +308,11 @@ const EDITS = [
   },
   {
     /* The section itself, between Account & usage and Session manager, drawn with the list's own element factories,
-       section classes and chevron so it looks like the two around it. */
+       section classes and chevron so it looks like the two around it; Recently closed (84-recent-closed.js) follows it. */
     name: 'open sessions section',
     re: /(onViewUsage:[\w$]+\}\)),([\w$]+)\("div",\{className:([\w$]+)\.sectionHeader,children:([\w$]+)\("button",\{className:\3\.sectionToggle,onClick:\(\)=>([\w$]+)\("sessions",!([\w$]+)\),"aria-expanded":!\6,title:\6\?"Expand session manager":"Collapse session manager",children:\[\2\(([\w$]+),/g,
-    to: (m, usage, jsx, cls, jsxs, toggle, collapsed, chevron) => `${usage},(typeof window.__cceOpenSessions==="function"?window.__cceOpenSessions({jsx:${jsx},jsxs:${jsxs},cls:${cls},Chevron:${chevron}}):null),${jsx}("div",{className:${cls}.sectionHeader,children:${jsxs}("button",{className:${cls}.sectionToggle,onClick:()=>${toggle}("sessions",!${collapsed}),"aria-expanded":!${collapsed},title:${collapsed}?"Expand session manager":"Collapse session manager",children:[${jsx}(${chevron},`,
+    to: (m, usage, jsx, cls, jsxs, toggle, collapsed, chevron) => `${usage},(typeof window.__cceOpenSessions==="function"?window.__cceOpenSessions({jsx:${jsx},jsxs:${jsxs},cls:${cls},Chevron:${chevron}}):null),`
+      + `(typeof window.__cceRecentClosedSection==="function"?window.__cceRecentClosedSection():null),${jsx}("div",{className:${cls}.sectionHeader,children:${jsxs}("button",{className:${cls}.sectionToggle,onClick:()=>${toggle}("sessions",!${collapsed}),"aria-expanded":!${collapsed},title:${collapsed}?"Expand session manager":"Collapse session manager",children:[${jsx}(${chevron},`,
   },
   {
     // The status dot the list draws on its rows, so a row in OPEN SESSIONS carries the same one. A function declaration
@@ -360,12 +361,6 @@ const EDITS = [
     re: /if\(([\w$]+)\.unarchiveSelection\)([\w$]+)\.push\(\{label:([\w$]+)\.length>1\?`Unarchive \$\{\3\.length\} sessions`:"Unarchive session",separatorBefore:\2\.length>0,onSelect:\1\.unarchiveSelection\}\);return \2\}/g,
     to: (m, act, items, keys) => m.slice(0, -(`return ${items}}`).length)
       + `{let cceD=typeof window.__cceDeleteItem==="function"?window.__cceDeleteItem(${keys}):null;if(cceD)${items}.push(cceD)}return ${items}}`,
-  },
-  {
-    // Recently closed after the Session manager section, at the end of the panel (84-recent-closed.js).
-    name: 'recently closed section',
-    re: /onUpdateListFilter:([\w$]+)\}\)\]\}\)\]\}\)\}function /g,
-    to: (m, f) => `onUpdateListFilter:${f}})]}),(typeof window.__cceRecentClosedSection==="function"?window.__cceRecentClosedSection():null)]})}function `,
   },
   {
     // The panel's open request, carrying where the session list's two buttons and two Resume items asked for.

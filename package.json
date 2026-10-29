@@ -311,7 +311,7 @@
           "default": 10,
           "minimum": 0,
           "maximum": 50,
-          "markdownDescription": "Maximum number of conversations listed in **Recently closed**, the last section of the session list: those whose Claude Code editor tabs you closed in this workspace, most recent first. Conversations open again are not listed and do not count toward it. 0 hides the section. Takes effect without a reload."
+          "markdownDescription": "Maximum number of conversations listed in **Recently closed**, the section of the session list between Open sessions and Session manager: those whose Claude Code editor tabs you closed in this workspace, most recent first. Conversations that are open right now are not listed. 0 hides the section. Takes effect without a reload."
         },
         "claudeCodeWorkPlan.show.openSessions": {
           "type": "boolean",
