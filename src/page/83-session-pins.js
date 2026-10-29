@@ -138,8 +138,9 @@
         'data-cce-pinned': on ? '1' : '0', 'aria-pressed': on ? 'true' : 'false', 'aria-label': pinLabel(on, d, id),
         onClick: act,
         onKeyDown: function(e){ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); act(e); } },
-        onMouseEnter: function(e){ showLabel(e.currentTarget); },
-        onMouseLeave: function(){ hideLabel(); },
+        // The row's own hover text shares the box, so it waits while the pointer is on the pin (84-row-hover.js).
+        onMouseEnter: function(e){ rowHoverHold(); showLabel(e.currentTarget); },
+        onMouseLeave: function(){ hideLabel(); rowHoverResume(); },
         children: [h('svg', {
           width: '15', height: '15', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7,
           strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true',

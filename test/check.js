@@ -4783,7 +4783,7 @@ console.log('\nopen sessions on the session list');
   if (JSON.stringify(got) === JSON.stringify(want)) {
     ok('the open conversations, newest first: one just started counts as now, the sidebar one is marked, a remote one and one the list knows nothing of are left out');
   } else bad(`the rows were ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
-  const header = walk(tree, (n) => n.props && n.props['data-cce-open-count'])[0];
+  const header = walk(tree, (n) => n.props && n.props['data-cce-section-count'])[0];
   if (header && text(header) === '4' && walk(tree, (n) => n.props && n.props.className === 'sl').some((n) => text(n) === 'Open sessions')) {
     ok('the header is the list\'s own section header, labelled Open sessions, with the count');
   } else bad('the header was not the list\'s section header with a count of 4');
@@ -5028,6 +5028,33 @@ console.log('\nhover text on the session list rows');
   env.offKey = '';
   if (afterLeave === 0 && timers.length === 0 && off.length === 0) ok('leaving the row before the delay shows nothing, and the switch off shows nothing');
   else bad(`after leaving ${afterLeave} box(es) were shown; with the switch off ${JSON.stringify(off)}`);
+  /* The pin at the front of a row shows its own hover text in the same box: while the pointer is on the pin the row's
+     text waits, and back on the row it comes up again. */
+  {
+    const PIN = '0ccccccc-2222-4333-8444-555555555555';
+    let current = null, tn = 0;
+    const due = new Map();
+    const penv = { window: {}, isOff: () => false, pinsCache: null, readProp: () => [[], {}, 14],
+      showLabel: (target, text) => { current = typeof text === 'string' ? text : target.getAttribute('aria-label'); },
+      hideLabel: () => { current = null; },
+      setTimeout: (f) => { due.set(++tn, f); return tn; }, clearTimeout: (t) => { due.delete(t); },
+      head: { appendChild() {} }, document: { createElement: () => ({ setAttribute() {} }) } };
+    vm.createContext(penv);
+    vm.runInContext(['83-session-pins.js', '84-row-hover.js'].map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', f), 'utf8')).join('\n'), penv);
+    const fire = () => { const now = [...due.values()]; due.clear(); now.forEach((f) => f()); };
+    const pin = penv.window.__ccePin((type, props, key) => ({ type, props, key }), { sessionId: { value: PIN }, transcriptOnDisk: true });
+    const pinEl = { getAttribute: (k) => (k === 'aria-label' ? pin.props['aria-label'] : null) };
+    penv.window.__cceRowHover({ sessionId: { value: PIN } }, { isConnected: true, addEventListener() {} }, true);
+    pin.props.onMouseEnter({ currentTarget: pinEl });
+    fire();
+    const onPin = current;
+    pin.props.onMouseLeave();
+    fire();
+    const backOnRow = current;
+    if (/^Pin this conversation/.test(onPin || '') && backOnRow === 'Group: Ungrouped\nSession ID: ' + PIN) {
+      ok('on the pin its own hover text stays, the row\'s waiting, and back on the row the row\'s text comes up');
+    } else bad(`hover text on the pin was ${JSON.stringify(onPin)}, and back on the row ${JSON.stringify(backOnRow)}`);
+  }
   const { applyEdits } = require('../src/edits');
   const e = webview.EDITS.find((x) => x.name === 'session row hover');
   const row = 'var Xh5=u0(function({session:J,id:Z,isActive:X},E){let g=1;return w("button",{ref:E,id:Z,className:`${b5.sessionItem} ${X?b5.active:""}`,onMouseMove:W})});';
@@ -5435,6 +5462,38 @@ console.log('\nrecently closed sessions');
       && /recentClosed\.pageData\(recentList, enabled\(\) && !removed\(\) \? cfg\(\)\.get\(RECENT_SETTING, 10\) : 0\)/.test(extSrc)) {
     ok('the closed list is kept per workspace, and the setting, 10 by default, says how many to show');
   } else bad('the closed list is not wired as expected');
+
+  /* One index of the list's conversations for both sections, kept while the list holds the same array: drawing them again
+     reads no conversation beyond the ones asked for. One that is given its id after it joined the array is still found. */
+  {
+    let reads = 0;
+    const counted = (sid) => {
+      const it = { summary: sig('t'), lastModifiedTime: sig(Date.now()), isRemote: sig(false) };
+      Object.defineProperty(it, 'sessionId', { get() { reads++; return sid; } });
+      return it;
+    };
+    const many = [], LATE = '0aaaaaaa-1111-4000-8000-000000000000', lateId = sig('');
+    for (let n = 0; n < 200; n++) many.push(counted(sig(`${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`)));
+    many.push(counted(lateId));
+    const src = env.window.__cceSessionList;
+    src.sessions.sessions = sig(many);
+    src.comms.openSessionIds = sig([id(1), id(2)]);
+    src.comms.sidebarSessionIds = sig([]);
+    const both = () => [env.window.__cceOpenSessions(ui), draw({ max: 3, ids: [id(5), id(6), id(7)] }, true)];
+    both();
+    reads = 0;
+    const [openAgain, closedAgain] = both();
+    const again = reads;
+    lateId.value = LATE;
+    src.comms.openSessionIds = sig([LATE]);
+    const late = walk(env.window.__cceOpenSessions(ui), (n) => n.type === env.window.__cceSessionRow);
+    const drewBoth = walk(openAgain, (n) => n.type === env.window.__cceSessionRow).length === 2
+      && walk(closedAgain, (n) => n.type === env.window.__cceSessionRow).length === 3;
+    if (drewBoth && again <= 10 && late.length === 1 && late[0].props.id === 'cce-open-' + LATE) {
+      ok(`drawn again over 201 conversations, the two sections read ${again} of them, and one given its id later is still found`);
+    } else bad(`drawn again over 201 conversations the two sections read a conversation's id ${again} times (drew both: ${drewBoth}); `
+      + `the one given its id later was drawn ${late.length} time(s)`);
+  }
 }
 
 console.log('\nthe patch markers follow the code');

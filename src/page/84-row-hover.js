@@ -10,7 +10,8 @@
   // other hover text of ours. The row component calls this as the pointer enters and leaves (an edit in src/webview.js).
   // The box waits a moment, as a tooltip does, so moving across the list does not flash one box per row.
   var ROW_HOVER_MS = 600;
-  var rowHoverTimer = 0, rowHoverEl = null;
+  // rowHoverAt is the row the pointer is on and its conversation, kept while the pointer is anywhere inside the row.
+  var rowHoverTimer = 0, rowHoverEl = null, rowHoverAt = null;
   // The section the list puts the row under, decided as the list decides it: an archived conversation is under Archived
   // sessions whatever group it was in, one in a group under that group (the last group naming it, if several do), and
   // the rest under Ungrouped. A remote conversation's group key is not its plain ID, so for it only the ID is shown.
@@ -37,19 +38,36 @@
     if (rowHoverTimer) { clearTimeout(rowHoverTimer); rowHoverTimer = 0; }
     if (rowHoverEl) { rowHoverEl = null; hideLabel(); }
   };
+  var rowHoverStart = function(session, el){
+    var text = rowHoverText(session);
+    if (!text) return;
+    rowHoverTimer = setTimeout(function(){
+      rowHoverTimer = 0;
+      if (!el.isConnected) return;
+      rowHoverEl = el;
+      showLabel(el, text);
+    }, ROW_HOVER_MS);
+  };
   window.__cceRowHover = function(session, el, entering){
     try {
       rowHoverEnd();
+      rowHoverAt = entering && el ? { session: session, el: el } : null;
       if (!entering || !el || isOff('sessionHoverDetails')) return;
-      var text = rowHoverText(session);
-      if (!text) return;
-      rowHoverTimer = setTimeout(function(){
-        rowHoverTimer = 0;
-        if (!el.isConnected) return;
-        rowHoverEl = el;
-        showLabel(el, text);
-      }, ROW_HOVER_MS);
+      rowHoverStart(session, el);
       // A box left over a row that was just clicked reads as stuck.
       el.addEventListener('mousedown', rowHoverEnd, { once: true });
+    } catch (e) { /* no hover text */ }
+  };
+  /* The pin at the front of a row (83-session-pins.js) has hover text of its own in the same box. While the pointer is on
+     the pin the row's text waits; back on the row, it comes up after the usual delay, as it would have on entering. */
+  var rowHoverHold = function(){
+    if (rowHoverTimer) { clearTimeout(rowHoverTimer); rowHoverTimer = 0; }
+    rowHoverEl = null;
+  };
+  var rowHoverResume = function(){
+    try {
+      var at = rowHoverAt;
+      if (!at || rowHoverTimer || !at.el.isConnected || isOff('sessionHoverDetails')) return;
+      rowHoverStart(at.session, at.el);
     } catch (e) { /* no hover text */ }
   };
