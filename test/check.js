@@ -4580,7 +4580,13 @@ console.log('\nconversations pinned in the session list');
         const ages = ['p/p1/${A}.jsonl', 'p/p1/${A}/tool-results/a.txt', 'p/p1/${A}/tool-results/s/b.txt', 'p/p1/${A}/tool-results/s/d/c.txt',
           'p/p1/${A}/subagents/agent-1.jsonl', 'p/p2/${B}.jsonl', 'p/p2/${D}.jsonl'].map(age);
         const times = { '${A}': first.updates['${A}'] };
-        const later = now + DAY;
+        // Half an hour on, as the next pass in any window comes: the files are past the floor, so nothing moves.
+        const soon = await pins.keep({ ids: new Set(['${A}']), times, days: 90, projectsDir: path.join(root, 'p'), now: now + 30 * 60000 });
+        // Another window's pass moved the file between this one reading the record and looking at the file, so the record
+        // in hand is the one before.
+        const stale = await pins.keep({ ids: new Set(['${A}']), times: { '${A}': { real: times['${A}'].real, set: times['${A}'].set - 2 * DAY } },
+          days: 90, projectsDir: path.join(root, 'p'), now: now + 30 * 60000 });
+        const later = now + 2 * DAY;
         const second = await pins.keep({ ids: new Set(['${A}']), times, days: 90, projectsDir: path.join(root, 'p'), now: later });
         put('p/p1/${A}.jsonl', 0);
         const written = await pins.keep({ ids: new Set(), times: { '${A}': second.updates['${A}'] }, days: 90, projectsDir: path.join(root, 'p'), now: later });
@@ -4591,7 +4597,7 @@ console.log('\nconversations pinned in the session list');
         fs.chmodSync(path.join(root, 'r', 'locked'), 0);
         const partial = await pins.keep({ ids: new Set(['${A}']), days: 90, projectsDir: path.join(root, 'r'), now });
         fs.chmodSync(path.join(root, 'r', 'locked'), 0o755);
-        process.stdout.write(JSON.stringify({ first, ages, second, written, short: age('q/one/${A}.jsonl'), empty, partial,
+        process.stdout.write(JSON.stringify({ first, ages, soon, stale, second, written, short: age('q/one/${A}.jsonl'), empty, partial,
           root: process.getuid ? process.getuid() === 0 : false }));
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
@@ -4601,21 +4607,27 @@ console.log('\nconversations pinned in the session list');
   if (k.error) bad('keeping pinned conversations failed: ' + k.error);
   else {
     const NOW = Date.UTC(2026, 9, 16, 12), DAY = 86400000;
-    const want = [76, 76, 76, 100, 100, 10, 100];
+    const want = [75, 75, 75, 100, 100, 10, 100];
     if (JSON.stringify(k.ages) === JSON.stringify(want) && k.first.found === 2 && k.first.touched === 3 && k.first.errors === 0) {
-      ok('a pinned transcript and its tool outputs past the margin are set to 14 days inside a 90-day cleanup; '
+      ok('a pinned transcript and its tool outputs past the margin are set to a day inside 14 days of a 90-day cleanup; '
         + 'fresh ones, other conversations, and what the cleanup does not reach are left alone');
     } else bad(`ages after keeping: ${JSON.stringify(k.ages)} (expected ${JSON.stringify(want)}), counts ${JSON.stringify(k.first)}`);
     const rec = k.first.updates[A] || {}, rec2 = (k.second.updates || {})[A] || {};
-    if (Math.round((NOW - rec.real) / DAY) === 100 && rec.set === NOW - 76 * DAY && !(B in k.first.updates)
-      && rec2.real === rec.real && rec2.set === NOW + DAY - 76 * DAY) {
+    if (Math.round((NOW - rec.real) / DAY) === 100 && rec.set === NOW - 75 * DAY && !(B in k.first.updates)
+      && rec2.real === rec.real && rec2.set === NOW + 2 * DAY - 75 * DAY) {
       ok('the first move records the time the transcript had, and the next keeps that time while recording the new one');
     } else bad(`records: first ${JSON.stringify(k.first.updates)}, second ${JSON.stringify(k.second.updates)}`);
+    /* Every window passes every half hour. Moved to exactly the floor, each pass found the files half an hour behind it,
+       moved them again, rewrote the record, and the stylesheet every panel reloads changed with it. */
+    if (k.soon.touched === 0 && !Object.keys(k.soon.updates).length) ok('a pass half an hour after another moves no file and changes no record');
+    else bad(`a pass half an hour on touched ${k.soon.touched} file(s) and gave ${JSON.stringify(k.soon.updates)}`);
+    if (!(A in k.stale.updates)) ok('a file another window\'s pass has just moved is not taken for one written to, so its real time is kept');
+    else bad(`with a record from before another window's pass the record became ${JSON.stringify(k.stale.updates[A])}`);
     if (k.written.updates[A] === null && k.written.touched === 0) ok('once the transcript is written to, its record goes');
     else bad(`after a write the pass returned ${JSON.stringify(k.written)}`);
     if (JSON.stringify(k.first.gone) === JSON.stringify([C])) ok('a pinned conversation with no transcript left is reported gone');
     else bad(`gone after the first pass: ${JSON.stringify(k.first.gone)}`);
-    if (k.short === 5) ok('with a 10-day cleanup, the margin is half of it');
+    if (k.short === 4) ok('with a 10-day cleanup, the margin is half of it');
     else bad(`with a 10-day cleanup the transcript was left ${k.short} days old`);
     if (!k.empty.gone.length && (k.root || !k.partial.gone.length)) {
       ok('nothing is reported gone when no transcript at all was found, or a project folder could not be read');
@@ -5335,7 +5347,7 @@ console.log('\nthe pins\' margin setting');
   let m;
   try { m = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); }
   catch (e) { m = { error: e.message }; }
-  if (m.age === 60) ok('a pass with a 30-day margin under a 90-day retention gives an 80-day-old pinned file the age of 60 days');
+  if (m.age === 59) ok('a pass with a 30-day margin under a 90-day retention gives an 80-day-old pinned file the age of 59 days, a day inside the margin');
   else bad(`the margin pass gave ${JSON.stringify(m)}`);
   if (sp.pageData({ pinned: [], times: {} }, 90, 30)[2] === 30) ok('the page is told the same margin, for the pin\'s hover text');
   else bad('the page was not told the margin');

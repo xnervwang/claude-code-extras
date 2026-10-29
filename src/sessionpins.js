@@ -10,8 +10,10 @@
  * outputs stored beside it under <session>/tool-results by the same test, file by file. The modification time is the
  * whole test: nothing in a transcript or beside it exempts one, short of being a Claude Desktop session. So a pinned
  * conversation's files are given a later modification time before they reach that age: a file older than the cutoff
- * plus a margin is set to exactly that. As old as it can be while still kept, because the session list orders by the
- * same time and shows it as when the conversation was last active.
+ * plus a margin is set to a day past that. Close to as old as it can be while still kept, because the session list
+ * orders by the same time and shows it as when the conversation was last active; the day is what lets the passes after
+ * it - every half hour, in every window - leave it alone. Set to exactly the floor, every pass found it half an hour
+ * behind and moved it again, rewrote the record of it, and with that the stylesheet every panel reloads.
  *
  * The pins are kept in one file in this extension's global storage, on the machine that holds the transcripts, and every
  * window reads and writes that same file. Each write reads the file again just before it and replaces it whole, so two
@@ -22,8 +24,8 @@
  * wrote to it, its own time is the true one again, and the record goes.
  */
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const { claudeDir, projectsDir, projectFolders, SESSION, writeAtomic } = require('./claude-files');
 
 const DAY = 86400000;
 /* The cleanup's own default when no settings file sets one. */
@@ -32,12 +34,18 @@ const DEFAULT_DAYS = 30;
    window has to have been open at least once in that time. Half the retention when that is shorter, so a short retention
    still leaves room and a long margin never puts a file's time at or past now. */
 const MARGIN_DAYS = 14;
-/* A modification time read back can differ from the one written by the file system's rounding. */
-const SAME_TIME_MS = 2000;
+/* How far past the floor a moved file is set: a day, or a quarter of the retention when that is shorter, so the file is
+   still well clear of now. */
+const STEP_MS = DAY;
+/*
+ * A file newer by more than this than both the time recorded for it and the time a pass would give it now was written to,
+ * and its own time is the true one again. Any pass in any window gives a time within minutes of this one's, so an hour
+ * tells the two apart. Compared with the recorded time alone, another window's pass - made between this one reading the
+ * record and looking at the file - read as a write, and the real time was thrown away; compared with the time a pass
+ * would give alone, so did every moved file once a shorter margin or a longer retention moved that time back.
+ */
+const WRITTEN_MS = 60 * 60 * 1000;
 const FILE = 'session-pins.json';
-const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const claudeDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
 /* The folder Claude Code reads managed settings from on this platform. */
 function managedDir(platform = process.platform) {
@@ -85,12 +93,10 @@ function read(file) {
   return { pinned, times };
 }
 
-/* Written beside the file and renamed over it, so a reader in another window sees the old pins or the new ones. */
+/* Replaced whole, so a reader in another window sees the old pins or the new ones. */
 function write(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ pinned: data.pinned, times: data.times }, null, 1) + '\n');
-  fs.renameSync(tmp, file);
+  writeAtomic(file, JSON.stringify({ pinned: data.pinned, times: data.times }, null, 1) + '\n');
 }
 
 /**
@@ -108,23 +114,25 @@ function setPinned(file, id, on) {
 
 /**
  * Gives each pinned conversation's transcript, and each tool output stored for it, a later modification time once it
- * is older than the cutoff plus the margin, and works out what the record of real times should become.
+ * is older than the cutoff plus the margin, and works out what the record of real times should become. A file past that
+ * floor is left alone, so a pass soon after another touches nothing and changes nothing in the pins file.
  *
  * Touches nothing in the pins file: the caller folds `updates` and `gone` into what the file holds by then. `gone` is
  * only filled when every project folder could be read and at least one transcript was found in them, so a folder that
  * fails to list, or a projects folder that is not the one Claude Code writes to, cannot unpin anything.
  */
-async function keep({ ids, times = {}, days, margin = MARGIN_DAYS, projectsDir = path.join(claudeDir(), 'projects'), now = Date.now() }) {
+async function keep({ ids, times = {}, days, margin = MARGIN_DAYS, projectsDir: projects = projectsDir(), now = Date.now() }) {
   const out = { pinned: ids.size, found: 0, touched: 0, errors: 0, updates: {}, gone: [] };
   const recorded = Object.keys(times);
   if (!ids.size && !recorded.length) return out;
-  const floor = new Date(now - days * DAY + marginDays(days, margin) * DAY);
+  const floor = now - days * DAY + marginDays(days, margin) * DAY;
+  const given = new Date(floor + Math.min(STEP_MS, days * DAY / 4));
   const fsp = fs.promises;
   const refresh = async (file) => {
     try {
       const st = await fsp.stat(file);
-      if (!st.isFile() || !(st.mtime < floor)) return null;
-      await fsp.utimes(file, st.atime, floor);
+      if (!st.isFile() || !(st.mtimeMs < floor)) return null;
+      await fsp.utimes(file, st.atime, given);
       out.touched++;
       return st;
     } catch (_) { out.errors++; return null; }
@@ -140,11 +148,9 @@ async function keep({ ids, times = {}, days, margin = MARGIN_DAYS, projectsDir =
   };
   const seen = new Set();
   let complete = true, transcripts = 0;
-  let projects;
-  try { projects = await fsp.readdir(projectsDir, { withFileTypes: true }); } catch (_) { return out; }
-  for (const p of projects) {
-    if (!p.isDirectory()) continue;
-    const dir = path.join(projectsDir, p.name);
+  const folders = projectFolders(projects);
+  if (!folders) return out;
+  for (const dir of folders) {
     let names;
     try { names = await fsp.readdir(dir); } catch (_) { out.errors++; complete = false; continue; }
     for (const n of names) {
@@ -159,12 +165,12 @@ async function keep({ ids, times = {}, days, margin = MARGIN_DAYS, projectsDir =
       if (rec) {
         let st;
         try { st = await fsp.stat(file); } catch (_) { out.errors++; continue; }
-        if (st.mtimeMs > rec.set + SAME_TIME_MS) { out.updates[id] = null; rec = null; }
+        if (st.mtimeMs > Math.max(rec.set, given.getTime()) + WRITTEN_MS) { out.updates[id] = null; rec = null; }
       }
       if (!pinned) continue;
       out.found++;
       const before = await refresh(file);
-      if (before) out.updates[id] = { real: rec ? rec.real : before.mtimeMs, set: floor.getTime() };
+      if (before) out.updates[id] = { real: rec ? rec.real : before.mtimeMs, set: given.getTime() };
       await refreshTree(path.join(dir, id, 'tool-results'), 1);
     }
   }
@@ -203,5 +209,5 @@ function pageData(data, days, margin = MARGIN_DAYS) {
 
 module.exports = {
   retentionDays, marginDays, keep, applyPass, read, write, setPinned, pageData, managedDir,
-  FILE, SESSION, MARGIN_DAYS, SAME_TIME_MS, DAY,
+  FILE, SESSION, MARGIN_DAYS, STEP_MS, WRITTEN_MS, DAY,
 };
