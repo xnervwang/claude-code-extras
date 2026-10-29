@@ -2,7 +2,7 @@
   "name": "claude-code-extras",
   "displayName": "Work Plan for Claude Code",
   "description": "The work plan tracks open work for each Claude Code conversation, even after compaction. Also adds timestamps and reply figures.",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "publisher": "xnervwang",
   "license": "BSD-3-Clause",
   "icon": "images/icon.png",
