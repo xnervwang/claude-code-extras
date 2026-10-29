@@ -123,7 +123,7 @@
     if (!ordered) promptTs.sort(function(a, b){ return a - b; });
     var tC = clock();
     var msgs = document.querySelectorAll(ASSIST);
-    // Both are already in hand, so aiming the text observer costs one walk up to the scrolling ancestor and a compare.
+    // Both are already in hand, so aiming the text observer costs a containment check while it is still on their scroller.
     aimText(bubbles[0] || msgs[0]);
     // A reply behind the newest ones whose owner this sweep records settles on the next one, which is asked for rather
     // than left to whatever changes the page next: the page may well not change again until a reply grows.
