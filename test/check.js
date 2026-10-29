@@ -251,6 +251,15 @@ console.log('\nwhat the page costs, in a browser');
         ok(`switched off while open, a sub-agent view shows again the ${offLive.hiddenInView} messages it hid, and the info, mute, Focus view and view buttons go`);
       } else bad('switching the footer additions off while open: ' + (offLive.error || JSON.stringify({ picked: offLive.picked,
         hidden: [offLive.hiddenInView, offLive.hiddenAfterFlip], controls: [offLive.controlsBeforeFlip, offLive.controlsAfterFlip] })));
+      /* A mark is worked out once and kept, so a switch that changes what a mark holds has to reach the marks already made:
+         every message and reply, not only the newest and the last sixty. */
+      const marksLive = harness.run(browser, { turns: SHORT, subagentTurn: 5, flip: ['timestamps', 'subAgentTags'] });
+      const tb = marksLive.timesBeforeFlip || {}, ta = marksLive.timesAfterFlip || {};
+      if (!marksLive.error && tb.text === tb.replies && tb.prompt === tb.prompts && marksLive.tagsBeforeFlip > 0
+          && ta.text === 0 && ta.first === 0 && ta.prompt === 0 && ta.firstFigures === ta.replies && marksLive.tagsAfterFlip === 0) {
+        ok(`the time and the sub-agent tags switched off while open leave all ${ta.replies} replies and ${ta.prompts} messages, figures kept`);
+      } else bad('switching the time and the sub-agent tags off while open: ' + (marksLive.error || JSON.stringify(
+        { before: tb, after: ta, tags: [marksLive.tagsBeforeFlip, marksLive.tagsAfterFlip] })));
       const tocLive = harness.run(browser, { turns: SHORT, flip: ['toc'] });
       if (!tocLive.error && tocLive.railBeforeFlip && tocLive.keyMovedBeforeFlip && !tocLive.railAfterFlip && !tocLive.keyMovedAfterFlip) {
         ok('the contents list switched off while open takes its rail away, and the , and . keys stop stepping');
@@ -887,6 +896,12 @@ console.log('\na reopened conversation');
   const kept = box.out.statAt(first, false);
   if (/ctx 96%/.test(kept)) ok('a reply that was once the newest keeps its own figures afterwards');
   else bad(`a reply that was once the newest later showed "${kept}"`);
+  // ...each of them shown by its switch as it is now: the share switched off afterwards leaves that reply too.
+  box.isOff = (k) => k === 'contextShare';
+  const keptShareOff = box.out.statAt(first, false);
+  box.isOff = () => false;
+  if (!/ctx/.test(keptShareOff) && /cost \$3\.20/.test(keptShareOff)) ok(`and a switch turned off later reaches those figures too (${keptShareOff})`);
+  else bad(`with the context share switched off later, that reply showed "${keptShareOff}"`);
 }
 
 /* The usage meter's switch reaches the two edits that keep the meter on screen: with it off, the meter is Claude Code's

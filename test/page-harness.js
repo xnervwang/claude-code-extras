@@ -406,15 +406,21 @@ const PHASES = String.raw`
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '.', bubbles: true }));
     later(400, function(){ done(sc.scrollTop !== 0); });
   };
+  var tags = function(){
+    var ls = document.querySelectorAll('[data-cce-ts]'), n = 0;
+    for (var i = 0; i < ls.length; i++) if (ls[i].getAttribute('data-cce-ts').indexOf('#') >= 0) n++;
+    return n;
+  };
   var flipped = function(){
     R.railBeforeFlip = railShown(); R.controlsBeforeFlip = controls();
+    readTimes('BeforeFlip'); R.tagsBeforeFlip = tags();
     pressNext(function(moved){
       R.keyMovedBeforeFlip = moved;
       later(1500, function(){
         document.documentElement.setAttribute('data-cce-test-flip', '');
         window.__cceTestRev = 2;
         later(4500, function(){
-          readTimes('AfterFlip');
+          readTimes('AfterFlip'); R.tagsAfterFlip = tags();
           R.hiddenAfterFlip = countHidden(); R.railAfterFlip = railShown(); R.controlsAfterFlip = controls();
           pressNext(function(movedAfter){ R.keyMovedAfterFlip = movedAfter; next(); });
         });

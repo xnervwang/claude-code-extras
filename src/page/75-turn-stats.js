@@ -24,13 +24,14 @@
     return base(pick) === base(served) ? served + '[1m]' : served;
   };
 
-  // Context share and estimated spend as they stood when a reply settled. Keyed by the message object
-  // in a WeakMap, so entries disappear when the message itself is collected - no growing table.
+  // Context share and estimated spend as they stood when a reply settled, kept as the two parts so that each is shown or
+  // left out by its switch as it is now rather than as it was then. Keyed by the message object in a WeakMap, so
+  // entries disappear when the message itself is collected - no growing table.
   var atMsg = new WeakMap();
   var figuresNow = function(){
     var u = sessionRef && sessionRef.usageData && sessionRef.usageData.value;
-    if (!u) return '';
-    var out = '';
+    if (!u) return null;
+    var share = '', cost = '';
     /*
      * Share of the WHOLE context window, which is what /context reports - deliberately not the panel meter's figure.
      *
@@ -46,12 +47,18 @@
     var win = u.contextWindow || 0;
     // Short labels on purpose: this string is prepended to every reply's first line, so each extra
     // character comes out of the body width. Spell them out here if you prefer the long form.
-    if (win > 0 && !isOff('contextShare')) out += 'ctx ' + Math.round(u.totalTokens / win * 100) + '%';
-    if (typeof u.totalCost === 'number' && u.totalCost > 0 && !isOff('cost')) {
-      var c = u.totalCost < 1 ? u.totalCost.toFixed(3) : u.totalCost.toFixed(2);
-      out += (out ? ' ' + String.fromCharCode(183) + ' ' : '') + 'cost $' + c;
+    if (win > 0) share = 'ctx ' + Math.round(u.totalTokens / win * 100) + '%';
+    if (typeof u.totalCost === 'number' && u.totalCost > 0) {
+      cost = 'cost $' + (u.totalCost < 1 ? u.totalCost.toFixed(3) : u.totalCost.toFixed(2));
     }
-    return out;
+    return share || cost ? { share: share, cost: cost } : null;
+  };
+  var figuresText = function(f){
+    if (!f) return '';
+    var bits = [];
+    if (f.share && !isOff('contextShare')) bits.push(f.share);
+    if (f.cost && !isOff('cost')) bits.push(f.cost);
+    return bits.join(' ' + String.fromCharCode(183) + ' ');
   };
   /*
    * Which model answered and with what effort, taken from the reply itself: the model the panel recorded on the
@@ -78,8 +85,8 @@
     if (!m) return '';
     var fig = atMsg.get(m);
     if (live) { fig = figuresNow(); if (fig) atMsg.set(m, fig); }
-    var who = whoFor(m, effort);
-    return fig && who ? fig + ' ' + String.fromCharCode(183) + ' ' + who : (fig || who || '');
+    var text = figuresText(fig), who = whoFor(m, effort);
+    return text && who ? text + ' ' + String.fromCharCode(183) + ' ' + who : (text || who || '');
   };
   var dur = function(ms){
     if (!(ms > 0)) return '';

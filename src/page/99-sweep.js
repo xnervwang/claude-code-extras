@@ -30,6 +30,18 @@
     var held = document.querySelectorAll('[' + ATTR + ']');
     for (var k = 0; k < held.length; k++) marked.add(held[k]);
   };
+  /* The switches whose state is part of a mark. Marks are worked out once and kept, so when one of these changes - or
+     the marks as a whole are switched - everything is worked out again on that sweep; otherwise only the newest message
+     and the last LIVE_TAIL replies would follow, and the rest would keep what they showed before. */
+  var MARK_SWITCHES = ['timestamps', 'subAgentTags', 'replyDuration', 'contextShare', 'cost', 'modelName'];
+  var markSig = '';
+  var marksFollowSwitches = function(){
+    var s = isOn() ? '1' : '0';
+    for (var i = 0; i < MARK_SWITCHES.length; i++) s += isOff(MARK_SWITCHES[i]) ? '1' : '0';
+    if (s === markSig) return;
+    if (markSig) resetMarks();
+    markSig = s;
+  };
 
   var stamp = function(){
     var tA = clock(), wF = WALK.fiber, wT = WALK.text;
@@ -43,6 +55,7 @@
     var found = seed ? findSession(seed) : null;
     if (found && found !== sessionRef) useSession(found);
     viewFilterOff();
+    marksFollowSwitches();
     if (!isOn()) { sweep(); return; }
     if (sessionRef) indexTitles(sessionRef);
     for (var i = 0; i < bubbles.length; i++) {
