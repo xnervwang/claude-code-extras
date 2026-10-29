@@ -2290,83 +2290,21 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`summarise gave ${JSON.stringify(rows)}`);
     fs.rmSync(root, { recursive: true, force: true });
   }
-  /* The host-busy watcher is temporary and spread over three files, so each place that carries it has to say so. A
-     diagnostic whose own code no longer admits to being one is a diagnostic nobody will ever remove: the comment is the
-     only thing that licenses deleting it, and by the time anyone wonders, the investigation it belongs to will be months
-     past. Checked rather than trusted because the three are easy to edit apart. */
+  /* The host-busy watcher and the record of patch writes served one investigation, which traced the slow first message
+     to the editor's webview service-worker cache. A per-second timer in every window is not something to keep for its
+     own sake, so nothing of either is left: not the code, not its call sites, not its lines in the report. */
   {
-    const marked = [
-      ['src/openlatency.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
-      ['extension.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
-      ['src/page/99-sweep.js', 'TEMPORARY, part of one investigation'],
-      ['src/openlatency.js', 'TEMPORARY, part of the investigation at writeAtomic'],
-      ['extension.js', 'TEMPORARY, part of that same investigation'],
-    ];
-    const bare = marked.filter(([f, mark]) =>
-      !fs.readFileSync(path.join(__dirname, '..', f), 'utf8').includes(mark));
-    if (!bare.length) ok(`all ${marked.length} parts of the host-busy diagnostic say they are temporary`);
-    else bad(`no longer marked temporary, so nothing licenses removing it: ${bare.map(([f]) => f).join(', ')}`);
-  }
-
-  /* Whether this extension host was running during a wait, which the wait alone cannot say: silence either side of a long
-     one means either the host was blocked and could not act, or it was idle with nothing to act on, and those are opposite
-     halves of the machine. A clock read on a timer tells them apart. Folding consecutive overruns matters as much as
-     noticing them - a host stalled for a minute would otherwise write sixty records of one stall. */
-  {
-    let t = 1000000;
-    const w = L.lagWatcher({ now: () => t, write: false, version: 'v1' });
-    const step = (ms) => { t += ms; return w.tick(); };
-    step(1000); step(1000);                        // on time: nothing to say
-    if (!w.records.length && !w.open) ok('a timer arriving on time records nothing');
-    else bad(`an on-time timer produced ${JSON.stringify(w.records)}`);
-
-    step(1000 + 5000);                             // five seconds late
-    step(1000 + 30000);                            // thirty more, same stretch
-    if (w.open && !w.records.length) ok('a stretch of delay is held open rather than written once per tick');
-    else bad(`mid-stall state was ${JSON.stringify({ open: w.open, records: w.records })}`);
-
-    step(1000);                                    // on time again, so the stretch closes
-    const r = w.records[0];
-    if (w.records.length === 1 && r.what === 'hostbusy' && r.blocked === 35000 && r.ticks === 2) {
-      ok('it comes out as one record naming the whole span');
-    } else bad(`the closed stretch was ${JSON.stringify(w.records)}`);
-
-    // The report has to put the two kinds together, since reading one against the other is the entire point.
-    const together = L.report([
-      { what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: '2026-10-01T01:05:22.831Z' }, r,
-    ]).join('\n');
-    if (together.includes('busy') && together.includes('waiting on the panel')) {
-      ok('the report lists host-busy stretches beside the waits, and says what no overlap means');
-    } else bad('the report did not mention both kinds');
-
-    const alone = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
-    if (alone.includes('waiting on the panel rather than on this side')) ok('with no busy stretch it says so outright');
-    else bad('a report with no busy stretch left the reader to infer it');
-  }
-  /* Replacing a patched file during startup is the leading suspect for a panel that takes minutes to open, so the write
-     has to be recorded with its offset into startup - the wall clock cannot say whether it landed while the panel was
-     still reading. Written every time rather than past a threshold: a write that did NOT coincide with a slow open is
-     exactly as informative, and which of the two happens is the whole question. */
-  {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-patchrec-'));
-    const r = L.patchRecord({ dir, version: 'v1', target: 'Claude Code panel', intoStartup: 1840, took: 95,
-      at: '2026-10-01T05:00:00.000Z', pid: 999 });
-    const back = L.readAll(dir);
-    if (r && back.length === 1 && back[0].what === 'patched' && back[0].intoStartup === 1840 && back[0].took === 95) {
-      ok('replacing a patched file is recorded with its offset into startup and how long it took');
-    } else bad(`the write record came back as ${JSON.stringify(back)}`);
-
-    const withWait = L.report(back.concat([
-      { what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: '2026-10-01T05:00:01.000Z' },
-    ])).join('\n');
-    if (withWait.includes('into startup') && withWait.includes('script reached at')) {
-      ok('and is printed against the waits, pointing at the panel number to compare it with');
-    } else bad('the report did not put the write beside the waits');
-
-    const none = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
-    if (none.includes('no patched file has been replaced')) ok('a window that wrote nothing and still waited says so, which rules the write out');
-    else bad('a report with no write left the reader to infer it');
-    fs.rmSync(dir, { recursive: true, force: true });
+    const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+    const lat = fs.readFileSync(path.join(__dirname, '..', 'src', 'openlatency.js'), 'utf8');
+    const left = [
+      ['lagWatcher in src/openlatency.js', /lagWatcher|INTERVAL_MS|LAG_FLOOR_MS/.test(lat)],
+      ['patchRecord in src/openlatency.js', /patchRecord/.test(lat)],
+      ['their report lines', /hostbusy|into startup/.test(lat)],
+      ['their call sites in extension.js', /lagWatcher|patchRecord|lagTimer|startedAt|intoStartup/.test(ext)],
+    ].filter(([, there]) => there).map(([what]) => what);
+    const said = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
+    if (!left.length && !/busy|patched file/.test(said)) ok('the temporary host-busy watcher and patch-write record are gone, call sites and report lines included');
+    else bad('still there: ' + left.concat(/busy|patched file/.test(said) ? ['the report still talks about them'] : []).join(', '));
   }
   {
     /* Closing the window is the other moment the count is complete; losing it would lose the denominator. */
@@ -2475,7 +2413,7 @@ console.log('\nthe waiting, paired out of the official log');
     const dir = path.join(root, 'rec');
     /* `now` has to sit near the log's own clock, or the pending request is older than the ceiling and gets written off
        as one that never arrived - which is the other new behaviour, not this one. */
-    const t0 = Date.parse('2026-09-29T21:00:05Z');
+    const t0 = new Date(2026, 8, 29, 21, 0, 5).getTime();
     fs.writeFileSync(log, at('0:00.000', clicked) + '\n');
     const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 808, thresholdMs: 10000 });
     fs.appendFileSync(log, at('1:30.000', up) + '\n');
@@ -2509,7 +2447,7 @@ console.log('\nthe waiting, paired out of the official log');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat8-'));
     const log = path.join(root, 'Claude VSCode.log');
     const dir = path.join(root, 'rec');
-    const t0 = Date.parse('2026-09-29T21:00:00Z');
+    const t0 = new Date(2026, 8, 29, 21, 0, 0).getTime();
     fs.writeFileSync(log, at('0:00.000', clicked) + '\n');
     const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 909, thresholdMs: 10000 });
     fs.appendFileSync(log, at('0:30.000', 'AuthManager initialized') + '\n');
@@ -2544,6 +2482,108 @@ console.log('\nthe waiting, paired out of the official log');
     if (rows.length === 2 && worst.version === 'b' && worst.n === 1 && rows[1].n === 2) {
       ok('versions are summarised apart, worst first, which is what shows a regression');
     } else bad(`summarise gave ${JSON.stringify(rows)}`);
+  }
+  /* The log's times are the extension host's local time with no zone. Read as UTC, a click five seconds old on a machine
+     in Los Angeles was a request seven hours old, written off at once as a panel that never opened. Run in a zone that is
+     not UTC, since this machine may well be in UTC. */
+  {
+    const script = `
+      const fs = require('fs'), os = require('os'), path = require('path');
+      const L = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'openlatency.js'))});
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lattz-'));
+      try {
+        const now = Date.now(), d = new Date(now - 5000), p = (n, w = 2) => String(n).padStart(w, '0');
+        const local = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':'
+          + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3);
+        const log = path.join(root, 'Claude VSCode.log');
+        fs.writeFileSync(log, local + ' [info] ' + ${JSON.stringify(clicked)} + '\\n');
+        const r = L.sample({ log, dir: path.join(root, 'rec'), state: {}, version: 'v', now, pid: 1, thresholdMs: 10000 });
+        process.stdout.write(JSON.stringify({ added: r.added, waiting: !!(r.state.pending && r.state.pending.asked),
+          parsed: L.lines(local + ' [info] x')[0].ms, want: d.getTime(), offset: d.getTimezoneOffset() }));
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }`;
+    let z;
+    try { z = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: Object.assign({}, process.env, { TZ: 'America/Los_Angeles' }) })); }
+    catch (e) { z = { error: e.message }; }
+    if (z.error) bad('reading the log in another time zone failed: ' + z.error);
+    else if (!z.offset) note('no time zone data here to run in America/Los_Angeles, so the local reading was not tried away from UTC');
+    else if (z.parsed === z.want && !z.added.length && z.waiting) ok('the log\'s times are read as local time, so a click five seconds ago is still waiting rather than hours old');
+    else bad(`in America/Los_Angeles a click 5s old read as ${z.parsed} (want ${z.want}) and gave ${JSON.stringify(z.added)}`);
+  }
+  /* Each window writes a log of its own and a reload starts a new one. A request still open in one log belongs to it: a
+     panel that comes up in another window's log answers a different request. */
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat10-'));
+    const one = path.join(root, 'exthost1', 'Claude VSCode.log'), two = path.join(root, 'exthost2', 'Claude VSCode.log');
+    fs.mkdirSync(path.dirname(one)); fs.mkdirSync(path.dirname(two));
+    const t0 = new Date(2026, 8, 29, 21, 0, 5).getTime();
+    fs.writeFileSync(one, at('0:00.000', clicked) + '\n');
+    fs.writeFileSync(two, at('0:20.000', up) + '\n');
+    const first = L.sample({ log: one, dir: path.join(root, 'rec'), state: {}, version: 'v1', now: t0, pid: 1111, thresholdMs: 10000 });
+    const second = L.sample({ log: two, dir: path.join(root, 'rec'), state: first.state, version: 'v1', now: t0 + 20000, pid: 1111, thresholdMs: 10000 });
+    if (first.state.pending.asked && !second.added.length && !second.state.pending.asked) {
+      ok('a request still open in one window\'s log is dropped rather than paired with a panel in another log');
+    } else bad(`a request carried into another log gave ${JSON.stringify(second.added)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* A request replaced by a newer one twenty minutes later was not waited on for twenty minutes: past the ceiling it is
+       a window left alone, as it is for a panel that does come up that late. */
+    const line = (clock, msg) => `2026-09-29 21:${clock} [info] ${msg}`;
+    const waits = one([line('00:00.000', clicked), line('20:00.000', clicked), line('20:05.000', up)].join('\n'));
+    if (!waits.some((w) => w.what === 'abandoned') && waits.some((w) => w.what === 'panel' && w.waited === 5000)) {
+      ok('a request replaced by another past the ceiling is a window left alone, not a twenty-minute abandonment');
+    } else bad(`a request replaced twenty minutes later gave ${JSON.stringify(waits)}`);
+  }
+  {
+    /* The host's own silence can start in one read and end in the next, like any other wait. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat11-'));
+    const log = path.join(root, 'Claude VSCode.log'), dir = path.join(root, 'rec');
+    const t0 = new Date(2026, 8, 29, 21, 0, 1).getTime();
+    fs.writeFileSync(log, at('0:00.000', 'AuthManager initialized') + '\n');
+    const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 1212, thresholdMs: 1000 });
+    fs.appendFileSync(log, at('0:05.000', 'Something else entirely') + '\n');
+    const second = L.sample({ log, dir, state: first.state, version: 'v1', now: t0 + 5000, pid: 1212, thresholdMs: 1000 });
+    if (second.added.length === 1 && second.added[0].what === 'host' && second.added[0].waited === 5000) {
+      ok('a silence of the host\'s that spans two reads is measured, from the last line of the first');
+    } else bad(`a silence across two reads gave ${JSON.stringify(second.added)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* The last line may still be being written when it is read. Taken as it stood, it was classified on half its text and
+       the rest of it, read next time, was no line at all. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat12-'));
+    const log = path.join(root, 'Claude VSCode.log'), dir = path.join(root, 'rec');
+    const t0 = new Date(2026, 8, 29, 21, 0, 31).getTime();
+    const head = at('0:00.000', clicked) + '\n', tail = at('0:30.000', up) + '\n';
+    fs.writeFileSync(log, head + tail.slice(0, 70));
+    const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 1313, thresholdMs: 10000 });
+    fs.appendFileSync(log, tail.slice(70));
+    const second = L.sample({ log, dir, state: first.state, version: 'v1', now: t0, pid: 1313, thresholdMs: 10000 });
+    if (first.state.size === Buffer.byteLength(head) && second.added.length === 1 && second.added[0].waited === 30000) {
+      ok('a line still being written is left for the next read, and pairs once it is whole');
+    } else bad(`a half-written line: read to ${first.state.size} of ${Buffer.byteLength(head)}, then ${JSON.stringify(second.added)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* At its size limit the editor moves the log to `.1.log` and starts a new one. What was written to the old one after
+       the last read is read from there before the new one is read from its start - whether the new one is still shorter
+       than the old offset or has already grown past it. */
+    const rotated = (grown) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat13-'));
+      const log = path.join(root, 'Claude VSCode.log'), dir = path.join(root, 'rec');
+      const t0 = new Date(2026, 8, 29, 21, 0, 1).getTime();
+      fs.writeFileSync(log, at('0:00.000', clicked) + '\n');
+      const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 1414, thresholdMs: 10000 });
+      fs.appendFileSync(log, at('0:30.000', up) + '\n');
+      fs.renameSync(log, path.join(root, 'Claude VSCode.1.log'));
+      const fresh = (at('0:40.000', 'a new log begins') + '\n').repeat(grown ? 20 : 1);
+      fs.writeFileSync(log, fresh);
+      const second = L.sample({ log, dir, state: first.state, version: 'v1', now: t0 + 40000, pid: 1414, thresholdMs: 10000 });
+      fs.rmSync(root, { recursive: true, force: true });
+      return second.added.some((w) => w.what === 'panel' && w.waited === 30000) && second.state.size === Buffer.byteLength(fresh);
+    };
+    if (rotated(false) && rotated(true)) ok('a log moved aside at its size limit is finished before the new one is read from its start');
+    else bad(`after the log was moved aside: new log shorter ${rotated(false)}, longer ${rotated(true)}`);
   }
 }
 

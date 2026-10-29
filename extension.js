@@ -160,16 +160,6 @@ function start(context, renamed) {
   const log = vscode.window.createOutputChannel('Work Plan for Claude Code');
   context.subscriptions.push(log);
   if (renamed) log.appendLine(`settings moved from ${LEGACY_PREFIX}* to ${PREFIX}*: ${renamed}`);
-  /*
-   * When this host started, so that the patch write can be placed against the panel's own startup.
-   *
-   * The panel logs how far into its startup its bundle finished evaluating; this gives the other half of the comparison -
-   * how far into the same startup we replaced that bundle. Without it the only way to line the two up was the file's
-   * modification time, which says nothing about when startup began and is gone as soon as the next write lands.
-   *
-   * TEMPORARY, part of the investigation at writeAtomic in src/webview.js. Goes when that is settled.
-   */
-  const startedAt = Date.now();
   const removed = () => context.globalState.get(REMOVED_KEY, false) === true;
   selfPath = context.extensionPath;
   /* True once the editor has marked this copy for deletion with no other version staying - an uninstall that is waiting
@@ -284,27 +274,8 @@ function start(context, renamed) {
             log.appendLine(`${label}: ${r.message}`);
             if (r.changed && !restored.includes(adapter.name)) restored.push(adapter.name);
           } else {
-            /* Where the panel's bundle is rewritten, during startup and alongside the panel loading that same file. That was
-               suspected of causing the panel that takes minutes to open, and a two-restart test ruled it out - see writeAtomic
-               in src/webview.js for the test and for why the evidence looked convincing, before suspecting it again. */
-            const intoStartup = Date.now() - startedAt;
-            const t0 = Date.now();
             const r = adapter.apply(dir, options());
-            const took = Date.now() - t0;
-            /* TEMPORARY, part of that same investigation: how far into startup the file was replaced and how long the
-               replacement took. The panel logs the other half - how far into its own startup its bundle finished
-               evaluating - and the two together say whether they overlapped, which no amount of reasoning about the file's
-               modification time could settle. Only for a write: "already patched" touches nothing, and logging it here
-               would bury the case that matters among the ones that cannot have caused anything. */
-            if (r.changed) {
-              log.appendLine(`${label}: ${r.message} - wrote at ${intoStartup}ms into this host's startup, took ${took}ms`);
-              try {
-                latency.patchRecord({ dir: latencyDir(), version: stamp(), target: adapter.name,
-                  intoStartup, took, at: new Date(t0).toISOString() });
-              } catch (_) { /* a reading that cannot be filed is not worth failing activation over */ }
-            } else {
-              log.appendLine(`${label}: ${r.message}${r.liveChanged ? ' (live settings updated)' : ''}`);
-            }
+            log.appendLine(`${label}: ${r.message}${r.liveChanged ? ' (live settings updated)' : ''}`);
             if (r.changed && !patched.includes(adapter.name)) patched.push(adapter.name);
             else if (!r.changed && r.message !== 'already patched') problems.push(`${label}: ${r.message}`);
           }
@@ -433,9 +404,12 @@ function start(context, renamed) {
     return `${ours || '?'}/${theirs || '?'}`;
   };
   const thresholdMs = () => Math.max(1, cfg().get(THRESHOLD_SETTING, 10)) * 1000;
-  /* The running count of fast opens lives here rather than in globalState: that store is shared by every window, so two
-     of them incrementing one counter would lose each other's increments - the same reason the records are a file each. */
-  let latencyState = context.globalState.get(LATENCY_KEY, {});
+  /* How far this window's log has been read, the pairings still open in it, and the running count of fast opens, all in
+     memory. Each window writes a log of its own and a reload starts a new one, so none of it means anything to another
+     window or survives a reload; kept in the store every window shares, it was carried into the wrong log and paired
+     lines that had nothing to do with each other. */
+  let latencyState = {};
+  if (context.globalState.get(LATENCY_KEY) !== undefined) context.globalState.update(LATENCY_KEY, undefined);
   function sampleLatency() {
     /* Off means nothing is read either. Stopping only the writing would leave the log being opened and parsed every
        thirty seconds, which is most of what this costs. */
@@ -448,13 +422,7 @@ function start(context, renamed) {
         version: stamp(),
         thresholdMs: thresholdMs(),
       });
-      if (r.state) {
-        latencyState = r.state;
-        /* The offset and any half-finished pairing survive a restart; a half-counted day does not, and writing the count
-           on every tick would put a store every window shares back in the path of something each counts for itself. */
-        context.globalState.update(LATENCY_KEY,
-          { file: r.state.file, size: r.state.size, pending: r.state.pending });
-      }
+      if (r.state) latencyState = r.state;
       /* Anything recorded is already past the threshold, so it is worth saying without being asked. */
       for (const w of r.added) {
         log.appendLine(`waited ${(w.waited / 1000).toFixed(1)}s for ${w.what} (${w.trigger}) at ${w.at}`);
@@ -474,37 +442,6 @@ function start(context, renamed) {
     vscode.workspace.onDidChangeConfiguration((e) => { if (e.affectsConfiguration(LATENCY_ON_SETTING)) loadWatchOff(); }),
     { dispose: () => { delete globalThis[host.LOAD_WATCH_OFF]; } },
   );
-
-  /*
-   * TEMPORARY, FOR ONE INVESTIGATION - delete with the watcher in src/openlatency.js once the panel's slow first message
-   * is understood. A per-second timer is not something this extension should carry for its own sake; it is here because
-   * one question could not be answered any other way.
-   *
-   * Whether this extension host was running during a wait, which a wait on its own cannot say.
-   *
-   * The silence either side of a 94-second wait has two opposite readings - this host blocked and unable to act, or this
-   * host idle with nothing to act on - and they point at different halves of the machine. A timer that only reads the
-   * clock tells them apart: late means this side was busy, on time through a long wait means it was free and the delay
-   * belongs to the panel.
-   *
-   * On its own interval rather than the thirty-second one above: a timer cannot measure a delay that also delayed it, and
-   * the sampling has to be finer than what it is trying to see. Under the same setting as the rest of the recording,
-   * since it is the same kind of data about the same question.
-   */
-  const lag = latency.lagWatcher({ dir: latencyDir(), version: stamp() });
-  let lastLag = null;
-  const lagTimer = setInterval(() => {
-    if (!cfg().get(LATENCY_ON_SETTING, true)) return;
-    try {
-      const over = lag.tick();
-      // Reported as a stretch ends, with its whole span, rather than once per late tick.
-      if (!over && lag.records.length && lag.records[lag.records.length - 1] !== lastLag) {
-        lastLag = lag.records[lag.records.length - 1];
-        log.appendLine(`this extension host was busy ${(lastLag.blocked / 1000).toFixed(1)}s from ${lastLag.at}`);
-      }
-    } catch (_) { /* a missed reading is not worth a message every second */ }
-  }, latency.INTERVAL_MS);
-  context.subscriptions.push({ dispose: () => clearInterval(lagTimer) });
 
   /*
    * Hand the hooks their thresholds.

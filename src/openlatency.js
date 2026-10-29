@@ -50,8 +50,11 @@ const TRIM_AT = Math.floor(KEEP * 1.5);
 /* A window's file is removed this long after that window last wrote to it. Its pid is gone by then and will be reused. */
 const STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
+/* The editor's log writes the extension host's local time with no zone, so it is read back as local time. Read as UTC it
+   is off by the zone's offset, and set against the clock in `sample` a click on a machine west of Greenwich becomes a
+   request hours old. */
 function at(m) {
-  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]);
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]).getTime();
 }
 
 /** The host's own lines, in order, as `{ ms, level, text }`. Continuation lines of the CLI's output are dropped. */
@@ -91,14 +94,19 @@ function readOut(text, pending = {}) {
      silently dropped exactly the waits worth recording - the short ones fit in one piece and the long ones did not. */
   let asked = pending.asked || null;
   let spawned = pending.spawned || null;
+  /* The host's last line of the previous piece, so that a silence spanning two reads is measured like one inside a read. */
+  let prev = pending.last || null;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const kind = kindOf(row.text);
+    const before = prev;
+    prev = { ms: row.ms, text: row.text.slice(0, 200) };
     if (kind === 'activate' || kind === 'panel-asked') {
       /* A fresh request while one is still pending, long after it: the first panel never came up and was given up on.
          Quick succession is two panels opening together instead, so the gap has to be worth calling a wait - and that
-         same gap is how long someone sat there before closing it, which is the only figure this case can report. */
-      if (asked && row.ms - asked.ms >= HOST_FLOOR_MS) {
+         same gap is how long someone sat there before closing it, which is the only figure this case can report. Past
+         the ceiling it is a window left alone, as it is for a panel that does come up. */
+      if (asked && row.ms - asked.ms >= HOST_FLOOR_MS && row.ms - asked.ms <= CEILING_MS) {
         out.push({
           what: 'abandoned', trigger: asked.trigger,
           at: new Date(asked.ms).toISOString(), waited: row.ms - asked.ms,
@@ -131,17 +139,17 @@ function readOut(text, pending = {}) {
     }
     /* The host's own silence. Only between two of its own lines, since a gap ending at a webview message is one of the
        pairings above and would otherwise be counted twice. */
-    if (i > 0 && kind === null && kindOf(rows[i - 1].text) === null) {
-      const waited = row.ms - rows[i - 1].ms;
+    if (before && kind === null && kindOf(before.text) === null) {
+      const waited = row.ms - before.ms;
       if (waited >= HOST_FLOOR_MS && waited <= CEILING_MS) {
         out.push({
-          what: 'host', trigger: rows[i - 1].text.slice(0, 60),
-          at: new Date(rows[i - 1].ms).toISOString(), waited,
+          what: 'host', trigger: before.text.slice(0, 60),
+          at: new Date(before.ms).toISOString(), waited,
         });
       }
     }
   }
-  return { waits: out, pending: { asked, spawned } };
+  return { waits: out, pending: { asked, spawned, last: prev } };
 }
 
 /**
@@ -240,12 +248,43 @@ function prune(dir, now = Date.now(), keepFile = '') {
   return gone;
 }
 
+/*
+ * The whole lines a file holds from `from` up to `size`, and the offset just past the last of them.
+ *
+ * The log is being appended to while this runs, so the last line may be half written; it is left for the next read
+ * rather than taken as it stands, which would classify it on half its text and lose the rest. A short read is ordinary
+ * for the same reason, and only what the read got is decoded - the rest of an unsafely allocated buffer is whatever was
+ * in that memory.
+ */
+function wholeLines(file, from, size) {
+  if (size <= from) return { text: '', to: from };
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(size - from);
+    const got = fs.readSync(fd, buf, 0, buf.length, from);
+    const end = buf.lastIndexOf(0x0a, got - 1);
+    if (end === -1) return { text: '', to: from };
+    return { text: buf.toString('utf8', 0, end + 1), to: from + end + 1 };
+  } finally { fs.closeSync(fd); }
+}
+
+/* Where the editor moves a log once it reaches its size limit: `Claude VSCode.log` becomes `Claude VSCode.1.log`, and the
+   ones before it move up a number. */
+function rotatedFile(log) {
+  return log.replace(/(\.log)?$/, '.1$1');
+}
+
 /**
  * Read whatever is new in the log and append the slow waits to this window's record file. Returns what was added.
  *
- * `state` is read and written by the caller, since where it is kept belongs to the extension: `{ file, size }` is the
- * log this offset refers to and how far it had been read, plus the day's running count of fast opens and which day that
- * is. A log that shrank or changed name is read from the start.
+ * `state` is held by the caller between calls, in memory: `{ file, ino, size }` is the log this offset refers to and how
+ * far it had been read, `pending` the pairings still open in that log, and the day's running count of fast opens and
+ * which day that is. Each window writes a log of its own, and a reload starts a new one, so nothing of this belongs in
+ * storage the windows share: an offset or a pending request carried into another window's log pairs lines that have
+ * nothing to do with each other.
+ *
+ * A log that was moved aside at its size limit is finished first, from where it had been read, and then the new one is
+ * read from its start. Any other change of file starts from the beginning, with nothing pending.
  *
  * Fast opens are held in that state and written out as one line when the day turns, so an ordinary day leaves a line
  * rather than a line per open. A host that goes away before the day turns loses that day's count for that window, which
@@ -257,33 +296,29 @@ function sample(opts) {
   const into = recordFile(dir, pid);
   let stat;
   try { stat = fs.statSync(log); } catch (_) { return { added: [], state, why: 'no log for this window yet' }; }
-  const from = (state.file === log && state.size <= stat.size) ? state.size : 0;
+  const same = state.file === log && Number.isFinite(state.size);
+  const moved = same && ((state.ino && state.ino !== stat.ino) || state.size > stat.size);
+  const from = same && !moved ? state.size : 0;
+  const pendingIn = same ? (state.pending || {}) : {};
   /* Nothing new still has to hand the state back whole. Returning a trimmed copy loses the half-finished pairing and the
      day's count, so the wait in progress right now would end up with no beginning. */
-  const carry = (size) => ({
-    file: log, size, day: state.day, counts: state.counts, version: state.version || version,
-    pending: state.pending,
-  });
-  if (from === stat.size) return { added: [], state: carry(stat.size), why: '' };
-  /* One byte before the offset comes too, and it is what says whether the offset sat on a line boundary. Without it a
-     resume that landed exactly after a newline discards the first whole line - which is usually the trigger, so the
-     wait that follows pairs with nothing and the file silently records fewer waits than happened. */
-  const back = from > 0 ? 1 : 0;
-  let text = '';
+  if (!moved && from === stat.size) {
+    return { added: [], state: Object.assign({}, state, { file: log, ino: stat.ino, size: from, pending: pendingIn }), why: '' };
+  }
+  let text = '', size = from;
   try {
-    const fd = fs.openSync(log, 'r');
-    try {
-      const buf = Buffer.allocUnsafe(stat.size - from + back);
-      /* Only as far as the read actually got. The log is being appended to while this runs, so a short read is ordinary,
-         and the rest of an unsafely allocated buffer is whatever was in that memory - which parses as garbage. */
-      const got = fs.readSync(fd, buf, 0, buf.length, from - back);
-      text = buf.toString('utf8', 0, got);
-    } finally { fs.closeSync(fd); }
+    if (moved) {
+      const old = rotatedFile(log);
+      let rest = null;
+      try { rest = fs.statSync(old); } catch (_) { /* moved somewhere this does not look */ }
+      if (rest && (state.ino ? rest.ino === state.ino : rest.size >= state.size)) text = wholeLines(old, state.size, rest.size).text;
+    }
+    const r = wholeLines(log, from, stat.size);
+    text += r.text;
+    size = r.to;
   } catch (e) { return { added: [], state, why: 'could not read the log: ' + e.message }; }
 
-  if (back) text = text[0] === '\n' ? text.slice(1) : text.slice(text.indexOf('\n') + 1);
-
-  const read = readOut(text, state.pending || {});
+  const read = readOut(text, pendingIn);
   const pending = Object.assign({}, read.pending);
   /* A request still waiting once the ceiling has passed never arrived at all. Recorded rather than forgotten, because
      otherwise the worst case - a panel that simply does not open - is the one case that leaves nothing behind. Its
@@ -319,7 +354,7 @@ function sample(opts) {
   }
   return {
     added,
-    state: { file: log, size: stat.size, day: today, counts, version, pending },
+    state: { file: log, ino: stat.ino, size, day: today, counts, version, pending },
     why: '',
   };
 }
@@ -338,91 +373,6 @@ function flush(opts) {
       JSON.stringify(tallyRecord(state.day, state.version || '', state.counts)) + '\n');
   } catch (_) { return 0; }
   return Object.values(state.counts).reduce((a, b) => a + b, 0);
-}
-
-/*
- * TEMPORARY, FOR ONE INVESTIGATION. Delete this and its three call sites once the panel's slow first message is
- * understood: the watcher below, the timer in extension.js that drives it, and the stretch of report() that prints what
- * it collected. The `hostbusy` records it leaves behind are then meaningless and the reader is swept with the rest.
- *
- * It is not a feature and nobody asked for the number. It exists because one question could not be answered any other
- * way, and it earns its place only until that question is answered - a diagnostic kept past its investigation becomes
- * something later readers have to take seriously, and a per-second timer is the last thing to leave lying around in an
- * extension whose whole discipline is not costing the editor anything.
- *
- * Whether the extension host was running during a wait, which is the one thing the wait itself does not say.
- *
- * A panel that takes 94 seconds to send its first message has been seen, with the host side silent throughout, and that
- * is as far as a wait can take it: silence means either the host was blocked and could not act, or the host was idle and
- * had nothing to act on. Those point at opposite halves of the machine - ours and the panel's - and nothing recorded so
- * far told them apart.
- *
- * A timer asked for every INTERVAL_MS, timed against the clock, answers it. Delay means the host's one thread was busy
- * elsewhere; arriving on time through a long wait means the host was free and waiting on the panel, which rules this
- * side out. An interval it cannot be blamed for is not interesting, so only overruns past LAG_FLOOR_MS are written, and
- * consecutive ones are folded into a single record - a host stalled for a minute would otherwise write sixty.
- *
- * The timer does nothing but read the clock, and it is not a sweep: the cost of looking must not be the thing that makes
- * the reading worse.
- */
-const INTERVAL_MS = 1000;
-const LAG_FLOOR_MS = 2000;
-
-function lagWatcher(opts = {}) {
-  const { dir, version = '', pid = process.pid, now = () => Date.now(),
-    interval = INTERVAL_MS, floor = LAG_FLOOR_MS, write = true } = opts;
-  let last = now();
-  let run = null;
-  const out = [];
-  const tick = () => {
-    const at = now();
-    const late = at - last - interval;
-    last = at;
-    if (late < floor) {
-      // A stretch of delay has ended, so it can be written as one record naming its span.
-      if (run) {
-        const record = { seen: new Date(run.until).toISOString(), version, what: 'hostbusy',
-          at: new Date(run.from).toISOString(), blocked: run.late, ticks: run.ticks };
-        out.push(record);
-        if (write && dir) {
-          try {
-            fs.mkdirSync(dir, { recursive: true });
-            fs.appendFileSync(recordFile(dir, pid), JSON.stringify(record) + '\n');
-          } catch (_) { /* a reading that cannot be filed is not worth failing a window over */ }
-        }
-        run = null;
-      }
-      return null;
-    }
-    if (!run) run = { from: at - late - interval, until: at, late: 0, ticks: 0 };
-    run.until = at;
-    run.late += late;
-    run.ticks++;
-    return run;
-  };
-  return { tick, records: out, get open() { return run; } };
-}
-
-/*
- * TEMPORARY, part of the investigation at writeAtomic in src/webview.js. Delete with the rest of it.
- *
- * A record of replacing a patched file: how far into this host's startup it happened and how long it took. It goes in the
- * same file as the waits on purpose - a slow open and a write then sit side by side with their times, and whether they
- * overlapped is read off rather than argued about. Lining them up any other way meant the file's modification time, which
- * does not say when startup began and is overwritten by the next write.
- *
- * Written every time, not only past some threshold: a write that did NOT coincide with a slow open is exactly as
- * informative as one that did, and the whole question is which of the two happens.
- */
-function patchRecord(opts = {}) {
-  const { dir, version = '', target = '', intoStartup = 0, took = 0, at = new Date().toISOString(),
-    pid = process.pid } = opts;
-  const record = { seen: new Date().toISOString(), version, what: 'patched', target, at, intoStartup, took };
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(recordFile(dir, pid), JSON.stringify(record) + '\n');
-  } catch (_) { return null; }
-  return record;
 }
 
 /**
@@ -514,45 +464,11 @@ function report(records, thresholdMs = THRESHOLD_MS) {
       secs(r.median).padStart(8), secs(r.p90).padStart(8), secs(r.worst).padStart(8), r.version,
     ].join(' '));
   }
-  /* TEMPORARY, part of one investigation - goes with the watcher above.
-
-     Stretches where this extension host was itself busy, listed beside the waits because the point is to read one against
-     the other. A wait with no stretch overlapping it was a wait on the panel, with this side free the whole time - which
-     is the half of the question a wait alone cannot answer. */
-  const busy = records.filter((r) => r && r.what === 'hostbusy' && typeof r.blocked === 'number');
-  if (busy.length) {
-    out.push('', `  this extension host was itself busy ${busy.length} time(s), newest last:`);
-    for (const r of busy.slice(-12)) {
-      out.push(`    ${r.at}  busy ${secs(r.blocked)} over ${r.ticks} second(s) of sampling`);
-    }
-    out.push('    a wait that overlaps none of these was spent waiting on the panel, not on this side');
-  } else {
-    out.push('', '  this extension host has not been busy for a measurable stretch, so any wait above was spent'
-      + ' waiting on the panel rather than on this side');
-  }
-  /* TEMPORARY, part of that same investigation: every time a patched file was replaced, against the waits above. A wait
-     in the same window as a write is the case the investigation is about; a window that wrote nothing and still waited
-     rules the write out. Printed with the startup offset because that, not the wall clock, is what says whether the write
-     landed while the panel was still loading its bundle. */
-  const writes = records.filter((r) => r && r.what === 'patched');
-  if (writes.length) {
-    out.push('', `  a patched file was replaced ${writes.length} time(s), newest last:`);
-    for (const r of writes.slice(-12)) {
-      out.push(`    ${r.at}  ${r.target || 'a target'}: ${r.intoStartup}ms into startup, took ${r.took}ms`);
-    }
-    out.push('    compare with the panel\'s own "script reached at Nms": overlapping numbers mean the panel was reading'
-      + ' the file as it was replaced');
-  } else {
-    out.push('', '  no patched file has been replaced in the records kept here, so nothing above can be blamed on a'
-      + ' replacement during startup');
-  }
   return out;
 }
 
 module.exports = {
   lines, kindOf, readOut, split, tallyRecord, addCounts, dayOf, logFile, recordFile, readRecords, readAll,
-  lagWatcher, INTERVAL_MS, LAG_FLOOR_MS,
-  patchRecord,
   prune, trim, sample, flush, summarise, report,
   HOST_FLOOR_MS, CEILING_MS, THRESHOLD_MS, KEEP, TRIM_AT, STALE_MS, NAME,
 };
