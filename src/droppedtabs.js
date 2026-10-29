@@ -39,8 +39,18 @@ function find({ record, shown, labels, strip = (t) => t, exists = transcriptExis
     const t = strip(label);
     left.set(t, (left.get(t) || 0) + 1);
   }
+  const entries = Array.isArray(record) ? record : [];
+  /* A conversation shown now answers for its own restored tab first. Its label left in the count was taken by the next
+     entry of the same title, and a dropped tab sharing a title with a restored one was never reopened. */
+  const answered = new Set();
+  for (const e of entries) {
+    if (!e || typeof e.sessionId !== 'string' || !open.has(e.sessionId) || answered.has(e.sessionId)) continue;
+    answered.add(e.sessionId);
+    const t = strip(typeof e.title === 'string' ? e.title : '');
+    if (left.get(t) > 0) left.set(t, left.get(t) - 1);
+  }
   const out = [], seen = new Set();
-  for (const e of Array.isArray(record) ? record : []) {
+  for (const e of entries) {
     if (!e || typeof e.sessionId !== 'string' || !SESSION.test(e.sessionId) || e.inferred === true) continue;
     if (seen.has(e.sessionId) || open.has(e.sessionId)) continue;
     seen.add(e.sessionId);

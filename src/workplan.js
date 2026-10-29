@@ -17,9 +17,9 @@
  *
  * A session id is unique across every project on a machine, so it is the whole name and no grouping directory is needed.
  *
- * The ordinary read is of one such file - the conversation in front of the reader, named by the host itself. Reading the
- * whole directory instead is kept only for the case where nothing can say which conversation that is: it put every
- * conversation on the machine into every window at once, and its cost grew with how many conversations had ever existed.
+ * The only read is of one such file - the conversation in front of the reader, named by the host itself. The directory
+ * is never read whole for the view: that would put every conversation on the machine into every window at once, at a
+ * cost that grows with how many conversations have ever existed.
  *
  * Nothing here writes those files. The shape below is the whole contract between the two halves:
  *
@@ -135,7 +135,6 @@ function node(raw, depth, budget) {
   };
 }
 
-/** Every work plan on this machine, most recently written first. */
 /** One plan, or null when there is no readable file for that session. */
 function readOne(session) {
   const file = path.join(planDir(), session + '.json');
@@ -145,7 +144,7 @@ function readOne(session) {
     if (!st.isFile() || !st.size) return null;
     body = fs.readFileSync(file, 'utf8');
   } catch (_) { return null; }
-  const entry = { session, file, mtime: st.mtimeMs, title: '', label: session.slice(0, 8), nodes: [], error: '' };
+  const entry = { session, file, title: '', nodes: [], error: '' };
   let parsed;
   try { parsed = JSON.parse(body); }
   catch (e) {
@@ -155,8 +154,6 @@ function readOne(session) {
     return entry;
   }
   entry.title = text(parsed && parsed.title, 120);
-  // What a conversation is called in the view, decided here so that no two places can disagree about it.
-  if (entry.title) entry.label = entry.title;
   const budget = { left: MAX_NODES };
   if (parsed && Array.isArray(parsed.nodes)) {
     for (const raw of parsed.nodes) {
@@ -168,16 +165,14 @@ function readOne(session) {
 }
 
 /**
- * The plan of one conversation, named by its session.
+ * The plan of one conversation, named by its session, or null when it keeps none.
  *
- * This is the whole of the ordinary case: the view shows the conversation in front of the reader, so it reads that one
- * file and no other. Reading the directory instead put every conversation on the machine into every window - the same
- * content in each, none of it the one being looked at - and made the work grow with how many conversations exist.
+ * The view shows the conversation in front of the reader, so it reads that one file and no other. Reading the directory
+ * instead put every conversation on the machine into every window - the same content in each, none of it the one being
+ * looked at - and made the work grow with how many conversations exist.
  */
 function readPlan(session) {
-  if (!session) return [];
-  const one = readOne(session);
-  return one ? [one] : [];
+  return session ? readOne(session) : null;
 }
 
 /* A plan younger than this is left alone whatever the transcripts say. Its real job is not to wait longer - a transcript

@@ -1100,6 +1100,17 @@ console.log('\nreply efforts');
 }
 
 console.log('\nverified builds');
+/* A machine that verified nothing would have written "Verified against Claude Code no build." and then read it back as a
+   build called "no build". Nothing is written for none, and that sentence claims none. */
+{
+  const was = fs.readFileSync(supported.README_FILE, 'utf8');
+  const wrote = supported.syncReadme([]);
+  const same = fs.readFileSync(supported.README_FILE, 'utf8') === was;
+  const none = supported.readmeClaims('Verified against Claude Code no build.\n');
+  if (!wrote && same && Array.isArray(none) && !none.length) ok('an empty record is not written into the README, and the sentence for none reads back as none');
+  else bad(`with nothing verified: wrote ${wrote}, README unchanged ${same}, the sentence for none read as ${JSON.stringify(none)}`);
+  if (!same) fs.writeFileSync(supported.README_FILE, was);
+}
 if (process.argv.includes('--without-version-record')) {
   note('asked to skip the record check, which is what writing the record does while it runs this suite');
 } else {
@@ -3043,11 +3054,24 @@ console.log('\nwhose plan the tree shows');
   if (seen === 1) ok('a focused conversation is read by id alone');
   else bad(`readPlan takes ${seen} args, expected 1`);
 
-  /* No path that shows all plans is left in the view: readPlans is gone, and the fallback is the empty list. */
+  /* No path that shows all plans is left in the view: readPlans is gone, and the fallback is no plan. */
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan-view.js'), 'utf8');
-  if (/this\.focus \? readPlan\(this\.focus\) : \[\]/.test(src) && !/readPlans/.test(src)) {
+  if (/this\.focus \? readPlan\(this\.focus\) : null/.test(src) && !/readPlans/.test(src)) {
     ok('with no conversation in focus the tree is empty, never every conversation on the machine');
   } else bad('the view can still fall back to showing all plans');
+  /* One plan or none is all the view is ever given, so what drew several - a heading row per conversation with its own
+     summary and menu value, a count "across N conversations", a picker of plans - drew nothing anyone could reach. */
+  const extText = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const leftovers = [
+    ['a heading row per conversation', /kind: 'root'|cceWorkPlanRoot|function summary\(/.test(src)],
+    ['a second list of the open states', /const OPEN = \[/.test(src)],
+    ['a count across conversations', /across \$\{/.test(extText)],
+    ['a picker of plans', /showQuickPick/.test(extText)],
+    ['a modification time nothing reads', /mtime: st\.mtimeMs/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan.js'), 'utf8'))],
+  ].filter(([, there]) => there).map(([what]) => what);
+  const one = plan.readPlan('');
+  if (!leftovers.length && one === null) ok('the view holds one plan or none, with nothing left of drawing several');
+  else bad(`still there: ${leftovers.join(', ')}${one === null ? '' : '; readPlan without a session gave ' + JSON.stringify(one)}`);
   if (!/readPlans/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan.js'), 'utf8'))) {
     ok('the show-everything function is gone, not just unreferenced');
   } else bad('readPlans is still defined in workplan.js');
@@ -3807,6 +3831,56 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
   if (/registrationGone\(\)/.test(body) && /!undone/.test(body) && /&& staged\) return;/.test(body)) {
     ok('registering consults Claude Code\'s records and the staged copy, not only its own memory');
   } else bad('syncPlugin still trusts only its remembered state');
+  /* The staged copy is there or not by its contents: one cut short, or being replaced by another window, is there. */
+  if (/const staged = pluginInstall\.digest\(to\) === stamp;/.test(body)) ok('the staged copy counts as in place only when its contents are the plugin\'s');
+  else bad('the staged copy is still taken as in place because its folder exists');
+
+  /* Every window stages into the same folder. With one shared name for the copy being made, two of them emptied each
+     other's copy halfway; and a window finding the place already taken by the same plugin has nothing left to do. */
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-stage-'));
+    const from = path.join(root, 'from'), to = path.join(root, 'storage', 'claude-plugin');
+    fs.mkdirSync(path.join(from, 'agent-work-plan'), { recursive: true });
+    fs.writeFileSync(path.join(from, 'agent-work-plan', 'a.txt'), 'plugin');
+    const copies = [];
+    const realCp = fs.cpSync, realRename = fs.renameSync;
+    let threw = '';
+    try {
+      fs.cpSync = (a, b, o) => { copies.push(String(b)); return realCp.call(fs, a, b, o); };
+      pi.stage(from, to);
+      pi.stage(from, to);
+      // Another window puts the same plugin in place between this one's copy and its rename.
+      fs.renameSync = (a, b) => { realCp.call(fs, from, b, { recursive: true }); return realRename.call(fs, a, b); };
+      try { pi.stage(from, to); } catch (e) { threw = e.message; }
+    } finally { fs.cpSync = realCp; fs.renameSync = realRename; }
+    const left = fs.readdirSync(path.dirname(to));
+    if (copies.length === 3 && new Set(copies).size === 3 && copies.every((c) => c.includes('.' + process.pid + '.'))
+      && !threw && left.join() === 'claude-plugin' && pi.digest(to) === pi.digest(from)) {
+      ok('the plugin is staged through a folder of this process\'s own, and finding the same plugin already in place is not a failure');
+    } else bad(`staging: copies ${JSON.stringify(copies.map((c) => path.basename(c)))}, threw ${JSON.stringify(threw)}, left ${JSON.stringify(left)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  /* The command that stops the plugin loading asked for Claude Code's binary with no installs to look in, so it never
+     found one and the command never did anything. A stand-in binary records what it is told. */
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-disable-'));
+    const bin = path.join(root, 'install', pi.BINARY);
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.writeFileSync(bin, '#!/bin/sh\necho "$@" > "$(dirname "$0")/told"\necho done\n');
+    fs.chmodSync(bin, 0o755);
+    const script = `
+      const pi = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'plugin-install.js'))});
+      pi.disable([${JSON.stringify(path.join(root, 'install'))}]).then((r) => process.stdout.write(JSON.stringify(r)));`;
+    let r;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); } catch (e) { r = { error: e.message }; }
+    let told = '';
+    try { told = fs.readFileSync(path.join(path.dirname(bin), 'told'), 'utf8').trim(); } catch (_) { /* never run */ }
+    if (r.ok && told === `plugin disable ${pi.REF}` && /pluginInstall\.disable\(claudeFolders\(\)\)/.test(ext)) {
+      ok('stopping the plugin loading finds Claude Code\'s binary in its installs and tells it to disable the plugin');
+    } else bad(`disabling the plugin gave ${JSON.stringify(r)}, the binary was told ${JSON.stringify(told)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /* ── 23. every call on the work plan view is one it has ──
@@ -5329,6 +5403,15 @@ console.log('\ntabs VS Code did not restore');
       === JSON.stringify([[id(1)], [id(2)], [], [id(2)], [id(2)], [], []])) {
     ok('a dropped tab whose conversation runs in another window waits, is reopened once it runs nowhere, and is let go if it gets shown here meanwhile');
   } else bad(`the waiting tabs went ${JSON.stringify([ids(sp2.now), ids(sp2.later), ids(st1.ready), ids(st1.waiting), ids(st2.ready), ids(st3.ready), ids(st3.waiting)])}`);
+  /* Two conversations with one title, one restored in a tab and the other dropped: the restored tab is the shown one's,
+     so its label cannot also stand for the dropped one, which is reopened. */
+  {
+    const twins = [{ sessionId: id(1), title: 'Same title' }, { sessionId: id(2), title: 'Same title' }];
+    const back = dropped.find({ record: twins, shown: [id(1)], labels: ['Same title'], strip, exists: () => true });
+    if (JSON.stringify(back.map((t) => t.sessionId)) === JSON.stringify([id(2)])) {
+      ok('a dropped tab sharing its title with a restored one is reopened, the restored tab counted for its own conversation');
+    } else bad(`with two of one title, one restored and one dropped, reopened ${JSON.stringify(back)}`);
+  }
   const many = Array.from({ length: 30 }, (_, i) => ({ sessionId: `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`, title: 't' + i }));
   if (dropped.find({ record: many, shown: [], labels: [], exists: () => true }).length === dropped.LIMIT) ok(`no more than ${dropped.LIMIT} are reopened at once`);
   else bad('the limit on reopened tabs did not hold');

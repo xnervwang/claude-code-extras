@@ -271,6 +271,8 @@ function start(context, renamed) {
       })
       .catch((e) => log.appendLine('reply efforts: ' + e.message));
   };
+  /* Where Claude Code's own command line can be found: its binary ships inside each install. */
+  const claudeFolders = () => Array.from(new Set(ADAPTERS.flatMap((adapter) => installs(adapter))));
   const scanBackground = () => {
     if (removed() || !enabled() || uninstalling() || replaced() || switchedOff().includes('backgroundSessions')) return;
     const id = activeChat();
@@ -374,7 +376,7 @@ function start(context, renamed) {
         + 'description it loads every session. Your existing plans are left alone.',
         { modal: true }, 'Stop loading it');
       if (yes !== 'Stop loading it') return;
-      const r = await pluginInstall.disable();
+      const r = await pluginInstall.disable(claudeFolders());
       log.appendLine('work plan plugin: ' + r.said);
       log.show(true);
       if (r.ok) await offerReload('The work plan plugin will stop loading in conversations started after a reload.');
@@ -514,14 +516,10 @@ function start(context, renamed) {
   const paintBadge = () => {
     /* Counted over what the view is showing, not over the machine. A count that includes conversations the tree does not
        show says a number the reader cannot find, which reads as the tree being broken rather than the count being wider. */
-    const plans = workplan.shown();
-    let open = 0;
-    for (const plan of plans) {
-      const n = countOpen(plan.nodes);
-      open += (n.todo || 0) + (n.discussing || 0);
-    }
-    const where = plans.length === 1 ? 'in this conversation' : `across ${plans.length} conversation(s)`;
-    view.badge = open ? { value: open, tooltip: `${open} still open ${where}` } : undefined;
+    const plan = workplan.shown();
+    const n = plan ? countOpen(plan.nodes) : {};
+    const open = (n.todo || 0) + (n.discussing || 0);
+    view.badge = open ? { value: open, tooltip: `${open} still open in this conversation` } : undefined;
   };
   /* The id of the conversation in front of the reader, or empty. The patched field writes it on every change; before
      anything has, or when the panel has no conversation open, it is not a string and reads as empty - the view shows
@@ -932,15 +930,15 @@ function start(context, renamed) {
     const undone = state.registered === true && pluginInstall.registrationGone();
     const registered = state.registered === true && !undone;
     /* The registration points at the copy in this extension's global storage, and the editor deletes that folder along
-       with an uninstalled extension - so the registration can outlive the files it names. */
-    const staged = fs.existsSync(path.join(to, pluginInstall.PLUGIN));
+       with an uninstalled extension - so the registration can outlive the files it names. Compared by its contents, not
+       by its being there: a copy cut short, or one another window was replacing, is there and is not this plugin. */
+    const staged = pluginInstall.digest(to) === stamp;
     if (!retry && registered && state.stamp === stamp && staged) return;
     if (undone) log.appendLine('work plan plugin: registering again - Claude Code lists neither it nor its marketplace, which is what uninstalling this extension leaves');
     // A registered plugin on a new version of this extension needs its files refreshed, not registering again: the
     // path stays where it is, and re-running the install is what would undo a deliberate uninstall.
     const refreshOnly = !retry && registered;
-    const dirs = [];
-    for (const adapter of ADAPTERS) for (const d of installs(adapter)) dirs.push(d);
+    const dirs = claudeFolders();
     const claudeBin = pluginInstall.findClaude(dirs);
     if (!claudeBin && !refreshOnly) {
       const problem = { step: 'finding Claude Code\'s own command line', said: 'Looked for ' + pluginInstall.BINARY + ' in ' + (dirs.length || 'no') + ' install(s) of Claude Code.' };
@@ -1024,21 +1022,10 @@ function start(context, renamed) {
       vscode.window.showInformationMessage(row.title, { modal: true, detail: head.concat(['', body]).join('\n') });
     }),
     registerCommand('openWorkPlanFile', async (element) => {
-      let file = element && element.plan && element.plan.file;
+      const file = (element && element.plan && element.plan.file) || (workplan.shown() && workplan.shown().file);
       if (!file) {
-        const plans = workplan.plans;
-        if (!plans.length) {
-          vscode.window.showInformationMessage('Work Plan for Claude Code: no conversation on this machine is keeping a work plan.');
-          return;
-        }
-        if (plans.length === 1) file = plans[0].file;
-        else {
-          const pick = await vscode.window.showQuickPick(
-            plans.map((p) => ({ label: p.label, description: p.session, file: p.file })),
-            { title: 'Which work plan?' });
-          if (!pick) return;
-          file = pick.file;
-        }
+        vscode.window.showInformationMessage('Work Plan for Claude Code: the conversation in front of you is not keeping a work plan.');
+        return;
       }
       await vscode.window.showTextDocument(vscode.Uri.file(file));
     }),
