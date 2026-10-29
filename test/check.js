@@ -2886,6 +2886,19 @@ console.log('\nwhat the injected block says about the work in hand');
     else bad(`with nothing open: injected ${allClosed.text.length} bytes, mark ${JSON.stringify(allClosed.mark)}`);
   }
   {
+    /* Cut newest first and depth first, the block once let the newest row's subtree take every line it had, and the other
+       open rows at the top went out of sight with nothing to say they were there. */
+    const kids = Array.from({ length: 60 }, (_, i) => ({ title: 'kid' + i, state: 'todo' }));
+    const text = inject([{ title: 'older', state: 'todo' }, { title: 'old', state: 'waiting' },
+      { title: 'newest', state: 'doing', children: kids }]).text;
+    const drawn = text.split('\n').filter((l) => /^\s*[?o>~=+x] [0-9.]+\. /.test(l)).length;
+    if (rowOf(text, 'older') && rowOf(text, 'old') && rowOf(text, 'newest') && drawn === 40
+      && /^\.\.\. 23 more open rows in the file$/m.test(text)) {
+      ok('every open row at the top is drawn, rows under them are cut to fit, and the block says how many were left out');
+    } else bad(`with 60 rows under the newest of three: ${drawn} drawn, top rows ${['older', 'old', 'newest'].map((t) => !!rowOf(text, t))}, `
+      + `last line ${JSON.stringify(text.split('\n').pop())}`);
+  }
+  {
     /* The file is edited by hand, so anything can stand where a row's children belong, and a walk that trusted it raised
        on every prompt until the file was fixed. */
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-inj-'));

@@ -34,7 +34,8 @@ sys.dont_write_bytecode = True
 from plan_path import OPEN_STATES, any_in, children, epoch, listed, plan_file, row_command, settings, write_turn
 
 GLYPH = {"discussing": "?", "todo": "o", "doing": ">", "waiting": "~", "parked": "=", "done": "+", "dropped": "x"}
-# Enough for a plan a person reads; a runaway file must not turn every turn into a wall of text.
+# Enough for a plan a person reads; a runaway file must not turn every turn into a wall of text. Rows at the top level
+# are drawn whatever this says, and it is the rows under them that are cut (see rows).
 MAX_ROWS = 40
 # The two states a row is meant to leave soon, so how long one has been in either is worth saying: a row `doing` for
 # three days is not being done, and nothing else on the row shows that. Measured on the machine this was written on, the
@@ -50,42 +51,74 @@ def age(seconds):
     return "%dd" % (seconds // 86400)
 
 
-def rows(nodes, depth, out, now, prefix=""):
-    """Render the open rows, each numbered by where it sits in the file.
+def shown(node):
+    """Whether a row is drawn: it has a title, and it is open or something under it is. A closed row is kept only while
+    something under it is still open, since that is what says where to return to."""
+    return (isinstance(node, dict) and bool(str(node.get("title", "")).strip())
+            and (node.get("state", "todo") in OPEN_STATES or any_open(children(node))))
+
+
+def open_below(node):
+    """How many open rows drawing `node` would show, itself included."""
+    if not shown(node):
+        return 0
+    return int(node.get("state", "todo") in OPEN_STATES) + sum(open_below(k) for k in children(node))
+
+
+def numbered(nodes, prefix):
+    """The rows newest first, each with its number.
+
+    Newest first, the same way the tree view draws them, while the number still comes from the real position: rows are
+    only appended, so the end of the file is the current work, and when rows have to be cut the oldest go first.
+    """
+    return list(reversed([("%s%d" % (prefix + "." if prefix else "", i + 1), node)
+                          for i, node in enumerate(listed(nodes))]))
+
+
+def line(node, num, depth, now):
+    state = node.get("state", "todo")
+    note = str(node.get("note", "")).strip()
+    said = str(state)
+    if state in TIMED:
+        since = epoch(node.get("since"))
+        if since is not None and now >= since:
+            said += " for " + age(int(now - since))
+    # The dot is only in what is drawn; `num` stays bare because children are numbered from it.
+    return "%s%s %s. %s%s" % ("  " * depth, GLYPH.get(state, "o"), num, str(node.get("title", "")).strip(),
+                              "   [%s%s]" % (said, " · " + note if note else ""))
+
+
+def rows(nodes, now, limit=MAX_ROWS):
+    """The open rows as lines, each numbered by where it sits in the file, and how many open rows did not fit.
 
     The number is what a person says to point at a row, so it comes from the file rather than from what is on screen:
     closed rows are skipped when drawing but still counted, or finishing one would renumber everything after it and a
     number quoted yesterday would mean a different row today. The same numbers appear in the tree view, computed the same
     way, because two places disagreeing about which row is 3 would be worse than neither showing a number.
+
+    Every top-level row is drawn, and the rows under them share what is left of `limit`, newest first. Cutting depth
+    first instead let the newest row's subtree take every line, and the other open work at the top went out of sight with
+    nothing to say it was there.
     """
-    # Newest first, the same way the tree view draws them, while the number still comes from the real position: rows are
-    # only appended, so the end of the file is the current work. Reversing here also means the cap below drops the oldest
-    # rows rather than the newest, which is the half worth keeping.
-    numbered = [("%s%d" % (prefix + "." if prefix else "", i + 1), node)
-                for i, node in enumerate(listed(nodes))]
-    for num, node in reversed(numbered):
-        if len(out) >= MAX_ROWS:
-            return
-        if not isinstance(node, dict):
+    top = [(num, node) for num, node in numbered(nodes, "") if shown(node)]
+    room = [max(0, limit - len(top))]
+    out, left = [], [0]
+    for num, node in top:
+        out.append(line(node, num, 0, now))
+        below(children(node), 1, out, now, num, room, left)
+    return out, left[0]
+
+
+def below(nodes, depth, out, now, prefix, room, left):
+    for num, node in numbered(nodes, prefix):
+        if not shown(node):
             continue
-        state = node.get("state", "todo")
-        title = str(node.get("title", "")).strip()
-        if not title:
+        if room[0] <= 0:
+            left[0] += open_below(node)
             continue
-        kids = children(node)
-        # A closed row is kept only while something under it is still open, since that is what says where to return to.
-        if state not in OPEN_STATES and not any_open(kids):
-            continue
-        note = str(node.get("note", "")).strip()
-        said = str(state)
-        if state in TIMED:
-            since = epoch(node.get("since"))
-            if since is not None and now >= since:
-                said += " for " + age(int(now - since))
-        # The dot is only in what is drawn; `num` stays bare because children are numbered from it.
-        out.append("%s%s %s. %s%s" % ("  " * depth, GLYPH.get(state, "o"), num, title,
-                                      "   [%s%s]" % (said, " · " + note if note else "")))
-        rows(kids, depth + 1, out, now, num)
+        room[0] -= 1
+        out.append(line(node, num, depth, now))
+        below(children(node), depth + 1, out, now, num, room, left)
 
 
 def any_open(nodes):
@@ -127,10 +160,11 @@ def main():
     if isinstance(prompt, str) and prompt:
         write_turn(path, {"prompt": prompt, "began": now, "changes": 0, "reminded": False})
     nodes = listed(plan.get("nodes"))
-    out = []
-    rows(nodes, 0, out, now)
+    out, left = rows(nodes, now)
     if not out:
         return 0
+    if left:
+        out.append("... %d more open row%s in the file" % (left, "" if left == 1 else "s"))
     n = counts(nodes)
     head = " · ".join("%d %s" % (n[s], s) for s in OPEN_STATES if n.get(s))
     closed = n.get("done", 0) + n.get("dropped", 0)
