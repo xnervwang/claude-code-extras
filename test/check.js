@@ -2095,6 +2095,11 @@ console.log('\nwhat the Stop hook says, and how often');
       'ls -d ~/x > /dev/null 2>&1; echo ok',
       'git log --format="%h" -S "foo" | tail -3',
       'git status --short',
+      "awk '$3 > 5' f",
+      "grep -n 'p->next' x.c",
+      "jq '.items | length > 3' f",
+      'python3 -c "open(\'agents.json\').read()"',
+      "git log | grep 'rm '",
     ];
     const writes = [
       'echo hi > /tmp/a', 'echo hi >> notes.txt', 'git commit -m x', 'git add .',
@@ -2117,6 +2122,11 @@ console.log('\nwhat the Stop hook says, and how often');
     else bad(`read-only commands counted as changes: ${JSON.stringify(wrongly)}`);
     if (!missed.length) ok(`${writes.length} writing commands are all seen as changes`);
     else bad(`writing commands counted as read-only: ${JSON.stringify(missed)}`);
+    /* The longer list, quoted text and here-documents included, is the judgement's own. */
+    const own = cp.spawnSync('python3', [path.join(path.dirname(hook), 'changes.py'), '--selftest'], { encoding: 'utf8' });
+    const out = (own.stdout || '') + (own.stderr || '');
+    if (own.status === 0 && /all checks pass/.test(out)) ok(`changes.py: ${out.split('\n').filter((l) => /^PASS /.test(l)).join(', ').replace(/PASS /g, '')}`);
+    else bad(`changes.py: ${out.split('\n').filter((l) => /^FAIL|Error|Traceback/.test(l)).join(' | ') || out.slice(-300)}`);
   }
   /* Reading the plan has to count, or the reminder cannot be answered at all: reading leaves no mark on the file, so a
      turn that looked and a turn that forgot look identical from the file's age, and the reminder repeats for the rest of

@@ -9,6 +9,7 @@ about each batch of calls - so it is written once. Two copies of a judgement thi
 alarm at a time, and the two reminders would then disagree about the same call with nothing saying which was right.
 """
 import re
+import sys
 
 # Tools that change something by definition. Everything not named here - reading, searching, fetching, measuring - is a
 # turn looking at the world rather than altering it, and owes the plan nothing.
@@ -17,17 +18,46 @@ CHANGING_TOOLS = ("Write", "Edit", "NotebookEdit")
 # uncertain cases are resolved towards silence: a command this misses makes a reminder miss a turn, while a command it
 # wrongly catches puts the reminder back on the turns it was just taken off.
 #
-# The redirection branch is the delicate one, because `>` is a redirect in a shell and a comparison everywhere else, and
-# a heredoc script is passed as one argument so both meanings turn up in the same string. It therefore excludes `2>&1`
-# and `>/dev/null`, which appear in commands that only read, and `>=` and `=>`, which are not redirects at all - a
-# `count >= 4` inside an embedded script read as a write and put the reminder back on turns that had changed nothing.
+# These are tried on the command as the shell reads it (see shell_words): text in quotes and in here-documents is an
+# argument or a script, not a command, and `awk '$3 > 5'`, `grep 'p->next'` and `grep 'rm '` all read as writes while it
+# was left in. The redirection branch is the delicate one even so, because `>` is a redirect in a shell and a comparison
+# everywhere else: it has to stand where a shell starts a word, may carry a descriptor (`2> err.log`), and is not one
+# when it points at another descriptor (`2>&1`), at /dev/, or at a number, which is a comparison in arithmetic.
 CHANGING_SHELL = re.compile(
     r"\bgit\s+(commit|add|push|mv|rm|apply|checkout|reset|revert|tag|stash)\b"
     r"|\b(tee|mkdir|rmdir|touch|mv|cp|rm|chmod|chown|ln|truncate|install)\s"
     r"|\bsed\s+-i"
-    r"|(?<![>=])>>?\s*(?!/dev/)[^&=\s|]"
-    r"|\bopen\([^)]*['\"][wa]"
+    r"|(?:^|(?<=[\s|;&]))\d?>>?\s*(?![\d&=(-]|/dev/)[^\s|;&]"
 )
+# A file opened for writing, in a script passed inline or through a here-document, so it is tried on the whole command.
+# Only the mode says it writes: open(path) and open(path, "rb") read, and a file name that happens to begin with a w or
+# an a says nothing.
+WRITING_OPEN = re.compile(
+    r"\bopen\(\s*(?:[^,()'\"]|'[^']*'|\"[^\"]*\"|\([^()]*\))+,\s*(?:mode\s*=\s*)?['\"][^'\"]*[wax]"
+    r"|\bopen\([^)]*\bmode\s*=\s*['\"][^'\"]*[wax]"
+    r"|\.open\(\s*(?:mode\s*=\s*)?['\"][^'\"]*[wax]"
+)
+HEREDOC = re.compile(r"(?<!<)<<(?!<)-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*")
+QUOTED = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
+
+
+def shell_words(command):
+    """`command` with each here-document's body left out and each quoted string made a single word.
+
+    The word stands in for the string rather than nothing, so `> "out file"` is still a redirect with a target.
+    """
+    out, pos = [], 0
+    while True:
+        m = HEREDOC.search(command, pos)
+        if not m:
+            out.append(command[pos:])
+            break
+        out.append(command[pos:m.end()])
+        end = re.compile(r"^[ \t]*%s[ \t]*$" % re.escape(m.group(2)), re.M).search(command, m.end())
+        if not end:
+            break
+        pos = end.end()
+    return QUOTED.sub("Q", "".join(out))
 
 
 def changes(name, tool_input):
@@ -36,5 +66,62 @@ def changes(name, tool_input):
         return True
     if name == "Bash" and isinstance(tool_input, dict):
         command = tool_input.get("command")
-        return isinstance(command, str) and bool(CHANGING_SHELL.search(command))
+        return isinstance(command, str) and bool(
+            CHANGING_SHELL.search(shell_words(command)) or WRITING_OPEN.search(command))
     return False
+
+
+READS = (
+    "awk '$3 > 5' f",
+    "grep -n 'p->next' x.c",
+    "jq '.items | length > 3' f",
+    "python3 -c \"open('agents.json').read()\"",
+    "git log | grep 'rm '",
+    "python3 -c \"if n >= 4: print(1)\"",
+    "python3 -c \"if a <= b and c => d: pass\"",
+    "grep -c foo bar | sed 's/^/  /'",
+    "node test/check.js 2>&1 | tail -1",
+    "ls -d ~/x > /dev/null 2>&1; echo ok",
+    "git log --format=\"%h\" -S \"foo\" | tail -3",
+    "git status --short",
+    "echo done >&2",
+    "(( n > 5 )) && echo big",
+    "python3 - <<'EOF'\nimport json\nrows = json.load(open('a.json'))\nprint(len([r for r in rows if r['n'] > 3]))\nEOF",
+    "python3 -c \"print(open('w.txt', 'rb').read())\"",
+)
+WRITES = (
+    "echo hi > /tmp/a",
+    "echo hi >> notes.txt",
+    "git commit -m x",
+    "git add .",
+    "cp a b",
+    "rm -rf build",
+    "sed -i \"s/a/b/\" f",
+    "mkdir -p out && touch out/x",
+    "make 2> err.log",
+    "make &> build.log",
+    "echo x > \"out file.txt\"",
+    "cat > notes.md <<'EOF'\nthe count >= 4 and a > b\nEOF",
+    "git commit -m \"$(cat <<'EOF'\nFix the thing\nEOF\n)\"",
+    "python3 -c \"open('out.txt', 'w').write('x')\"",
+    "python3 -c \"open(os.path.join(d, f), mode='a').write('x')\"",
+    "python3 - <<'EOF'\nfrom pathlib import Path\nPath('x').open('w').write('y')\nEOF",
+    "python3 fix.py > plan.json",
+)
+
+
+def selftest():
+    wrong = [c for c in READS if changes("Bash", {"command": c})]
+    missed = [c for c in WRITES if not changes("Bash", {"command": c})]
+    for c in wrong:
+        print("FAIL read-only, counted as a change: %r" % c)
+    for c in missed:
+        print("FAIL a change, counted as read-only: %r" % c)
+    print("PASS %d read-only commands" % (len(READS) - len(wrong)))
+    print("PASS %d changing commands" % (len(WRITES) - len(missed)))
+    print("all checks pass" if not wrong and not missed else "%d checks FAILED" % (len(wrong) + len(missed)))
+    return 1 if wrong or missed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(selftest() if "--selftest" in sys.argv else 0)
