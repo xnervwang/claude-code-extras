@@ -1868,6 +1868,69 @@ console.log('\none live stylesheet, several windows');
       + ` (in script: ${edge}, defaults on: ${onByDefault}, absent when on: ${notInSheet}, off when asked: ${offWhenAsked})`);
   }
 
+  /* Two windows writing at once. One writes the stylesheet while another writes a conversation's efforts in between its
+     write and its move of the revision image; each moves only its own number, so neither puts back the other's number
+     from before that move. */
+  {
+    const inst = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-rev-race-'));
+    const wv = path.join(inst, 'webview');
+    fs.mkdirSync(wv);
+    const revOf = () => {
+      const t = fs.readFileSync(path.join(wv, 'claude-code-extras.rev.svg'), 'utf8');
+      return [Number(/width="(\d+)"/.exec(t)[1]), Number(/height="(\d+)"/.exec(t)[1])];
+    };
+    const sid = 'eeeeeeee-2222-4333-8444-555555555555';
+    const effort = path.join(wv, webview.EFFORT_PREFIX + sid + '.css');
+    const realWrite = fs.writeFileSync, realRename = fs.renameSync;
+    /* Runs `other` once, the moment the first temporary file for `file` has been written. */
+    const meanwhile = (file, other) => {
+      let done = false;
+      fs.writeFileSync = function (f, ...rest) {
+        const out = realWrite.call(fs, f, ...rest);
+        if (!done && String(f).startsWith(file + '.')) { done = true; other(); }
+        return out;
+      };
+      return () => done;
+    };
+    try {
+      webview.writeLive(inst, { enabled: true });
+      const before = revOf();
+      const raced = meanwhile(path.join(wv, 'claude-code-extras.css'), () => webview.writeEffort(inst, sid, 'first'));
+      webview.writeLive(inst, { enabled: true, userColor: '#90EE90' });
+      fs.writeFileSync = realWrite;
+      const after = revOf();
+      if (raced() && after[0] === before[0] + 1 && after[1] === before[1] + 1) {
+        ok('an efforts write landing during a stylesheet write keeps its move of the revision image, and the stylesheet keeps its own');
+      } else bad(`revisions went ${JSON.stringify(before)} -> ${JSON.stringify(after)} with an efforts write in between (raced ${raced()})`);
+
+      /* Two windows replacing the same file at the same moment: each has a temporary file of its own, so both renames
+         go through, rather than the second window's rename moving the first one's file and the first one failing. */
+      let threw = null;
+      const nested = meanwhile(effort, () => webview.writeEffort(inst, sid, 'second'));
+      try { webview.writeEffort(inst, sid, 'third'); } catch (e) { threw = e.message; }
+      fs.writeFileSync = realWrite;
+      const leftover = () => fs.readdirSync(wv).filter((n) => n.endsWith('.tmp'));
+      if (nested() && !threw && fs.readFileSync(effort, 'utf8') === 'third' && !leftover().length) {
+        ok('two windows writing one file at the same moment both succeed, and no temporary file is left behind');
+      } else bad(`two writes at once: threw ${threw}, the file holds ${JSON.stringify(fs.readFileSync(effort, 'utf8'))}, left ${JSON.stringify(leftover())}`);
+
+      let refused = 0;
+      fs.renameSync = function (from, to) {
+        if (to === effort && !refused) { refused++; const e = new Error('EBUSY: resource busy'); e.code = 'EBUSY'; throw e; }
+        return realRename.call(fs, from, to);
+      };
+      let failed = null;
+      try { webview.writeEffort(inst, sid, 'fourth'); } catch (e) { failed = e.message; }
+      fs.renameSync = realRename;
+      if (refused === 1 && !failed && fs.readFileSync(effort, 'utf8') === 'fourth' && !leftover().length) {
+        ok('a rename refused once is tried again, and the write still lands');
+      } else bad(`with one rename refused: ${failed || 'no error'}, the file holds ${JSON.stringify(fs.readFileSync(effort, 'utf8'))}, left ${JSON.stringify(leftover())}`);
+    } finally {
+      fs.writeFileSync = realWrite; fs.renameSync = realRename;
+      fs.rmSync(inst, { recursive: true, force: true });
+    }
+  }
+
   fs.rmSync(root, { recursive: true, force: true });
 }
 
@@ -2574,6 +2637,14 @@ console.log('\none switch per addition, wired at both ends');
   if (noStamps.includes('::before') && noStamps.includes('--cce-off-timestamps:1')) {
     ok('switching the time off leaves the rule that also draws the duration and figures');
   } else bad('turning off timestamps dropped the rule the other three need');
+
+  /* The main switch takes the marks away and nothing else: an addition switched off on its own stays off while the
+     marks are off, and the agent map keeps the scheduled prompts and background sessions it lists. */
+  const marksOff = webview.liveCss({ enabled: false, off: ['cost', 'toc'], tasks: [{ id: 't1' }], background: [{ id: 'b1' }] });
+  if (marksOff.includes('--cce-off-cost:1;--cce-off-toc:1;') && /--cce-schedule:"/.test(marksOff)
+      && /--cce-background:"/.test(marksOff) && !marksOff.includes('::before') && marksOff.includes('--cce-on:0')) {
+    ok('with the marks off, the switches, the scheduled prompts and the background sessions are still written');
+  } else bad(`with the marks off the stylesheet was ${JSON.stringify(marksOff)}`);
 }
 
 /* ── 14. switched off, the work plan costs nothing and keeps nothing ──
@@ -5151,6 +5222,9 @@ console.log('\nthe patch markers follow the code');
   const cases = [
     ['src/host.js', 'host.js', require('../src/host').MARK, (src) => src.replace('?"cce-pin-to-sidebar":', '?"cce-pin-to-sidebar-x":')],
     ['src/webview.js', 'webview.js', require('../src/webview').MARK, (src) => src.replace('cceWhere:cceW})}`', 'cceWhere:cceW,x:1})}`')],
+    // An edit with several shapes has no pattern or replacement of its own; one of its shapes changing counts all the same.
+    ['src/webview.js, one shape of an edit with several', 'webview.js', require('../src/webview').MARK,
+      (src) => src.replace('${row}.setToolResult(${item},${opts});', '${row}.setToolResult(${item},${opts}) ;')],
   ];
   for (const [label, file, now, edit] of cases) {
     const other = reload(file, edit);
