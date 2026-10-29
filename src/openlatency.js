@@ -94,7 +94,7 @@ function readOut(text, pending = {}) {
      silently dropped exactly the waits worth recording - the short ones fit in one piece and the long ones did not. */
   let asked = pending.asked || null;
   let spawned = pending.spawned || null;
-  /* The host's last line of the previous piece, so that a silence spanning two reads is measured like one inside a read. */
+  /* The host's last line of the previous piece, so a silence spanning two reads is measured like one inside a read. */
   let prev = pending.last || null;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];

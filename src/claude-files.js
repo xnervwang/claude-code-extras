@@ -8,8 +8,8 @@
  *
  * Several parts of the extension need the same few answers: where Claude Code's own directory is, what a session id
  * looks like, which project folder holds a conversation's transcript, which conversations still have one. Each is
- * answered here once. Written out in each part, they drifted: some honoured CLAUDE_CONFIG_DIR and some did not, and one
- * walk skipped a folder it could not read where another refused to go on.
+ * answered here once. Written out in each part they drift apart - one honouring CLAUDE_CONFIG_DIR and another not, one
+ * walk skipping a folder it cannot read where another refuses to go on - and nothing reports it.
  *
  * A transcript is read incrementally. It only grows, so each reader keeps how far it got and each pass reads what was
  * added since; only whole lines are handed over, because the last one may still be being written. Readers of the same

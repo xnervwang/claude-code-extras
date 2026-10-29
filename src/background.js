@@ -99,8 +99,8 @@ function readLine(line, ran, jobs, seen) {
  * What a link file says: the sessions found, how far the transcript was read, and when the newest of those sessions was
  * launched. `exists` says whether there was a file at all.
  *
- * Each file is kept as last read, by its modification time and size, so a pass reads only the ones that changed - and a
- * pass over a conversation whose transcript has not grown reads nothing at all. Callers do not change what they are given.
+ * Each file is kept as last read, by its modification time and size, so a pass reads only the ones that changed - and
+ * a pass over a conversation whose transcript has not grown reads nothing at all. Callers do not change what they get.
  */
 const links = new Map();
 function readLink(file) {
@@ -267,8 +267,8 @@ function launchedFor(file, link, jobs) {
  *
  * Ordered by when each conversation last launched one, newest first, which every window reads the same - so the order,
  * and through the caps the membership, do not depend on which window is asking. Not by the files' modification times:
- * a file is rewritten as its transcript is read, which says nothing about its sessions, and every rewrite reordered the
- * list and with it the stylesheet every panel reloads.
+ * a file is rewritten as its transcript is read, which says nothing about its sessions, and every rewrite would reorder
+ * the list and with it the stylesheet every panel reloads.
  */
 function collect(opts = {}) {
   const dir = opts.dir || planDir();

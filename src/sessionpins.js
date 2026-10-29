@@ -12,8 +12,8 @@
  * conversation's files are given a later modification time before they reach that age: a file older than the cutoff
  * plus a margin is set to a day past that. Close to as old as it can be while still kept, because the session list
  * orders by the same time and shows it as when the conversation was last active; the day is what lets the passes after
- * it - every half hour, in every window - leave it alone. Set to exactly the floor, every pass found it half an hour
- * behind and moved it again, rewrote the record of it, and with that the stylesheet every panel reloads.
+ * it - every half hour, in every window - leave it alone. Set to exactly the floor, every pass would find it half an hour
+ * behind and move it again, rewriting the record of it and with that the stylesheet every panel reloads.
  *
  * The pins are kept in one file in this extension's global storage, on the machine that holds the transcripts, and every
  * window reads and writes that same file. Each write reads the file again just before it and replaces it whole, so two
@@ -41,8 +41,8 @@ const STEP_MS = DAY;
  * A file newer by more than this than both the time recorded for it and the time a pass would give it now was written to,
  * and its own time is the true one again. Any pass in any window gives a time within minutes of this one's, so an hour
  * tells the two apart. Compared with the recorded time alone, another window's pass - made between this one reading the
- * record and looking at the file - read as a write, and the real time was thrown away; compared with the time a pass
- * would give alone, so did every moved file once a shorter margin or a longer retention moved that time back.
+ * record and looking at the file - would read as a write and the real time be thrown away; compared with the time a pass
+ * would give alone, so would every moved file once a shorter margin or a longer retention moves that time back.
  */
 const WRITTEN_MS = 60 * 60 * 1000;
 const FILE = 'session-pins.json';

@@ -121,7 +121,7 @@ function digest(dir) {
  * plugin and picks it up at the next one.
  *
  * The copy is made in a folder of this process's own: every window stages into the same place, and with one shared name
- * two of them emptied each other's copy halfway. A window whose copy cannot be put in place because another window has
+ * two of them empty each other's copy halfway. A window whose copy cannot be put in place because another window has
  * just put in the same plugin has nothing left to do.
  */
 function stage(from, to) {

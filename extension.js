@@ -265,7 +265,7 @@ function start(context, renamed) {
     if (!id) return;
     efforts.scan(id, opts || {})
       .then((r) => {
-        // Asked again: the scan may have finished after Remove, or after this window stopped running the installed build.
+        // Asked again: the scan may have finished after Remove, or once this window no longer runs the installed build.
         if (!r || !r.css || removed() || uninstalling() || replaced()) return;
         for (const dir of installs(webview)) webview.writeEffort(dir, id, r.css);
       })
@@ -403,8 +403,8 @@ function start(context, renamed) {
 
   /*
    * How long this window makes you wait, taken from the official extension's log rather than measured here - see
-   * src/openlatency.js for what is paired with what. It rides the half-minute timer because it costs one stat of one file
-   * when nothing has been written, and reads only the bytes appended since the last pass.
+   * src/openlatency.js for what is paired with what. It rides the half-minute timer because it costs one stat of one
+   * file when nothing has been written, and reads only the bytes appended since the last pass.
    *
    * It is deliberately not in the injected script. A readout added there once made reloading the window crash, and the
    * mechanism was never established; the panel is also the wrong side to measure from, since what is being timed is a
@@ -422,8 +422,8 @@ function start(context, renamed) {
   const thresholdMs = () => Math.max(1, cfg().get(THRESHOLD_SETTING, 10)) * 1000;
   /* How far this window's log has been read, the pairings still open in it, and the running count of fast opens, all in
      memory. Each window writes a log of its own and a reload starts a new one, so none of it means anything to another
-     window or survives a reload; kept in the store every window shares, it was carried into the wrong log and paired
-     lines that had nothing to do with each other. */
+     window or survives a reload; kept in the store every window shares, it would be carried into the wrong log and pair
+     lines that have nothing to do with each other. */
   let latencyState = {};
   if (context.globalState.get(LATENCY_KEY) !== undefined) context.globalState.update(LATENCY_KEY, undefined);
   function sampleLatency() {
@@ -483,7 +483,7 @@ function start(context, renamed) {
          them from taking turns rewriting one file, the way the live stylesheet already does. */
       if (current === next) return;
       fs.mkdirSync(dir, { recursive: true });
-      /* Replaced whole, since the hooks read it at any moment and a file written in place can be caught half-written. */
+      // Replaced whole: the hooks read it at any moment, and a file written in place can be caught half-written.
       writeAtomic(file, next);
     } catch (e) {
       log.appendLine('work plan hook settings: ' + e.message);
