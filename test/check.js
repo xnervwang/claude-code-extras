@@ -347,6 +347,10 @@ console.log('\nwhat the periodic work reads');
         const scan3 = await measure(() => bg.scan(SID, opts));
         const eff2 = await measure(() => E.scan(SID, { dir: plans, transcript }));
         const eff3 = await measure(() => E.scan(SID, { dir: plans, transcript }));
+        // Both started together, as a refresh and a switch of conversation start them, on a conversation neither has read.
+        const SID2 = 'cccccccc-1111-2222-3333-555555555555', fresh = path.join(root, SID2 + '.jsonl');
+        fs.writeFileSync(fresh, row.repeat(4096));
+        const both = await measure(() => Promise.all([bg.scan(SID2, { dir: plans, jobs, transcript: fresh }), E.scan(SID2, { dir: plans, transcript: fresh })]));
         fs.writeFileSync(path.join(plans, 'dddddddd-1111-2222-3333-444444444444.background'),
           JSON.stringify({ ids: ['1a2b3c4d'], scannedTo: 10 }));
         const collect = await measure(() => bg.collect({ dir: plans, jobs }));
@@ -364,6 +368,7 @@ console.log('\nwhat the periodic work reads');
         process.stdout.write(JSON.stringify({
           transcript: before, appended: Buffer.byteLength(more),
           scan: [scan1.bytes, scan2.bytes, scan3.bytes], efforts: [eff1.bytes, eff2.bytes, eff3.bytes], collectFiles: collect.files,
+          both: both.bytes,
           log: logBefore, logAppended: Buffer.byteLength(logMore), logReads: [log1.bytes, log2.bytes, log3.bytes] }));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -384,6 +389,9 @@ console.log('\nwhat the periodic work reads');
       ok(`the reply-effort scan reads a transcript once, then only what was added: ${e1}, ${e2}, ${e3} bytes`);
     } else bad(`the reply-effort scan read ${e1}, ${e2} and ${e3} bytes of a ${r.transcript}-byte transcript `
       + `with ${r.appended} appended between the first two passes`);
+    if (r.both >= r.transcript && r.both < r.transcript * 1.5) {
+      ok(`the two scans started together on an unread transcript share one pass over it: ${r.both} bytes for a ${r.transcript}-byte file`);
+    } else bad(`the two scans started together read ${r.both} bytes of a ${r.transcript}-byte transcript`);
     if (r.collectFiles.length && !r.collectFiles.some((f) => f.endsWith('.jsonl'))) {
       ok('collecting what the background sessions are doing opens no transcript');
     } else bad('collecting the background sessions read: ' + JSON.stringify(r.collectFiles));
@@ -987,6 +995,32 @@ console.log('\nreply efforts');
     if (f.css === rule(`${H(7)}=medium!${H(7)}`, sub) && g.css === rule(`${H(7)}=medium!${H(7)}`, `${H(11)}=low,${H(13)}=high!${H(13)}`)) {
       ok('a pass for the conversation alone leaves the sub-agents unread, and a full pass reads what they added');
     } else bad(`for the conversation alone: ${JSON.stringify(f)}; then in full: ${JSON.stringify(g)}`);
+    /* A full pass asked for while one for the conversation alone runs is not handed that one's result: it gets the pass
+       after it, and that pass reads the sub-agents. */
+    {
+      const subFile = path.join(root, sid, 'subagents', 'agent-a1.jsonl');
+      const script = `
+        const fs = require('fs');
+        const e = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'efforts.js'))});
+        const opts = ${JSON.stringify({ dir: plans, transcript })};
+        const open = fs.promises.open;
+        let full = null;
+        fs.promises.open = async function (...a) {
+          const fh = await open.apply(this, a);
+          if (!full) { fs.appendFileSync(${JSON.stringify(subFile)}, ${JSON.stringify(reply(14, 'max', { isSidechain: true }))}); full = e.scan(${JSON.stringify(sid)}, opts); }
+          return fh;
+        };
+        (async () => {
+          fs.appendFileSync(opts.transcript, ${JSON.stringify(reply(15, 'medium'))});
+          const alone = await e.scan(${JSON.stringify(sid)}, Object.assign({ subagents: false }, opts));
+          process.stdout.write(JSON.stringify({ alone, full: await full }));
+        })().catch((err) => process.stdout.write(JSON.stringify({ error: err.message })));`;
+      let q;
+      try { q = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); } catch (err) { q = { error: err.message }; }
+      if (!q.error && q.full && q.full.css === rule(`${H(7)}=medium!${H(15)}`, `${H(11)}=low,${H(13)}=high,${H(14)}=max!${H(14)}`)) {
+        ok('a full pass asked for while a pass for the conversation alone runs gets a pass after it that reads the sub-agents');
+      } else bad(`a full pass asked for during a partial one gave ${JSON.stringify(q)}`);
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1237,6 +1271,107 @@ console.log('\nscheduled prompts');
   }
 }
 
+/* ── Claude Code's directory, read the same way everywhere ──
+   Where Claude Code's directory is, which project folder holds a transcript, and which conversations still have one were
+   answered in five places, and they disagreed: two of them ignored CLAUDE_CONFIG_DIR, and one skipped a project folder it
+   could not read where another refused to go on. They are answered once now, in src/claude-files.js. */
+console.log("\nClaude Code's directory, read the same way everywhere");
+{
+  const cf = require('../src/claude-files');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-files-'));
+  try {
+    const SID = 'abababab-1111-4222-8333-444444444444';
+    const cfg = path.join(root, 'cfg');
+    fs.mkdirSync(path.join(cfg, 'projects', '-p'), { recursive: true });
+    fs.mkdirSync(path.join(cfg, 'jobs', '1a2b3c4d'), { recursive: true });
+    fs.writeFileSync(path.join(cfg, 'jobs', '1a2b3c4d', 'state.json'), JSON.stringify({ state: 'working', createdAt: '2026-10-02T10:00:00.000Z' }));
+    const id = 'toolu_1';
+    fs.writeFileSync(path.join(cfg, 'projects', '-p', SID + '.jsonl'),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, input: { command: 'claude --bg x' } }] } }) + '\n'
+      + JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'backgrounded · 1a2b3c4d\n' }] } }) + '\n');
+    const script = `
+      const path = require('path');
+      const cf = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'claude-files.js'))});
+      const bg = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))});
+      (async () => {
+        const live = cf.liveSessions();
+        const scanned = await bg.scan(${JSON.stringify(SID)}, { dir: ${JSON.stringify(path.join(root, 'plans'))} });
+        process.stdout.write(JSON.stringify({ dir: cf.claudeDir(), transcript: cf.transcriptOf(${JSON.stringify(SID)}), live: live ? [...live] : null, scanned }));
+      })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
+    let r;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: cfg }) })); }
+    catch (e) { r = { error: e.message }; }
+    if (!r.error && r.dir === cfg && r.transcript.startsWith(cfg) && JSON.stringify(r.live) === JSON.stringify([SID]) && r.scanned.added === 1) {
+      ok('CLAUDE_CONFIG_DIR moves where transcripts, the conversations still on disk and the background sessions are looked for, alike');
+    } else bad(`with CLAUDE_CONFIG_DIR set: ${JSON.stringify(r)}`);
+
+    /* A conversation whose transcript is not written yet is asked about by several callers at the same moment and on
+       every refresh; each search stats a file in every project folder. */
+    const projects = path.join(cfg, 'projects');
+    const missing = 'cdcdcdcd-1111-4222-8333-444444444444';
+    let walks = 0;
+    const realReaddir = fs.readdirSync;
+    fs.readdirSync = function (p, ...rest) { if (String(p) === projects) walks++; return realReaddir.call(fs, p, ...rest); };
+    let got;
+    try {
+      const t0 = Date.now();
+      got = [cf.transcriptOf(missing, projects, t0), cf.transcriptOf(missing, projects, t0 + 1000), walks,
+        cf.transcriptOf(missing, projects, t0 + cf.MISS_MS + 1), walks];
+    } finally { fs.readdirSync = realReaddir; }
+    if (JSON.stringify(got) === JSON.stringify(['', '', 1, '', 2])) ok('a transcript not found is looked for again only once a short while has passed');
+    else bad(`looking for a missing transcript gave ${JSON.stringify(got)}`);
+
+    /* One project folder that cannot be listed would make every conversation in it look gone, and their plans would be
+       deleted as abandoned. */
+    const locked = path.join(projects, '-locked');
+    fs.mkdirSync(locked);
+    fs.writeFileSync(path.join(locked, 'efefefef-1111-4222-8333-444444444444.jsonl'), '{}\n');
+    fs.chmodSync(locked, 0);
+    const blind = cf.liveSessions(projects);
+    fs.chmodSync(locked, 0o755);
+    if (process.getuid && process.getuid() === 0) note('running as root, so a folder cannot be made unreadable to check that');
+    else if (blind === null) ok('a project folder that cannot be listed makes the conversations still on disk unknown, not fewer');
+    else bad(`with a project folder unreadable the live set was ${JSON.stringify([...blind])}`);
+
+    /* Several windows write the same files beside the plans. */
+    const file = path.join(root, 'shared.json');
+    const renames = [];
+    const realRename = fs.renameSync;
+    let threw = '';
+    try {
+      fs.renameSync = (from, to) => { renames.push(from); return realRename.call(fs, from, to); };
+      cf.writeAtomic(file, 'one'); cf.writeAtomic(file, 'two');
+      fs.renameSync = () => { throw new Error('rename failed'); };
+      try { cf.writeAtomic(file, 'three'); } catch (e) { threw = e.message; }
+    } finally { fs.renameSync = realRename; }
+    const leftover = fs.readdirSync(root).filter((n) => n.startsWith('shared.json.'));
+    if (renames.length === 2 && renames[0] !== renames[1] && renames.every((t) => t.includes('.' + process.pid + '.'))
+      && fs.readFileSync(file, 'utf8') === 'two' && threw === 'rename failed' && !leftover.length) {
+      ok('a shared file is replaced through a temporary copy of this process\'s own, removed again when it cannot be put in place');
+    } else bad(`writing a shared file: renames ${JSON.stringify(renames.map((t) => path.basename(t)))}, left ${JSON.stringify(leftover)}, threw ${JSON.stringify(threw)}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+  /* One pass per key at a time, and every request made during a pass shares the one after it, with the options merged. */
+  const script = `
+    const cf = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'claude-files.js'))});
+    const runs = [];
+    let release;
+    const run = (key, opts) => new Promise((resolve) => {
+      runs.push(opts);
+      if (runs.length === 1) release = () => resolve('first'); else resolve('again ' + runs.length);
+    });
+    const go = cf.oneAtATime(run, (a, b) => ({ tags: a.tags.concat(b.tags) }));
+    const a = go('k', { tags: ['a'] }), b = go('k', { tags: ['b'] }), c = go('k', { tags: ['c'] }), other = go('j', { tags: ['j'] });
+    setTimeout(() => release(), 10);
+    Promise.all([a, b, c, other]).then((got) => process.stdout.write(JSON.stringify({ got, runs })));`;
+  let q;
+  try { q = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); } catch (e) { q = { error: e.message }; }
+  if (q && !q.error && JSON.stringify(q.got) === JSON.stringify(['first', 'again 3', 'again 3', 'again 2'])
+    && JSON.stringify(q.runs.map((o) => o.tags)) === JSON.stringify([['a'], ['j'], ['b', 'c']])) {
+    ok('a request made during a pass waits for one more pass, shared by every such request, with their options together');
+  } else bad(`one pass at a time gave ${JSON.stringify(q)}`);
+}
+
 /* ── 5. the installed copy must match this working tree ──
    The extension host loads the installed copy, not this tree. A source file added here but missing there makes the
    extension fail to activate on the next reload - it cannot require what was never packaged - and the only symptom is
@@ -1375,9 +1510,10 @@ console.log('\nbackground sessions');
     } else bad(`a hint that was not a launch was recorded: ${JSON.stringify(ids)}`);
   }
 
-  // No file for a conversation that started nothing - one per conversation looked at would be clutter. How far it was
-  // read is still kept by the host, so the next pass starts there: the part already read is rewritten below to hold a
-  // launch, which only a pass starting again from the first byte would find.
+  // A conversation that started nothing still gets a file, with no sessions in it: it is what tells the next window, or
+  // the next start, how far its transcript was read. The part already read is rewritten below to hold a launch, which only
+  // a pass starting again from the first byte would find - and the second pass is a process of its own, as a window
+  // starting up is.
   {
     const SID2 = 'bbbbbbbb-1111-2222-3333-444444444444';
     const t2 = path.join(proj, SID2 + '.jsonl');
@@ -1385,22 +1521,22 @@ console.log('\nbackground sessions');
       + [1, 2, 3, 4, 5, 6].map((n) => prose('still nothing, line ' + n)).join('');
     const rewritten = ran('claude --bg "late"', launched('1a2b3c4d')) + before;
     fs.writeFileSync(t2, before);
-    const script = `
+    const once = () => JSON.parse(cp.execFileSync(process.execPath, ['-e', `
       const bg = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))});
-      const fs = require('fs');
-      const opts = ${JSON.stringify({ dir: plans, jobs, transcript: t2 })};
-      (async () => {
-        const first = await bg.scan(${JSON.stringify(SID2)}, opts);
-        fs.writeFileSync(opts.transcript, ${JSON.stringify(rewritten)});
-        const second = await bg.scan(${JSON.stringify(SID2)}, opts);
-        process.stdout.write(JSON.stringify({ first, second }));
-      })().catch((e) => { process.stdout.write(JSON.stringify({ error: e.message })); });`;
-    const r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' }));
-    if (!fs.existsSync(path.join(plans, SID2 + '.background'))) ok('a conversation that started nothing gets no file');
-    else bad('a file was written for a conversation that started nothing');
-    if (!r.error && r.first.added === 0 && r.second.added === 0 && r.second.scannedTo > r.first.scannedTo) {
-      ok('and the next pass over it reads on from where the last one stopped, not from the first byte');
-    } else bad(`two passes over a conversation that started nothing gave ${JSON.stringify(r)}`);
+      bg.scan(${JSON.stringify(SID2)}, ${JSON.stringify({ dir: plans, jobs, transcript: t2 })})
+        .then((r) => process.stdout.write(JSON.stringify(r)), (e) => process.stdout.write(JSON.stringify({ error: e.message })));`],
+    { encoding: 'utf8' }));
+    const first = once();
+    let link = null;
+    try { link = JSON.parse(fs.readFileSync(path.join(plans, SID2 + '.background'), 'utf8')); } catch (_) { /* none */ }
+    fs.writeFileSync(t2, rewritten);
+    const second = once();
+    if (link && Array.isArray(link.ids) && !link.ids.length && link.scannedTo === Buffer.byteLength(before)) {
+      ok('a conversation that started nothing gets a file saying how far it was read, and naming no session');
+    } else bad(`for a conversation that started nothing the file held ${JSON.stringify(link)}`);
+    if (!first.error && first.added === 0 && second.added === 0 && second.scannedTo === Buffer.byteLength(rewritten)) {
+      ok('and a new process reads on from that point rather than from the first byte');
+    } else bad(`two processes over a conversation that started nothing gave ${JSON.stringify([first, second])}`);
   }
 
   // What the stylesheet carries.
@@ -1426,6 +1562,69 @@ console.log('\nbackground sessions');
   fs.rmSync(path.join(jobs, '77777777'), { recursive: true });
   if (!bg.collect({ dir: plans, jobs }).some((e) => e.id === '77777777')) ok('a session whose record is gone drops out');
   else bad('a session with no record left was still listed');
+
+  /* The list is ordered by when each conversation last launched a session, which every window reads the same. A link
+     file is rewritten as its transcript is read, so ordering by its modification time moved conversations about - and
+     past MAX_SESSIONS in and out of the list - and rewrote the stylesheet every panel reloads. A file written before
+     the launch time was kept is ordered by its sessions' own records. */
+  {
+    const order = path.join(root, 'plans-order');
+    fs.mkdirSync(order);
+    job('aaaa0001', { createdAt: '2026-10-03T10:00:00.000Z' });
+    job('aaaa0002', { createdAt: '2026-10-01T10:00:00.000Z' });
+    job('aaaa0003', { createdAt: '2026-10-02T10:00:00.000Z' });
+    const S = (n) => `${n}${n}${n}${n}${n}${n}${n}${n}-1111-2222-3333-444444444444`;
+    const put = (n, link, ageMin) => {
+      const f = path.join(order, S(n) + '.background');
+      fs.writeFileSync(f, JSON.stringify(link));
+      const t = new Date(Date.now() - ageMin * 60000);
+      fs.utimesSync(f, t, t);
+    };
+    put(1, { ids: ['aaaa0001'], scannedTo: 5, launched: Date.parse('2026-10-03T10:00:00.000Z') }, 30);
+    put(2, { ids: ['aaaa0002'], scannedTo: 5, launched: Date.parse('2026-10-01T10:00:00.000Z') }, 20);
+    put(3, { ids: ['aaaa0003'], scannedTo: 5 }, 10);
+    const first = bg.collect({ dir: order, jobs }).map((e) => e.session);
+    // A pass reads on through the oldest launcher's transcript and writes down how far, which makes its file the newest.
+    put(2, { ids: ['aaaa0002'], scannedTo: 5 + bg.PERSIST_EVERY, launched: Date.parse('2026-10-01T10:00:00.000Z') }, 0);
+    const second = bg.collect({ dir: order, jobs }).map((e) => e.session);
+    const want = [S(1), S(3), S(2)];
+    if (JSON.stringify(first) === JSON.stringify(want) && JSON.stringify(second) === JSON.stringify(want)) {
+      ok('the agent map lists conversations newest launch first, and a file rewritten as its transcript is read does not move');
+    } else bad(`ordered ${JSON.stringify(first)}, then after a rewrite ${JSON.stringify(second)}, expected ${JSON.stringify(want)}`);
+  }
+
+  /* A request made while a pass runs is not handed that pass's result: the pass took the transcript's size before the
+     request, so a launch appended in between was left for whatever came next. It gets one more pass instead. */
+  {
+    const SID4 = 'dddddddd-1111-2222-3333-444444444444';
+    const t4 = path.join(proj, SID4 + '.jsonl');
+    const plans4 = path.join(root, 'plans4');
+    job('0f0f0f0f');
+    fs.writeFileSync(t4, ran('claude --bg "first"', launched('0a0b0c0d')));
+    const late = ran('claude --bg "second"', launched('0f0f0f0f'));
+    const script = `
+      const fs = require('fs');
+      const bg = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))});
+      const opts = ${JSON.stringify({ dir: plans4, jobs, transcript: t4 })};
+      const open = fs.promises.open;
+      let second = null;
+      fs.promises.open = async function (...a) {
+        const fh = await open.apply(this, a);
+        if (!second) { fs.appendFileSync(opts.transcript, ${JSON.stringify(late)}); second = bg.scan(${JSON.stringify(SID4)}, opts); }
+        return fh;
+      };
+      (async () => {
+        const first = await bg.scan(${JSON.stringify(SID4)}, opts);
+        const then = await second;
+        const link = JSON.parse(fs.readFileSync(opts.dir + '/' + ${JSON.stringify(SID4)} + '.background', 'utf8'));
+        process.stdout.write(JSON.stringify({ first, then, ids: link.ids }));
+      })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
+    let r;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); } catch (e) { r = { error: e.message }; }
+    if (!r.error && r.first.added === 1 && r.then.added === 1 && r.ids.join() === '0a0b0c0d,0f0f0f0f') {
+      ok('a scan asked for while one runs gets a pass of its own after it, which reads what was appended meanwhile');
+    } else bad(`a scan asked for during another gave ${JSON.stringify(r)}`);
+  }
 
   {
     const HIDE = '[data-message-stamp] time{display:none !important;}';
@@ -1789,6 +1988,32 @@ console.log('\nabandoned work plans');
         return t;
       },
       (t, r) => r.deleted === 1 && left(t.dir).sort().join() === 'client-time-zone.json,config.json'],
+    /* The lock a writer of a plan takes is a directory beside it, held for milliseconds. One a day old was abandoned, and
+       stands in every writer's way until each has waited it out; one younger is somebody's, whatever the transcripts say. */
+    ['a plan\'s lock a day old is removed, and a younger one is left to whoever holds it',
+      () => {
+        const t = build([id(1), id(2)], [[id(1), NEW], [id(2), NEW]]);
+        fs.mkdirSync(path.join(t.dir, id(1) + '.json.lock'));
+        fs.utimesSync(path.join(t.dir, id(1) + '.json.lock'), OLD / 1000, OLD / 1000);
+        fs.mkdirSync(path.join(t.dir, id(2) + '.json.lock'));
+        return t;
+      },
+      (t, r) => r.deleted === 0 && left(t.dir).join() === [id(1) + '.json', id(2) + '.json', id(2) + '.json.lock'].join()],
+    ['what the sweep read of the transcripts comes back with it, for the efforts beside the panel',
+      () => build([id(1), id(2)], []),
+      (t, r) => r.live instanceof Set && r.live.size === 2 && r.live.has(id(1))],
+    /* A project folder that cannot be listed hides its conversations; taking them for gone deletes their plans. */
+    ['nothing is deleted when one project folder cannot be read',
+      () => {
+        const t = build([id(1)], [[id(2), OLD]]);
+        const locked = path.join(t.projects, '-locked');
+        fs.mkdirSync(locked);
+        fs.writeFileSync(path.join(locked, id(2) + '.jsonl'), '{}\n');
+        fs.chmodSync(locked, 0);
+        t.restore = () => fs.chmodSync(locked, 0o755);
+        return t;
+      },
+      (t, r) => (process.getuid && process.getuid() === 0) || (r.deleted === 0 && !!r.why && left(t.dir).length === 1)],
   ];
 
   for (const [what, make, want] of cases) {
@@ -1796,6 +2021,7 @@ console.log('\nabandoned work plans');
     let r;
     try { r = plan.sweepOrphans({ dir: t.dir, projects: t.projects }); }
     catch (e) { bad(`${what}: threw ${e.message}`); fs.rmSync(t.root, { recursive: true, force: true }); continue; }
+    finally { if (t.restore) t.restore(); }
     if (want(t, r)) ok(what);
     else bad(`${what}: got ${JSON.stringify(r)} leaving ${JSON.stringify(left(t.dir))}`);
     fs.rmSync(t.root, { recursive: true, force: true });
@@ -3181,6 +3407,11 @@ console.log('\nwhere the hook settings are written');
       && !/(path\.join|mkdirSync)\(PLAN_DIR\b/.test(body)) {
     ok('config.json is written into the data directory the hooks read, by its full path');
   } else bad('writeHookSettings does not write config.json under planDir(), so the hooks would never see it');
+  /* A hook can read either file at any moment, and one written in place is caught half-written. */
+  const zone = (/const writeClientZone = \(\) => \{[\s\S]*?\n  \};\n/.exec(ext) || [''])[0];
+  if (/writeAtomic\(file, next\)/.test(body) && /writeAtomic\(file, next\)/.test(zone) && !/writeFileSync\(file/.test(body + zone)) {
+    ok('config.json and the reader\'s time zone are replaced whole, never written in place where a hook could read half');
+  } else bad('config.json or client-time-zone.json is still written in place');
 }
 
 /* ── 19b. the hooks around a compaction ──
@@ -4969,9 +5200,56 @@ console.log('\ndeleting an archived conversation');
     else bad('a path-like ID found something to delete');
     put('sessions/1.json', JSON.stringify({ pid: process.pid, sessionId: A }));
     put('sessions/2.json', JSON.stringify({ pid: 2147483646, sessionId: B }));
-    if (del.running(A, root) && !del.running(B, root)) ok('a conversation with a live process in Claude Code\'s register counts as running, one whose process is gone does not');
-    else bad('the running check was wrong');
+    const live = del.runningSessions(root);
+    if (live.has(A) && !live.has(B)) ok('a conversation with a live process in Claude Code\'s register counts as running, one whose process is gone does not');
+    else bad(`the running check gave ${JSON.stringify([...live])}`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+  /* A session folder that is a symbolic link goes as a link. Listed through, it put what the link points at - which can
+     be anywhere - among what the confirmation named and the delete removed. */
+  {
+    const base = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-delete-link-'));
+    const root2 = path.join(base, 'claude'), outside = path.join(base, 'elsewhere');
+    try {
+      fs.mkdirSync(path.join(root2, 'projects', '-a'), { recursive: true });
+      fs.mkdirSync(path.join(outside, 'subagents'), { recursive: true });
+      fs.writeFileSync(path.join(outside, 'subagents', 'agent-1.jsonl'), 'keep me');
+      fs.writeFileSync(path.join(root2, 'projects', '-a', A + '.jsonl'), 'x');
+      fs.symlinkSync(outside, path.join(root2, 'projects', '-a', A));
+      const found = del.find(A, { root: root2 });
+      const failed = del.remove(found);
+      const linkGone = !fs.existsSync(path.join(root2, 'projects', '-a', A)) && (() => { try { fs.lstatSync(path.join(root2, 'projects', '-a', A)); return false; } catch (_) { return true; } })();
+      if (!found.some((f) => f.path.startsWith(path.join(root2, 'projects', '-a', A) + path.sep)) && !failed.length && linkGone
+        && fs.readFileSync(path.join(outside, 'subagents', 'agent-1.jsonl'), 'utf8') === 'keep me') {
+        ok('a session folder that is a symbolic link is removed as a link, and nothing it points at is listed or deleted');
+      } else bad(`with the session folder a link: found ${JSON.stringify(found.map((f) => path.relative(base, f.path)))}, failures ${JSON.stringify(failed)}`);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  }
+
+  /* Several conversations asked about at once are found in one walk of the project folders, and the lock a plan's writer
+     takes goes with the plan. */
+  {
+    const root3 = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-delete-many-'));
+    try {
+      for (const p of ['-a', '-b', '-c']) fs.mkdirSync(path.join(root3, 'projects', p), { recursive: true });
+      fs.writeFileSync(path.join(root3, 'projects', '-a', A + '.jsonl'), 'x');
+      fs.writeFileSync(path.join(root3, 'projects', '-c', B + '.jsonl'), 'x');
+      fs.mkdirSync(path.join(root3, 'plans', A + '.json.lock'), { recursive: true });
+      const realReaddir = fs.readdirSync;
+      const listed = [];
+      fs.readdirSync = function (p, ...rest) { listed.push(String(p)); return realReaddir.call(fs, p, ...rest); };
+      let all;
+      try { all = del.findAll([A, B, 'not-an-id'], { root: root3, planDir: path.join(root3, 'plans') }); }
+      finally { fs.readdirSync = realReaddir; }
+      const walked = listed.filter((p) => p.startsWith(path.join(root3, 'projects')));
+      const kinds = (id) => all.get(id).map((f) => path.relative(root3, f.path)).sort();
+      if (all.size === 2 && walked.length === 4 && new Set(walked).size === 4
+        && JSON.stringify(kinds(A)) === JSON.stringify([`plans/${A}.json.lock`, `projects/-a/${A}.jsonl`])
+        && JSON.stringify(kinds(B)) === JSON.stringify([`projects/-c/${B}.jsonl`])) {
+        ok('several conversations are found in one walk of the project folders, a plan\'s lock with its plan');
+      } else bad(`finding two at once listed ${JSON.stringify(walked.map((p) => path.relative(root3, p)))} and found ${JSON.stringify([...all].map(([k, v]) => [k, v.map((f) => path.relative(root3, f.path))]))}`);
+    } finally { fs.rmSync(root3, { recursive: true, force: true }); }
+  }
 
   // The menu: Delete after Unarchive, for local conversations only, and it only asks this extension.
   const posted = [];
@@ -5016,10 +5294,19 @@ console.log('\ndeleting an archived conversation');
   else bad(`the host passed on ${JSON.stringify(asked)}, panels told ${tenv.n}`);
   const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   if (/showWarningMessage\([\s\S]{0,200}\{ modal: true, detail: lines\.join\('\\n'\) \}, 'Delete'\);\s*if \(pick !== 'Delete'\) return;/.test(extSrc)
-      && /shown\.includes\(w\.id\) \|\| deleteSession\.running\(w\.id\)/.test(extSrc)
+      && /shown\.includes\(w\.id\) \|\| running\.has\(w\.id\)/.test(extSrc) && /const running = deleteSession\.runningSessions\(\);/.test(extSrc)
       && webview.SWITCHES.includes('deleteArchived') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.deleteArchived']) {
     ok('nothing is deleted before a modal confirmation is accepted, an open or running conversation is left alone, and the switch is a setting of its own');
   } else bad('the delete is not guarded as expected');
+  /* The hook is called inside Claude Code's own message handling, and finding what is on disk walks every project
+     folder, so the work waits for that handling to finish. And not knowing which conversations are open is a refusal: an
+     empty list there would let an open conversation be deleted. */
+  const hook = (/globalThis\.__cceDeleteHook = \(asked\) => \{([\s\S]*?)\n  \};/.exec(extSrc) || [])[1] || '';
+  const work = (/const deleteArchived = async \(asked\) => \{([\s\S]*?)\n  \};/.exec(extSrc) || [])[1] || '';
+  if (/^\s*setTimeout\(\(\) => deleteArchived\(asked\)[\s\S]*, 0\);\s*$/.test(hook)
+      && /if \(!Array\.isArray\(shown\)\) \{[\s\S]{0,200}return;/.test(work) && /deleteSession\.findAll\(/.test(work) && !/deleteSession\.find\(/.test(work)) {
+    ok('a delete is worked out after Claude Code\'s message handling, in one walk, and refused when the open conversations cannot be told');
+  } else bad('the delete hook runs inside Claude Code\'s message handling, walks per conversation, or deletes when it cannot tell what is open');
 }
 
 console.log('\nthe pins\' margin setting');

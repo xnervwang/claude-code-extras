@@ -40,38 +40,35 @@
  * error on it, so the view can say so. A plan that silently shows nothing is indistinguishable from no work left.
  */
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+/* Where the plan directory is, and which conversations still have a transcript, are answered in src/claude-files.js:
+   the directory's name is derived from the plugin and marketplace names, and the transcripts are Claude Code's. */
+const { DATA_ROOT, PLAN_DIR, planDir, projectsDir, liveSessions } = require('./claude-files');
 
-/* Where every plugin keeps its own data, and the name of ours. The two are kept apart because a file watcher needs a
-   base that already exists, and ours is created when the plugin is installed - which may be after this extension has
-   started. The name is taken from the side that decides it rather than written out again here: it is derived from the
-   plugin and marketplace names, so a copy of it here would be a second thing to remember to change. */
-const DATA_ROOT = path.join(os.homedir(), '.claude', 'plugins', 'data');
-const PLAN_DIR = require('./plugin-install').DATA_DIR;
-/* A conversation's file is named by its session id and nothing else, so anything else in that directory belongs to
-   something else and is left alone. */
+/*
+ * The files kept beside a plan, one each per conversation, named by its session id and one of these suffixes; anything
+ * else in the directory belongs to something else and is left alone. Each describes its conversation, so each goes
+ * when the conversation does.
+ *
+ *   .json        the plan itself
+ *   .offered     the Stop hook offered once to start a plan where none existed; otherwise the only trace of a
+ *                conversation that declined would accumulate for ever
+ *   .nudged      the same hook reminded the conversation to reconcile its plan, so it does not repeat the same sentence
+ *   .background  which detached sessions the conversation started (src/background.js)
+ *   .turn        which turn the conversation is in and how far it has got, left by the injection hook
+ *   .watermark   which context marks have asked it to bring the plan up to date before a compaction
+ *   .tz          what the time-zone hook last told it
+ *   .effort      where each reply's effort changed (src/efforts.js)
+ */
+const SIDE_SUFFIXES = ['.json', '.offered', '.nudged', require('./background').SUFFIX, '.turn', '.watermark', '.tz',
+  require('./efforts').SUFFIX];
+const SIDE_FILE = new RegExp('^[0-9a-f][0-9a-f-]{7,}(?:' + SIDE_SUFFIXES.map((s) => s.replace('.', '\\.')).join('|') + ')$', 'i');
 const PLAN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.json$/i;
-/* The Stop hook offers once, per conversation, to start a plan where none exists, and remembers having offered by
-   leaving one of these behind. It outlives the conversation the same way a plan does, so it is swept the same way -
-   otherwise the only trace of a conversation that declined would accumulate here for ever. */
-const OFFER_FILE = /^[0-9a-f][0-9a-f-]{7,}\.offered$/i;
-/* The same hook remembers having reminded a conversation to reconcile its plan, so that it does not repeat the same
-   sentence about the same unrecorded state. Swept with the plan for the same reason the offer marker is. */
-const NUDGE_FILE = /^[0-9a-f][0-9a-f-]{7,}\.nudged$/i;
-/* Which detached sessions a conversation started, written by src/background.js. It describes the conversation, so it
-   goes when the conversation does. The pattern is that module's own, so the two cannot disagree about the name. */
-const { LINK_FILE: BACKGROUND_FILE } = require('./background');
-/* Which turn a conversation is in and how far that turn has got, left by the plugin's injection hook for the hook that
-   reminds a turn to mark what it is working on. Rewritten every turn, and gone with the conversation like the rest. */
-const TURN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.turn$/i;
-/* Which context marks have already asked a conversation to bring its plan up to date before a compaction, left by the
-   plugin's water-mark hook. It describes that conversation, so it goes when the conversation does. */
-const WATERMARK_FILE = /^[0-9a-f][0-9a-f-]{7,}\.watermark$/i;
-/* What the plugin's time-zone hook last told a conversation, so that it says it again only when that has gone stale. */
-const ZONE_TOLD_FILE = /^[0-9a-f][0-9a-f-]{7,}\.tz$/i;
-// Where each reply's effort changed, kept per conversation by src/efforts.js.
-const { STATE_FILE: EFFORT_FILE } = require('./efforts');
+/* The lock a writer of a plan holds while it reads, changes and writes it back: a directory beside the plan, made with
+   mkdir. A writer holds one for milliseconds and one older than LOCK_STALE_MS is taken as abandoned by every writer, so
+   a day is far past any that is still held. */
+const LOCK = /\.lock$/i;
+const LOCK_STALE_MS = 24 * 60 * 60 * 1000;
 /* The same list as STATES in the plugin's plan_path.py, in the same order; test/check.js holds them together. */
 const STATES = ['discussing', 'todo', 'doing', 'waiting', 'parked', 'done', 'dropped'];
 /* Depth and count are bounded because the file is written by another process: a cycle turned into JSON, or a runaway
@@ -89,10 +86,6 @@ const MAX_NODES = 2000;
  */
 const MAX_DETAIL_LINES = 12;
 const MAX_DETAIL_CHARS = 900;
-
-function planDir() {
-  return path.join(DATA_ROOT, PLAN_DIR);
-}
 
 const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
@@ -187,42 +180,14 @@ function readPlan(session) {
   return one ? [one] : [];
 }
 
-/*
- * Where Claude Code keeps its transcripts: one directory per starting directory, and inside it one file per conversation
- * named by the same session id a plan is named by.
- *
- * Only that one level is read. Deeper down are the transcripts of sub-agents, which are not conversations - reading them
- * as though they were would count sessions that never had a plan, and a recursive walk costs a thousand files more.
- */
-const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 /* A plan younger than this is left alone whatever the transcripts say. Its real job is not to wait longer - a transcript
    survives months of silence before Claude Code removes it - but to be certain that nothing still being written is ever
-   touched, whatever went wrong with the reading below. */
+   touched, whatever went wrong with the reading of the transcripts. */
 const SETTLED_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Every session id that still has a transcript, or null when that could not be established.
- *
- * Null rather than an empty set, because the two mean opposite things and only one of them is safe: an unreadable or
- * empty transcript directory would make every plan on the machine look abandoned, and deleting all of them is exactly
- * the accident this returns null to prevent. A machine really holding no conversations also holds no plans, so nothing
- * is lost by refusing that case too.
- */
-function liveSessions(projects = PROJECTS) {
-  let dirs;
-  try { dirs = fs.readdirSync(projects, { withFileTypes: true }); } catch (_) { return null; }
-  const live = new Set();
-  for (const d of dirs) {
-    if (!d.isDirectory()) continue;
-    let names;
-    try { names = fs.readdirSync(path.join(projects, d.name)); } catch (_) { continue; }
-    for (const n of names) if (n.endsWith('.jsonl')) live.add(n.slice(0, -6));
-  }
-  return live.size ? live : null;
-}
-
-/**
- * Delete the plans of conversations that no longer exist. Returns what happened, for the log.
+ * Delete the plans of conversations that no longer exist. Returns what happened, for the log, and `live`: the
+ * conversations that still have a transcript, or null when that could not be established and nothing was deleted.
  *
  * A conversation whose transcript is gone can never be resumed, so its plan is a file nothing can reach: not this view,
  * which reads only the conversation in front of the reader, and not Claude Code. Left alone they only accumulate - at the
@@ -234,15 +199,26 @@ function liveSessions(projects = PROJECTS) {
 function sweepOrphans(opts = {}) {
   const now = opts.now || Date.now();
   const dir = opts.dir || planDir();
-  const live = liveSessions(opts.projects || PROJECTS);
-  if (!live) return { deleted: 0, kept: 0, why: 'no transcripts could be read, so nothing was treated as abandoned' };
   let names;
-  try { names = fs.readdirSync(dir); } catch (_) { return { deleted: 0, kept: 0, why: '' }; }
+  try { names = fs.readdirSync(dir); } catch (_) { names = null; }
+  /* An abandoned lock goes whatever the transcripts say, since it stands in the way of every writer of that plan until
+     each of them has waited it out. rmdir, so a directory that is not an empty lock is never removed. */
+  for (const name of names || []) {
+    if (!LOCK.test(name)) continue;
+    const file = path.join(dir, name);
+    try {
+      const st = fs.lstatSync(file);
+      if (st.isDirectory() && now - st.mtimeMs > LOCK_STALE_MS) fs.rmdirSync(file);
+    } catch (_) { /* released meanwhile, or not empty */ }
+  }
+  const live = liveSessions(opts.projects || projectsDir());
+  if (!live) return { deleted: 0, kept: 0, live: null, why: 'the transcripts could not all be read, so nothing was treated as abandoned' };
+  if (!names) return { deleted: 0, kept: 0, live, why: '' };
   let deleted = 0, kept = 0;
   for (const name of names) {
-    if (![PLAN_FILE, OFFER_FILE, NUDGE_FILE, BACKGROUND_FILE, TURN_FILE, WATERMARK_FILE, ZONE_TOLD_FILE, EFFORT_FILE]
-      .some((re) => re.test(name))) continue;
-    if (live.has(name.replace(/\.(json|offered|nudged|background|turn|watermark|tz|effort)$/i, ''))) { kept++; continue; }
+    if (!SIDE_FILE.test(name)) continue;
+    // The session id is the name without its last extension, whichever of the side files it is.
+    if (live.has(name.replace(/\.[^.]+$/, ''))) { kept++; continue; }
     const file = path.join(dir, name);
     let st;
     try { st = fs.statSync(file); } catch (_) { continue; }
@@ -252,7 +228,7 @@ function sweepOrphans(opts = {}) {
     try { fs.unlinkSync(file); deleted++; }
     catch (e) { if (e.code !== 'ENOENT') kept++; }
   }
-  return { deleted, kept, why: '' };
+  return { deleted, kept, live, why: '' };
 }
 
 /** The states that mean a row still needs something done to it. */
@@ -293,6 +269,6 @@ function countOpen(nodes, acc = { discussing: 0, todo: 0, doing: 0, waiting: 0, 
 
 module.exports = {
   readPlan, countOpen, planDir, liveSessions, sweepOrphans, openFirst,
-  DATA_ROOT, PLAN_DIR, PLAN_FILE, OFFER_FILE, NUDGE_FILE, BACKGROUND_FILE, TURN_FILE, PROJECTS, SETTLED_MS, OPEN_STATES,
+  DATA_ROOT, PLAN_DIR, PLAN_FILE, SIDE_SUFFIXES, SETTLED_MS, LOCK_STALE_MS, OPEN_STATES,
   STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
 };

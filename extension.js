@@ -24,7 +24,8 @@ const { safeColor } = webview;
 const { readTasks } = require('./src/tasks');
 const background = require('./src/background');
 const efforts = require('./src/efforts');
-const { countOpen, sweepOrphans, liveSessions, planDir, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
+const { countOpen, sweepOrphans, planDir, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
+const { transcriptOf, writeAtomic } = require('./src/claude-files');
 const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
@@ -470,7 +471,8 @@ function start(context, renamed) {
          them from taking turns rewriting one file, the way the live stylesheet already does. */
       if (current === next) return;
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(file, next);
+      /* Replaced whole, since the hooks read it at any moment and a file written in place can be caught half-written. */
+      writeAtomic(file, next);
     } catch (e) {
       log.appendLine('work plan hook settings: ' + e.message);
     }
@@ -536,9 +538,9 @@ function start(context, renamed) {
     const r = sweepOrphans();
     if (r.why) log.appendLine('orphan work plans: ' + r.why);
     else if (r.deleted) log.appendLine(`orphan work plans: deleted ${r.deleted}, kept ${r.kept}`);
-    // The efforts written beside the panel go with the conversation; an unreadable list of them removes nothing.
-    const live = liveSessions();
-    if (live) for (const dir of installs(webview)) webview.pruneEfforts(dir, live);
+    /* The efforts written beside the panel go with the conversation, judged by the same reading of the transcripts the
+       sweep just made; when it could not be made, nothing is removed. */
+    if (r.live) for (const dir of installs(webview)) webview.pruneEfforts(dir, r.live);
   };
   /* The reader's time zone as a panel of this window last reported it (src/panel-tz.js), or empty until one has. */
   const clientZone = () => {
@@ -558,7 +560,7 @@ function start(context, renamed) {
       try { current = fs.readFileSync(file, 'utf8'); } catch (_) {}
       if (current === next) return;
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, next);
+      writeAtomic(file, next);
     } catch (e) {
       log.appendLine('client time zone: ' + e.message);
     }
@@ -595,7 +597,7 @@ function start(context, renamed) {
     const id = activeChat();
     if (id !== effortWatch.id) unwatchEffort();
     if (!id || removed() || !enabled() || replaced() || switchedOff().includes('modelName')) { unwatchEffort(); return; }
-    const transcript = background.transcriptOf(id);
+    const transcript = transcriptOf(id);
     if (!transcript) return;
     effortWatch.id = id;
     /* Only the side that changed is read: the sub-agents are looked at when their folder changed, not on every row the
@@ -817,53 +819,62 @@ function start(context, renamed) {
    * Archived conversations deleted from disk, asked for from the Archived sessions menu (src/deletesession.js). Nothing
    * goes before the person accepts a confirmation that names each conversation and what of it is on disk. One that is
    * open in this window or running anywhere on this machine is left alone and named as such.
+   *
+   * Called by the patched host from inside its own message handling, so the work is put off rather than done there, as
+   * the pin hook's is: finding what is on disk walks every project folder.
    */
   globalThis.__cceDeleteHook = (asked) => {
-    (async () => {
-      const seen = new Set(), want = [];
-      for (const s of Array.isArray(asked) ? asked : []) {
-        if (s && typeof s.id === 'string' && deleteSession.SESSION.test(s.id) && !seen.has(s.id)) {
-          seen.add(s.id);
-          want.push({ id: s.id, title: typeof s.title === 'string' && s.title.trim() ? s.title.trim().slice(0, 120) : s.id });
-        }
+    setTimeout(() => deleteArchived(asked).catch((e) => log.appendLine('deleting archived conversations: ' + (e && e.message))), 0);
+  };
+  const deleteArchived = async (asked) => {
+    const seen = new Set(), want = [];
+    for (const s of Array.isArray(asked) ? asked : []) {
+      if (s && typeof s.id === 'string' && deleteSession.SESSION.test(s.id) && !seen.has(s.id)) {
+        seen.add(s.id);
+        want.push({ id: s.id, title: typeof s.title === 'string' && s.title.trim() ? s.title.trim().slice(0, 120) : s.id });
       }
-      if (!want.length || !enabled() || removed()) return;
-      let shown = [];
-      try { shown = typeof globalThis.__cceSessionsShown === 'function' ? globalThis.__cceSessionsShown() : []; } catch (_) { /* none known */ }
-      const busy = [], go = [];
-      for (const w of want) {
-        if (shown.includes(w.id) || deleteSession.running(w.id)) { busy.push(w); continue; }
-        const found = deleteSession.find(w.id, {
-          planDir: planDir(),
-          extra: installs(webview).map((d) => path.join(d, 'webview', webview.EFFORT_PREFIX + w.id + '.css')),
-        });
-        if (found.length) go.push({ ...w, found });
-      }
-      if (!go.length) {
-        vscode.window.showInformationMessage(busy.length
-          ? `Not deleted: ${busy.map((b) => `"${b.title}"`).join(', ')} ${busy.length === 1 ? 'is' : 'are'} open or running.`
-          : 'Nothing of that conversation is left on disk.');
-        return;
-      }
-      const lines = go.map((g) => `"${g.title}": ${deleteSession.describe(g.found)}`);
-      if (busy.length) lines.push('', `Left alone, open or running: ${busy.map((b) => `"${b.title}"`).join(', ')}`);
-      lines.push('', 'This cannot be undone.');
-      const pick = await vscode.window.showWarningMessage(
-        go.length === 1 ? `Delete "${go[0].title}" from disk?` : `Delete ${go.length} conversations from disk?`,
-        { modal: true, detail: lines.join('\n') }, 'Delete');
-      if (pick !== 'Delete') return;
-      const failed = [];
-      for (const g of go) {
-        failed.push(...deleteSession.remove(g.found));
-        try { sessionPins.setPinned(pinsFile(), g.id, false); } catch (_) { /* not pinned */ }
-        log.appendLine(`Deleted "${g.title}" (${g.id}): ${deleteSession.describe(g.found)}`);
-      }
-      try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }
-      if (failed.length) {
-        log.appendLine('Could not delete:\n  ' + failed.join('\n  '));
-        vscode.window.showWarningMessage(`${failed.length} file${failed.length === 1 ? '' : 's'} could not be deleted; the output "Work Plan for Claude Code" lists them.`);
-      }
-    })().catch((e) => log.appendLine('deleting archived conversations: ' + (e && e.message)));
+    }
+    if (!want.length || !enabled() || removed()) return;
+    /* Which conversations are open is what keeps one in use from being deleted, so not knowing is a refusal, not an
+       empty list. */
+    let shown;
+    try { shown = typeof globalThis.__cceSessionsShown === 'function' ? globalThis.__cceSessionsShown() : null; } catch (_) { shown = null; }
+    if (!Array.isArray(shown)) {
+      vscode.window.showWarningMessage('Not deleted: this window could not tell which conversations are open, so none was deleted.');
+      return;
+    }
+    const running = deleteSession.runningSessions();
+    const busy = want.filter((w) => shown.includes(w.id) || running.has(w.id));
+    const free = want.filter((w) => !busy.includes(w));
+    const found = deleteSession.findAll(free.map((w) => w.id), {
+      planDir: planDir(),
+      extra: (id) => installs(webview).map((d) => path.join(d, 'webview', webview.EFFORT_PREFIX + id + '.css')),
+    });
+    const go = free.filter((w) => found.get(w.id).length).map((w) => ({ ...w, found: found.get(w.id) }));
+    if (!go.length) {
+      vscode.window.showInformationMessage(busy.length
+        ? `Not deleted: ${busy.map((b) => `"${b.title}"`).join(', ')} ${busy.length === 1 ? 'is' : 'are'} open or running.`
+        : 'Nothing of that conversation is left on disk.');
+      return;
+    }
+    const lines = go.map((g) => `"${g.title}": ${deleteSession.describe(g.found)}`);
+    if (busy.length) lines.push('', `Left alone, open or running: ${busy.map((b) => `"${b.title}"`).join(', ')}`);
+    lines.push('', 'This cannot be undone.');
+    const pick = await vscode.window.showWarningMessage(
+      go.length === 1 ? `Delete "${go[0].title}" from disk?` : `Delete ${go.length} conversations from disk?`,
+      { modal: true, detail: lines.join('\n') }, 'Delete');
+    if (pick !== 'Delete') return;
+    const failed = [];
+    for (const g of go) {
+      failed.push(...deleteSession.remove(g.found));
+      try { sessionPins.setPinned(pinsFile(), g.id, false); } catch (_) { /* not pinned */ }
+      log.appendLine(`Deleted "${g.title}" (${g.id}): ${deleteSession.describe(g.found)}`);
+    }
+    try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }
+    if (failed.length) {
+      log.appendLine('Could not delete:\n  ' + failed.join('\n  '));
+      vscode.window.showWarningMessage(`${failed.length} file${failed.length === 1 ? '' : 's'} could not be deleted; the output "Work Plan for Claude Code" lists them.`);
+    }
   };
   context.subscriptions.push({ dispose: () => {
     if (globalThis.__cceDeleteHook) delete globalThis.__cceDeleteHook;

@@ -11,7 +11,7 @@
  * reload. The patched host hands each closing to this extension (src/host.js), which keeps them per workspace across
  * reloads. Nothing more is decided here: the page leaves out the ones open again and shows as many as the setting says.
  */
-const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const { SESSION } = require('./claude-files');
 /* More than anyone would ask to see, so the setting can be raised without losing what was closed before. */
 const KEEP = 50;
 const KEY = 'cce.recentClosed';

@@ -17,21 +17,14 @@
  * is missing. A conversation in it that is not shown anywhere now, and whose tab title is not among the Claude Code tabs
  * VS Code did restore, is one VS Code dropped.
  */
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const { SESSION, projectsDir, transcriptOf } = require('./claude-files');
 
-const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /* More than this at once is more likely a record gone wrong than tabs a person had open. */
 const LIMIT = 20;
 
-const claudeDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-
 /** Whether a conversation still has a transcript, in any project folder. */
-function transcriptExists(id, projects = path.join(claudeDir(), 'projects')) {
-  let dirs;
-  try { dirs = fs.readdirSync(projects); } catch (_) { return false; }
-  return dirs.some((d) => { try { return fs.statSync(path.join(projects, d, id + '.jsonl')).isFile(); } catch (_) { return false; } });
+function transcriptExists(id, projects = projectsDir()) {
+  return !!transcriptOf(id, projects);
 }
 
 /*
