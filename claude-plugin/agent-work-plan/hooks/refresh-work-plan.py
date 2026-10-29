@@ -92,8 +92,9 @@ STANDARD_WINDOW_CEILING = 200_000
 # lands in a session's first rows, and a session that switched models writes another where it switched, which can be
 # megabytes from the end; a switch further back than the tail reached leaves the window undecided, and an undecided
 # window gets the standard marks too. That costs one early request, which is cheap: the request is a command per row.
-# What was decided is kept in the state file and used again while no new identity has been written and the transcript has
-# grown by less than ATTACHMENT_TAIL, so a session in that band does not read four megabytes after every batch.
+# What was decided is kept in the state file and used again while nothing that decides it - an identity or a cost row -
+# has been written since and the transcript has grown by less than ATTACHMENT_TAIL, so a session in that band does not
+# read four megabytes after every batch to reach the same answer.
 ATTACHMENT_HEAD = 1024 * 1024
 ATTACHMENT_TAIL = 3 * 1024 * 1024
 COST_STATE_MAX = 1024 * 1024
@@ -257,22 +258,23 @@ def on_1m_window(tail, bare=None):
     return None
 
 
-def switched_since(tail, offset):
-    """Whether a model-identity attachment has been written since the transcript was `offset` bytes long."""
-    return any(attachment_model(line) for line in tail.lines(tail.size - offset + 1))
+def evidence_since(tail, offset):
+    """Whether anything on_1m_window reads - a model-identity attachment or a cost row - has been written since the
+    transcript was `offset` bytes long."""
+    return any(attachment_model(line) or '"modelUsage"' in line for line in tail.lines(tail.size - offset + 1))
 
 
 VERDICTS = {True: "1M", False: "standard", None: "unknown"}
 
 
 def window_of(tail, state):
-    """on_1m_window, or what it said last time while that still stands: same model, no identity written since, and less
-    than ATTACHMENT_TAIL written since, so whatever decided it is still within reach."""
+    """on_1m_window, or what it said last time while that still stands: the same model, nothing it reads written since,
+    and less than ATTACHMENT_TAIL written since, so whatever decided it is still within reach."""
     bare = latest_bare_model(tail)
     if not bare:
         return None
     kept = state["window"]
-    if kept and kept[1] == bare and 0 <= tail.size - kept[2] <= ATTACHMENT_TAIL and not switched_since(tail, kept[2]):
+    if kept and kept[1] == bare and 0 <= tail.size - kept[2] <= ATTACHMENT_TAIL and not evidence_since(tail, kept[2]):
         return kept[0]
     verdict = on_1m_window(tail, bare)
     state["window"] = (verdict, bare, tail.size)
@@ -740,6 +742,12 @@ def selftest():
     check("  and what it decided stands while no identity has been written since", hook() == "")
     raw([identity("claude-opus-5"), call(183_000)], append=True)
     check("  until one is", "180,000" in said(hook()) and "- window: standard claude-opus-5 " in state_text())
+    os.remove(state)
+    raw([{"type": "cost-state", "modelUsage": {"claude-opus-5[1m]": {}}}, call(181_000)])
+    check("a cost row decides it when no identity does", hook() == "" and "- window: 1M claude-opus-5 " in state_text())
+    raw([{"type": "cost-state", "modelUsage": {"claude-opus-5[1m]": {}, "claude-opus-5": {}}}, call(184_000)], append=True)
+    check("  and a later cost row naming both variants makes it undecided again", "180,000" in said(hook())
+          and "- window: unknown claude-opus-5 " in state_text())
 
     # --- the in-turn event asks but never repeats itself ---
     write_plan(stale=True)
