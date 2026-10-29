@@ -125,7 +125,9 @@
     var msgs = document.querySelectorAll(ASSIST);
     // Both are already in hand, so aiming the text observer costs one walk up to the scrolling ancestor and a compare.
     aimText(bubbles[0] || msgs[0]);
-    var seen = [], seenSet = {}, shownRows = 0, fullMsgs = 0, settledMsgs = 0, blocks = 0;
+    // A reply behind the newest ones whose owner this sweep records settles on the next one, which is asked for rather
+    // than left to whatever changes the page next: the page may well not change again until a reply grows.
+    var seen = [], seenSet = {}, shownRows = 0, fullMsgs = 0, settledMsgs = 0, blocks = 0, settleNext = false;
     var agentView = (VIEW !== 'all' && VIEW !== 'main'), acts = [];
     // Each owner's effort run, carried through the replies in document order (76-effort.js).
     var effState = {};
@@ -197,6 +199,7 @@
         set(row, lead(v));
       }
       if (uus.length) UUIDS_OF.set(msgs[j], uus);
+      if (ownerDone && j < msgs.length - LIVE_TAIL) settleNext = true;
       if (tools) {
         ACTS_OF.set(msgs[j], tools);
         if (agentView && own === VIEW) acts.push.apply(acts, tools);
@@ -226,6 +229,7 @@
              controls: clock() - tF, total: clock() - tA,
              bubbles: bubbles.length, msgs: msgs.length, full: fullMsgs, settled: settledMsgs, blocks: blocks,
              fiber: WALK.fiber - wF, text: WALK.text - wT });
+    if (settleNext) schedule();
   };
   var queued = false, last = 0;
   var sweptElements = 0, firstSweepMs = 0, sweeps = 0, bootAt = 0;
@@ -352,24 +356,46 @@
     for (var k = 0; k < want.length; k++) mode.parentElement.insertBefore(want[k], mode);
   };
 
+  /* The nodes this script adds - labels, lists, menus, boxes, the footer buttons - change their own children all the
+     time, the tool clock once a second, and nothing inside them is a message. */
+  var OWN_NODES = '[data-cce-toolclock],[data-cce-label],[data-cce-info],[data-cce-mute],[data-cce-view],[data-cce-focus-btn],[id^="cce-"]';
+  var ours = function(n){
+    var el = n && (n.nodeType === 1 ? n : n.parentElement);
+    return !!(el && el.closest && el.closest(OWN_NODES));
+  };
+  var oursOnly = function(rec){
+    if (ours(rec.target)) return true;
+    // One of ours put into a node of the panel's, or taken out of one.
+    if (rec.type !== 'childList' || !(rec.addedNodes.length + rec.removedNodes.length)) return false;
+    for (var a = 0; a < rec.addedNodes.length; a++) if (!ours(rec.addedNodes[a])) return false;
+    for (var d = 0; d < rec.removedNodes.length; d++) if (!ours(rec.removedNodes[d])) return false;
+    return true;
+  };
   var onMutations = function(records){
     /* Changes inside the document's head are stylesheets coming and going - this script's own reloads among them - and
        none of them can change a message. A panel that mounts something there changes the body as well, which is what
-       gets swept. Without this, every reload of a stylesheet was a sweep of its own. */
+       gets swept. Without this, every reload of a stylesheet was a sweep of its own. The same goes for our own nodes. */
     for (var r = 0; r < records.length; r++) {
       var t = records[r].target;
-      if (t !== head && !(t && t.parentNode === head)) { schedule(); return; }
+      if (t === head || (t && t.parentNode === head) || oursOnly(records[r])) continue;
+      schedule();
+      return;
     }
   };
 
-  var aimed = null, aimer = null;
+  var aimed = null, aimer = null, aimedAtScroller = false;
   var aimText = function(anyMessage){
     if (!anyMessage) return;
-    var root = scrollerOf(anyMessage) || anyMessage.parentElement;
+    /* Still the scroller the messages are in, so it is not looked for again: finding it reads the style and the size of
+       each ancestor, which forces a style and layout pass in the middle of the sweep's writes. */
+    if (aimedAtScroller && aimed.isConnected && aimed.contains(anyMessage)) return;
+    var sc = scrollerOf(anyMessage), root = sc || anyMessage.parentElement;
+    aimedAtScroller = !!sc;
     if (!root || root === aimed) return;
     if (aimer) aimer.disconnect();
     aimer = new MutationObserver(onMutations);
-    aimer.observe(root, { childList: true, subtree: true, characterData: true });
+    // Text only: the document's observer already reports every child added or taken away, these included.
+    aimer.observe(root, { characterData: true, subtree: true });
     aimed = root;
   };
 
@@ -403,25 +429,6 @@
    * blocks painting. Before this, the mutation observer and an immediate first sweep both ran while the first paint was
    * still pending - work the panel had to get through before it could show anything at all.
    */
-  /*
-   * TEMPORARY, part of one investigation - delete with the host-busy watcher in src/openlatency.js once the panel's slow
-   * first message is understood.
-   *
-   * One line as this script is reached, before anything else, so that a panel that never finishes starting still says
-   * where it got to.
-   *
-   * The report below is the fuller one and is printed after the first sweep - which is no use for a panel that stalls
-   * before then: the console is simply empty, and an empty console cannot be told apart from a script that never ran at
-   * all. This line distinguishes those two, and its number answers the question directly, because this script is appended
-   * AFTER the panel's own code: the time on it is the time the panel's bundle finished evaluating. A panel seen taking 94
-   * seconds to send its first message is then settled one way or the other - a large number here means the delay was over
-   * before anything of ours existed, and a small one means the bundle was ready early and the wait is further in.
-   */
-  try {
-    console.log('[claude-code-extras] script reached at ' + Math.round(T0)
-      + 'ms (panel bundle had finished evaluating by then; this script is appended after it)');
-  } catch (e) {}
-
   reloadCss();
   var booted = false;
   var boot = function(){

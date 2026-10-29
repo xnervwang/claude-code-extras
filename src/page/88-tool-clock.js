@@ -115,7 +115,9 @@
     return null;
   };
 
-  var clockText = '', clockW = 0, clockH = 0, clockQueued = false;
+  // The long form and the short form, each in a span of the label: both are written and then both measured, so a tick
+  // costs one layout however many forms it tries, and only the one that fits is shown.
+  var clockSpans = null, clockTexts = ['', ''], clockW = [0, 0], clockH = 0, clockQueued = false;
   var hideToolClock = function(){ if (TOOLCLOCK) setStyle(TOOLCLOCK, 'display', 'none'); };
   var inView = function(r){ return !!r && r.width > 0 && r.bottom >= 0 && r.top <= (window.innerHeight || 0); };
   // A scroll moves the row, and nothing else about the label changes: one placement a frame, with the size already known.
@@ -129,10 +131,13 @@
       setStyle(TOOLCLOCK, 'top', Math.round(r.top + (r.height - clockH) / 2) + 'px');
     });
   };
-  var setClockText = function(text){
-    if (text === clockText) return;
-    TOOLCLOCK.textContent = clockText = text;
-    clockW = TOOLCLOCK.offsetWidth; clockH = TOOLCLOCK.offsetHeight;
+  var setClockTexts = function(long, short){
+    if (long === clockTexts[0] && short === clockTexts[1]) return;
+    setStyle(clockSpans[0], 'display', ''); setStyle(clockSpans[1], 'display', '');
+    clockSpans[0].textContent = clockTexts[0] = long;
+    clockSpans[1].textContent = clockTexts[1] = short;
+    clockW = [clockSpans[0].offsetWidth, clockSpans[1].offsetWidth];
+    clockH = TOOLCLOCK.offsetHeight;
   };
   var paintToolClock = function(){
     // Signals first: the panel draws its indicator only while visibly busy and not waiting on a permission prompt, and
@@ -151,16 +156,20 @@
       var s = TOOLCLOCK.style;
       s.position = 'fixed'; s.zIndex = '30'; s.pointerEvents = 'none'; s.whiteSpace = 'nowrap';
       s.fontSize = '11px'; s.opacity = '0.8'; s.color = 'var(--vscode-descriptionForeground, #9d9d9d)';
+      clockSpans = [document.createElement('span'), document.createElement('span')];
+      TOOLCLOCK.appendChild(clockSpans[0]); TOOLCLOCK.appendChild(clockSpans[1]);
       document.body.appendChild(TOOLCLOCK);
-      clockText = '';
+      clockTexts = ['', ''];
       try { window.addEventListener('scroll', followScroll, { capture: true, passive: true }); } catch (e) {}
     }
     setStyle(TOOLCLOCK, 'display', 'block');
     var state = toolState(list), floor = workingBox.getBoundingClientRect().right + 12, now = Date.now();
+    setClockTexts(toolClockText(state, now, false), toolClockText(state, now, true));
     for (var pass = 0; pass < 2; pass++) {
-      setClockText(toolClockText(state, now, pass === 1));
-      var left = Math.round(r.right - 8 - clockW);
+      var left = Math.round(r.right - 8 - clockW[pass]);
       if (left >= floor) {
+        setStyle(clockSpans[0], 'display', pass === 0 ? '' : 'none');
+        setStyle(clockSpans[1], 'display', pass === 1 ? '' : 'none');
         setStyle(TOOLCLOCK, 'left', left + 'px');
         setStyle(TOOLCLOCK, 'top', Math.round(r.top + (r.height - clockH) / 2) + 'px');
         return;

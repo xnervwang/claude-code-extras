@@ -58,7 +58,8 @@ function findBrowser() {
    that ships. */
 const SETUP = String.raw`
   window.requestAnimationFrame = function(cb){ return setTimeout(function(){ cb(performance.now()); }, 16); };
-  var COUNT = { cdp: 0, qsa: 0, text: 0, dates: 0 };
+  var COUNT = { cdp: 0, qsa: 0, text: 0, dates: 0, gcs: 0 };
+  var OBSERVED = [];
   /* Dates made, which is what formatting a time costs: counted to tell a sweep that formats only what is new from one
      that formats every message again. */
   (function(){
@@ -102,8 +103,27 @@ const SETUP = String.raw`
     Element.prototype.querySelectorAll = function(s){ COUNT.qsa++; return eq.call(this, s); };
     var tc = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
     Object.defineProperty(Node.prototype, 'textContent', { configurable: true, enumerable: tc.enumerable, get: tc.get,
-      set: function(v){ COUNT.text++; tc.set.call(this, v); } });
+      set: function(v){ COUNT.text++; if (CFG.busyClock) clockWrite(this); tc.set.call(this, v); } });
+    // Every read of the computed style, which makes the browser work the page's styles out.
+    var gcs = window.getComputedStyle;
+    window.getComputedStyle = function(){ COUNT.gcs++; return gcs.apply(window, arguments); };
+    // The options every observer is started with, so a run can say what each one watches.
+    var obs = MutationObserver.prototype.observe;
+    MutationObserver.prototype.observe = function(target, opts){ OBSERVED.push(opts || {}); return obs.call(this, target, opts); };
   })();
+  /* The tool clock's own text writes and the layouts its size reads force: a read after a write lays the page out. */
+  var CLOCK = { writes: 0, layouts: 0, dirty: false };
+  var inClock = function(el){ return !!(el && el.nodeType === 1 && el.closest && el.closest('[data-cce-toolclock]')); };
+  var clockWrite = function(el){ if (inClock(el)) { CLOCK.writes++; CLOCK.dirty = true; } };
+  if (CFG.busyClock) {
+    ['offsetWidth', 'offsetHeight'].forEach(function(k){
+      var d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, k);
+      Object.defineProperty(HTMLElement.prototype, k, { configurable: true, get: function(){
+        if (CLOCK.dirty && inClock(this)) { CLOCK.layouts++; CLOCK.dirty = false; }
+        return d.get.call(this);
+      } });
+    });
+  }
 
   var FIBER = '__reactFiber$ccetest';
   var SUB = 'toolu_sub1';
@@ -115,6 +135,20 @@ const SETUP = String.raw`
   // A window and a token count, so the newest reply's figures say whose they are: 10% here, 50% in the conversation a
   // switch moves to.
   if (CFG.switchSession) session.usageData = { value: { totalTokens: 100000, contextWindow: 1000000 } };
+  /* A turn at work in Focus view, on a tool call that has not come back: the working line is drawn, and the tool clock
+     at its end counts the seconds. The line is narrow enough that only the clock's short form fits. */
+  if (CFG.busyClock) {
+    session.visiblyBusy = { value: true };
+    session.messages = { value: [
+      { type: 'user', timestamp: Date.now() - 5000, content: [{ content: { type: 'text' } }] },
+      { type: 'assistant', timestamp: Date.now() - 4000, content: [{ content: { type: 'tool_use', name: 'Bash' } }] },
+    ] };
+    var working = document.createElement('div');
+    working.className = 'spinnerRow_s1';
+    working.style.cssText = 'width:300px;height:20px;font-size:11px';
+    working.innerHTML = '<span style="display:inline-block"><span class="visuallyHidden_v1">Claude is working</span>Working</span>';
+    document.body.insertBefore(working, document.body.firstChild);
+  }
   // A panel learns which conversation it shows only once the bundle has asked, which can be after the first probe; the
   // efforts then come with the next one, inside what would otherwise have been the idle spell.
   if (CFG.efforts && CFG.efforts.sidAfterMs) setTimeout(function(){ session.sessionId.value = CFG.efforts.sid; }, CFG.efforts.sidAfterMs);
@@ -219,7 +253,7 @@ const SETUP = String.raw`
 const PHASES = String.raw`
   var R = { script: !!window.__cceStats };
   var stats = function(){ return window.__cceStats ? window.__cceStats() : null; };
-  var snap = function(){ var s = stats(); return { n: s ? s.n : -1, cdp: COUNT.cdp, qsa: COUNT.qsa, text: COUNT.text, dates: COUNT.dates }; };
+  var snap = function(){ var s = stats(); return { n: s ? s.n : -1, cdp: COUNT.cdp, qsa: COUNT.qsa, text: COUNT.text, dates: COUNT.dates, gcs: COUNT.gcs }; };
   var finish = function(){ document.getElementById('out').textContent = 'CCE-' + 'RESULT:' + JSON.stringify(R); };
   var later = function(ms, f){
     setTimeout(function(){ try { f(); } catch (e) { R.error = String(e && e.stack || e); finish(); } }, ms);
@@ -283,6 +317,11 @@ const PHASES = String.raw`
       R.idleSweeps = b.n - a.n;
       R.idleChild = mut.child; R.idleAttr = mut.attr; R.idleChars = mut.chars; R.idleText = b.text - a.text;
       R.probesMade = PROBES.made; R.probesCancelled = PROBES.cancelled;
+      // The page's own observers; the harness's, the one that watches attributes, is left out.
+      R.observed = OBSERVED.filter(function(o){ return !o.attributes; });
+      var clock = document.querySelector('[data-cce-toolclock]');
+      R.clockText = clock && clock.style.display === 'block' ? clock.innerText : '';
+      R.clockWrites = CLOCK.writes; R.clockLayouts = CLOCK.layouts;
       /* For each reply, which child carries the figures - the reply's duration is the one figure every reply has. */
       R.figuresAt = [];
       var replyEls = document.querySelectorAll('[data-testid="assistant-message"]');
@@ -329,7 +368,7 @@ const PHASES = String.raw`
     b = snap();
     var s = stats(), last = s && s.last;
     R.growSweeps = b.n - a.n; R.growCdp = b.cdp - a.cdp; R.growQsa = b.qsa - a.qsa; R.growText = b.text - a.text;
-    R.growDates = b.dates - a.dates;
+    R.growDates = b.dates - a.dates; R.growGcs = b.gcs - a.gcs;
     R.fiber = last ? last.fiber : -1; R.full = last ? last.full : -1;
     R.msgs = last ? last.msgs : -1; R.bubbles = last ? last.bubbles : -1;
     a = snap();

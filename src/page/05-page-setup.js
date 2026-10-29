@@ -200,7 +200,7 @@
         if (sheet.href !== l.href) forget(sheet.href);
         if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
       }
-      sheet = l; loadedOnce = true; onCache = null; offCache = {}; pinsCache = null;
+      sheet = l; loadedOnce = true; onCache = null; offCache = {}; pinsCache = null; propCache = {};
       if (fallback && fallback.parentNode) { fallback.parentNode.removeChild(fallback); fallback = null; }
       try { repaintPins(); } catch (e) { /* the next render of the list draws them anyway */ }
       schedule();
@@ -208,7 +208,7 @@
     l.onerror = function(){
       if (loading === l) loading = null;
       if (l.parentNode) l.parentNode.removeChild(l);
-      useFallback(); onCache = null; offCache = {}; pinsCache = null; schedule();
+      useFallback(); onCache = null; offCache = {}; pinsCache = null; propCache = {}; schedule();
     };
     loading = l;
     head.appendChild(l);

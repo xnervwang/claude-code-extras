@@ -136,6 +136,11 @@ else bad(`the injected script calls ${undeclared.length} name(s) it never declar
 if (webview.SCRIPT.includes('!out.message; f = f.return')) ok('hot loop keeps its early exit');
 else bad('hot loop lost its early exit — the fiber walk will run to full depth on every element');
 
+/* The injected script runs in every panel, so a diagnostic written for one investigation stays in all of them for as long
+   as nobody removes it - and the word that says it may go is the one way the next reader learns that it may. */
+if (!/TEMPORARY/.test(webview.SCRIPT)) ok('the injected script carries nothing marked temporary');
+else bad('the injected script carries code marked TEMPORARY, which belongs to an investigation that should be over');
+
 /* What the page writes on every sweep or every tick has to be skipped when it would not change. Writing text is a
    mutation, the page's own observer answers a mutation with a sweep, and the sweep reaches these writes again - so one
    unconditional write keeps the page sweeping four times a second with nothing happening on it. Measured with the real
@@ -307,6 +312,25 @@ console.log('\nwhat the page costs, in a browser');
       }
       /* A reply growing is what drives sweeps in use. Ordering two messages costs the browser a walk along every message
          between them, so a sweep that compares at all costs in proportion to the conversation squared. */
+      /* The text observer stays on the scroller it found while the messages are still in it: looking for it again reads
+         the style of every ancestor, which forces a style pass in the middle of a sweep's writes. */
+      const styled = runs.filter(([, r]) => r.growGcs !== 0);
+      if (!styled.length) ok('while a reply grows, a sweep reads no computed style');
+      else bad('while a reply grew, sweeps read the computed style: ' + styled.map(([what, r]) => `${what}: ${r.growGcs} reads in ${r.growSweeps} sweeps`).join('; '));
+      /* One observer for children added and taken away, on the whole document; the one on the message list watches text
+         alone, or each such change inside the list would be handed over twice. */
+      const watchers = runs.filter(([, r]) => !((r.observed || []).filter((o) => o.childList).length === 1
+        && (r.observed || []).some((o) => o.characterData && !o.childList)));
+      if (!watchers.length) ok('one observer watches for children coming and going, and the message list\'s watches text alone');
+      else bad('what the page\'s observers watch: ' + watchers.map(([what, r]) => `${what}: ${JSON.stringify(r.observed)}`).join('; '));
+      /* The tool clock counts the seconds on the working line in Focus view. Its own text changing starts no sweep, and its
+         two forms are written and then measured together: one layout for each change of its text, not one per form. */
+      const clocked = harness.run(browser, { turns: 20, focus: true, busyClock: true });
+      if (!clocked.error && /^Bash \d+s$/.test(clocked.clockText) && clocked.idleSweeps === 0 && clocked.clockWrites > 0
+          && clocked.clockLayouts * 2 <= clocked.clockWrites) {
+        ok(`the tool clock counting seconds starts no sweep, and lays the page out once per change (${clocked.clockLayouts} for ${clocked.clockWrites} text writes)`);
+      } else bad('the tool clock while it counts: ' + (clocked.error || JSON.stringify({ text: clocked.clockText, sweeps: clocked.idleSweeps,
+        writes: clocked.clockWrites, layouts: clocked.clockLayouts })));
       const busy = runs.filter(([, r]) => !(r.growSweeps >= 4 && r.growCdp === 0 && r.growText === 0));
       if (!busy.length) ok('while a reply grows, a sweep compares no positions and writes no text');
       else bad('while a reply grew: ' + busy.map(([what, r]) =>
@@ -1348,6 +1372,19 @@ console.log('\nscheduled prompts');
     if (api.__cceSchedule(h) !== null) bad("another session's task leaked into this panel");
     else ok("another session's task is not shown here");
 
+  }
+  /* Read once per stylesheet: the agent map asks on every render, and each read of the computed style makes the page work
+     its styles out. Each way a stylesheet arrives clears what was read (05-page-setup.js). */
+  {
+    let reads = 0;
+    const sb = Object.assign({}, sandbox, { window: {},
+      getComputedStyle: () => { reads++; return { getPropertyValue: () => `"${packed}"` }; } });
+    new vm.Script(`(function(){${fragment}})()`, { filename: '82-scheduled-tasks.js' }).runInNewContext(sb);
+    for (let i = 0; i < 5; i++) sb.window.__cceSchedule(h);
+    const setup = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '05-page-setup.js'), 'utf8');
+    const cleared = (setup.match(/pinsCache = null; propCache = \{\};/g) || []).length;
+    if (reads === 2 && cleared === 2) ok('five renders of the agent map read each of its two properties once, and a stylesheet arriving clears them');
+    else bad(`five renders read the computed style ${reads} times; the two ways a stylesheet arrives clear the reads ${cleared} time(s)`);
   }
 
   /* How each schedule reads, taken off the rendered row rather than from the function, which lives inside the closure.
@@ -2527,7 +2564,7 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`summarise gave ${JSON.stringify(rows)}`);
     fs.rmSync(root, { recursive: true, force: true });
   }
-  /* The host-busy watcher is temporary and spread over three files, so each place that carries it has to say so. A
+  /* The host-busy watcher is temporary and spread over two files, so each place that carries it has to say so. A
      diagnostic whose own code no longer admits to being one is a diagnostic nobody will ever remove: the comment is the
      only thing that licenses deleting it, and by the time anyone wonders, the investigation it belongs to will be months
      past. Checked rather than trusted because the three are easy to edit apart. */
@@ -2535,7 +2572,6 @@ console.log('\nthe waiting, paired out of the official log');
     const marked = [
       ['src/openlatency.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
       ['extension.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
-      ['src/page/99-sweep.js', 'TEMPORARY, part of one investigation'],
       ['src/openlatency.js', 'TEMPORARY, part of the investigation at writeAtomic'],
       ['extension.js', 'TEMPORARY, part of that same investigation'],
     ];
@@ -4433,7 +4469,7 @@ console.log('\nconversations pinned in the session list');
     env.isOff = (k) => (k === 'sessionDates' ? !env.sessionDates : false);
     vm.createContext(env);
     vm.runInContext('var pinsCache = null;' + frag('15-format.js') + frag('82-scheduled-tasks.js') + frag('83-session-pins.js')
-      + ';this.reset = function(){ pinsCache = null; };', env);
+      + ';this.reset = function(){ pinsCache = null; propCache = {}; };', env);
     const h = (type, props, key) => ({ type, props, key });
     const rowOf = (id, onDisk = true) => ({ sessionId: { value: id }, transcriptOnDisk: onDisk });
     const draw = (id, onDisk) => env.window.__ccePin(h, rowOf(id, onDisk));
