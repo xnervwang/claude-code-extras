@@ -164,10 +164,27 @@ def respond(payload, now, directory=None):
         if latest_reply_matches(tail, limits["quietWhenReplyMatches"]):
             return ""
         # The transcript's last usage is still the context from before the compaction, so the count starts again here.
+        # That reading is kept: every message until the next model call reads the same figure, and taken at its word it
+        # would say the context had grown by all of it at once.
         now_seen = seen(*found, 0)
+        before = current_context(tail)
+        if before:
+            now_seen["compactedFrom"] = before
     else:
-        now_seen = seen(*found, current_context(tail) or 0)
-        if path and not due(read_told(path), now_seen):
+        told = read_told(path) if path else None
+        context = current_context(tail) or 0
+        before = told.get("compactedFrom") if isinstance(told, dict) else None
+        if isinstance(before, int) and context >= before:
+            context = 0
+        else:
+            before = None
+        now_seen = seen(*found, context)
+        if before is not None:
+            now_seen["compactedFrom"] = before
+        if path and not due(told, now_seen):
+            if isinstance(told, dict) and "compactedFrom" in told and before is None:
+                # The first reading from after the compaction: from here on the context counts as it reads.
+                write_told(path, {k: v for k, v in told.items() if k != "compactedFrom"})
             return ""
     if path:
         write_told(path, now_seen)
@@ -256,10 +273,24 @@ def selftest():
         check("the machine's date turning over says it again", respond(message, summer + 7 * 3600 + 24 * 60, tmp) != "")
         # 00:05 in Los Angeles: now the user's turns over.
         check("and so does the user's", respond(message, summer + 14 * 3600 + 24 * 60, tmp) != "")
-        check("a compaction always says it", respond(dict(message, hook_event_name="SessionStart", source="compact"),
-                                                     summer + 14 * 3600 + 30 * 60, tmp) != "")
+        compacted = dict(message, hook_event_name="SessionStart", source="compact")
+        check("a compaction always says it", respond(compacted, summer + 14 * 3600 + 30 * 60, tmp) != "")
+        check("and the message after it, still reading the context from before the compaction, is not told again",
+              respond(message, summer + 14 * 3600 + 35 * 60, tmp) == "")
         context(30_000)
         check("and the count starts again from there", respond(message, summer + 14 * 3600 + 40 * 60, tmp) == "")
+        context(REPEAT_TOKENS - 1)
+        check("  counting from the compaction", respond(message, summer + 14 * 3600 + 45 * 60, tmp) == "")
+        context(REPEAT_TOKENS)
+        check("  until the context has grown by the spacing", respond(message, summer + 14 * 3600 + 50 * 60, tmp) != "")
+        context(80_000)
+        respond(compacted, summer + 14 * 3600 + 55 * 60, tmp)
+        respond(message, summer + 14 * 3600 + 56 * 60, tmp)
+        context(20_000)
+        respond(message, summer + 14 * 3600 + 57 * 60, tmp)
+        context(REPEAT_TOKENS)
+        check("once a reading from after the compaction is seen, the one from before it no longer reads as zero",
+              respond(message, summer + 14 * 3600 + 58 * 60, tmp) != "")
         check("a change of offset says it again", respond(message, winter, tmp) != "")
         check("a message with no session id is still told", respond(dict(message, session_id=""), summer, tmp) != "")
         write("config.json", json.dumps({"tellTimeZone": False}))
