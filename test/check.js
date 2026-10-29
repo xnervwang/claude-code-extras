@@ -2057,6 +2057,35 @@ console.log('\none live stylesheet, several windows');
     ok(`at the cap of ${tasks.MAX_TASKS}, which tasks survive does not depend on that order either`);
   } else bad('at the cap, the surviving tasks still depend on the order the directories arrived in');
 
+  /* Which directories to read, kept in a store every window shares. Each window put its own folders first and wrote the
+     store whenever the order differed, so two windows with different folders rewrote it on every refresh; and past the
+     cap each kept a different set, so the tasks and the stylesheet differed between them. Two windows, taking turns: */
+  {
+    const day = 86400000, t0 = Date.UTC(2026, 9, 29, 12);
+    const isDir = () => true;
+    const many = Array.from({ length: tasks.MAX_DIRS + 8 }, (_, i) => '/p/' + String(i).padStart(2, '0'));
+    const windowA = ['/p/a', ...many.slice(0, 20)], windowB = ['/p/b', ...many.slice(20)];
+    let store = ['/p/old-list', '/p/a'];
+    const writes = [], lists = [];
+    for (let round = 0; round < 4; round++) {
+      for (const [name, open] of [['A', windowA], ['B', windowB]]) {
+        const r = tasks.rememberDirs(store, open, { now: t0 + round * 60000, isDir });
+        if (r.changed) { writes.push(name + round); store = r.store; }
+        lists.push(JSON.stringify(r.dirs));
+      }
+    }
+    const settled = lists.slice(-4);
+    if (writes.length <= 2 && new Set(settled).size === 1 && JSON.parse(settled[0]).length === tasks.MAX_DIRS) {
+      ok(`two windows with different folders open settle on one list of ${tasks.MAX_DIRS} directories and stop rewriting the store`);
+    } else bad(`two windows taking turns wrote ${JSON.stringify(writes)} and read ${settled.map((l) => JSON.parse(l).length).join('/')} directories`);
+    const later = tasks.rememberDirs(store, windowA, { now: t0 + day, isDir });
+    const gone = tasks.rememberDirs({ '/p/a': 1, '/nowhere': 1 }, [], { now: t0, isDir: (d) => d !== '/nowhere' });
+    const legacy = tasks.rememberDirs(['/p/x', '/p/y'], [], { now: t0, isDir });
+    if (later.changed && gone.dirs.join() === '/p/a' && legacy.dirs.join() === '/p/x,/p/y' && legacy.changed) {
+      ok('the store changes again when a day turns, drops a directory that is gone, and reads the list an earlier build kept');
+    } else bad(`a day on changed ${later.changed}; with one gone ${JSON.stringify(gone.dirs)}; from a list ${JSON.stringify(legacy.dirs)}`);
+  }
+
   const wv = path.join(root, 'webview');
   fs.mkdirSync(wv, { recursive: true });
   const css = path.join(wv, 'claude-code-extras.css');
@@ -3724,10 +3753,14 @@ console.log('\nan uninstall puts Claude Code back at once');
     const checks = [
       ['deactivate restores and hands the rest on, and only for an uninstall',
         /beingUninstalled\(selfPath, ID\)/.test(deact) && /restoreAll/.test(deact) && /finishLater/.test(deact)],
-      ['a window that has not restarted yet restores rather than patching again', /if \(removed\(\) \|\| leaving\)/.test(ext)],
+      /* Another editor on this machine can have this extension installed and running; sweeping its folder from here took
+         its patch out from under it. The uninstall hook, run when this folder is deleted, is what looks everywhere. */
+      ['deactivate restores only this editor\'s extensions folder', /removal\.restoreAll\(\[path\.dirname\(selfPath\)\]\)/.test(deact) && !/roots\(/.test(deact)],
+      ['a window that has not restarted yet restores rather than patching again',
+        /const restoring = removed\(\) \|\| leaving;/.test(ext) && /if \(restoring\) \{\s*const r = adapter\.restore\(dir\);/.test(ext)],
       ['and writes no stylesheet back',
-        /const writeLiveNow = \(\) => \{\s*if \(uninstalling\(\)( \|\| replaced\(\))?\) return;/.test(ext)
-        && /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\)( \|\| replaced\(\))?\) return;/.test(ext)],
+        /const writeLiveNow = \(\) => \{\s*if \(removed\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;/.test(ext)
+        && /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) \{ unwatchEffort\(\); return; \}/.test(ext)],
       ['the uninstall hook restores through the same code', /removal\.restoreAll\(removal\.roots\(/.test(un) && !/adapter\.restore\(/.test(un)],
     ];
     for (const [what, pass] of checks) {
@@ -4032,13 +4065,166 @@ console.log('\na window whose install was replaced by a rebuild of the same vers
   fs.rmSync(dir, { recursive: true, force: true });
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   const guarded = [
-    ['writing the live stylesheet', /const writeLiveNow = \(\) => \{\s*if \(uninstalling\(\) \|\| replaced\(\)\) return;/],
+    ['writing the live stylesheet', /const writeLiveNow = \(\) => \{\s*if \(removed\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;/],
     ['patching or restoring', /async function sync\([^)]*\) \{\s*if \(replaced\(\)\) \{/],
-    ['the timed refresh', /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;\s*scanBackground\(\);/],
+    ['the timed refresh', /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) \{ unwatchEffort\(\); return; \}\s*scanBackground\(\);/],
+    ['the efforts beside the panel', /if \(!r \|\| !r\.css \|\| removed\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;\s*for \(const dir of installs\(webview\)\) webview\.writeEffort/],
+    ['the record of background sessions', /const scanBackground = \(\) => \{\s*if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\) \|\|/],
   ];
   const missing = guarded.filter(([, re]) => !re.test(ext)).map(([what]) => what);
   if (!missing.length) ok('a replaced window writes nothing shared: ' + guarded.map(([what]) => what).join(', '));
   else bad('not guarded against a replaced install: ' + missing.join(', '));
+}
+
+/* A window still running an older version of this extension after a newer one was installed beside it: its folder is
+   marked for deletion, and another version's is not. It is neither being uninstalled nor reinstalled over, so it went on
+   syncing - read the newer build's marker as outdated, patched both bundles back to its own edits on any settings or
+   extensions change, and took turns with every window that had reloaded. It counts as replaced. */
+console.log('\na window still running a version that another one has replaced');
+{
+  const removal = require('../src/removal');
+  const ID = 'xnervwang.claude-code-extras';
+  const old = ID + '-1.0.17', next = ID + '-1.0.18';
+  const stage = (folders, marked, stamp) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-standing-'));
+    for (const f of folders) {
+      fs.mkdirSync(path.join(dir, f));
+      fs.writeFileSync(path.join(dir, f, 'package.json'), JSON.stringify({ name: 'x', __metadata: { installedTimestamp: stamp || 1000 } }));
+    }
+    fs.writeFileSync(path.join(dir, '.obsolete'), JSON.stringify(Object.fromEntries(marked.map((m) => [m, true]))));
+    return dir;
+  };
+  const cases = [
+    ['a newer version installed beside it, its own folder marked: replaced', [old, next], [old], 1000, 'replaced'],
+    ['an older version installed in its place, its own folder marked: replaced', [next, old], [next], 1000, 'replaced', next],
+    ['its own folder marked and no other version left: being uninstalled', [old], [old], 1000, 'uninstalling'],
+    ['the same version installed again over it: replaced', [old], [], 2000, 'replaced'],
+    ['nothing marked and the same install: neither', [old, next], [], 1000, ''],
+  ];
+  for (const [what, folders, marked, stamp, want, mine] of cases) {
+    const dir = stage(folders, marked, stamp);
+    const got = removal.standing(path.join(dir, mine || old), ID, 1000);
+    (got === want ? ok : bad)(got === want ? what : `${what}: said ${JSON.stringify(got)}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  /* Claude Code's own folders: a sibling marked for deletion is a build nobody runs, so it is not patched - but the one
+     this window runs stays whatever its mark, and taking the patch back out still reaches every folder. */
+  const dirs = ['/x/anthropic.claude-code-2.1.311', '/x/anthropic.claude-code-2.1.312', '/x/anthropic.claude-code-2.1.313'];
+  const marked = { 'anthropic.claude-code-2.1.311': true, 'anthropic.claude-code-2.1.312': true };
+  const got = removal.unmarked(dirs, dirs[1], marked);
+  if (JSON.stringify(got) === JSON.stringify(dirs.slice(1))) ok('a Claude Code folder marked for deletion is left unpatched, unless it is the one this window runs');
+  else bad(`the installs to patch were ${JSON.stringify(got)}`);
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/const replaced = \(\) => standing\(\) === 'replaced';/.test(ext) && /removal\.standing\(context\.extensionPath, ID, loadedStamp/.test(ext)
+    && /return all \? found : removal\.unmarked\(found, ext\.extensionPath, markedIn\(root\)\);/.test(ext)
+    && /for \(const dir of installs\(adapter, restoring\)\)/.test(ext)) {
+    ok('the extension takes a replaced build from that one reading, patches no marked sibling, and restores every one');
+  } else bad('extension.js does not take replaced from removal.standing, or still patches the marked siblings');
+}
+
+/* What a tick and a change of setting cost, read from the source since they need the editor to run. Each was cheap on
+   its own and paid several times over: two half-minute timers doing much the same, four listeners on the settings, the
+   marks and the manifest re-read three or four times a tick, a couple of dozen fresh copies of the settings per tick, the
+   live stylesheet's options worked out for each bundle though only the panel's uses them, and a colour change re-reading
+   ten megabytes of bundles. */
+console.log('\nwhat a tick and a change of setting cost');
+{
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const count = (re) => (ext.match(re) || []).length;
+  const listener = (/context\.subscriptions\.push\(vscode\.workspace\.onDidChangeConfiguration\(\(e\) => \{([\s\S]*?)\n  \}\)\);/.exec(ext) || [])[1] || '';
+  const checks = [
+    ['one listener on the settings', count(/onDidChangeConfiguration\(/g) === 1],
+    ['one half-minute timer', count(/setInterval\([^\n]*REFRESH_MS\)|\}, REFRESH_MS\);/g) === 1],
+    ['the settings read once until they change', /const cfg = \(\) => settings \|\| \(settings = vscode\.workspace\.getConfiguration\(\)\);/.test(ext)
+      && /^\s*settings = null;/.test(listener)],
+    ['where this build stands read once per turn', /const standing = perTick\(/.test(ext) && !/removal\.(beingUninstalled|replacedSince)\(context/.test(ext)],
+    ['the live options worked out once per sync, for the panel only', /adapter\.apply\(dir, adapter === webview \? \(opts \|\| \(opts = options\(\)\)\) : undefined\)/.test(ext)],
+    ['a setting of the panel\'s writes the stylesheet and nothing more', /writeLiveNow\(\);\s*$/.test(listener) && !/sync\(/.test(listener)],
+    ['a patch already in is told by the adapter\'s answer, not its words', /typeof r\.current === 'boolean' \? r\.current :/.test(ext) && /else if \(!r\.changed && !current\)/.test(ext)],
+  ];
+  for (const [what, pass] of checks) (pass ? ok : bad)(what);
+
+  /* The host's half of that answer: a backup that carries a patch of its own is reported as such. It used to come back as
+     "already patched", the very words that mean nothing is wrong, so the bundle stayed outdated without a warning. */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-current-'));
+  try {
+    fs.writeFileSync(host.hostFile(dir), host.ANY_MARK + '1-000000000000 */\nold');
+    fs.writeFileSync(host.hostFile(dir) + host.BACKUP_SUFFIX, host.ANY_MARK + '0-000000000000 */\nolder');
+    const both = host.apply(dir);
+    fs.writeFileSync(host.hostFile(dir), host.MARK + '\nnew');
+    const now = host.apply(dir);
+    if (!both.changed && both.current === false && both.message !== 'already patched' && now.current === true && !now.changed) {
+      ok('a host bundle whose backup is patched too is reported, and one already carrying this patch says so in a field');
+    } else bad(`with both patched: ${JSON.stringify(both)}; with this patch in: ${JSON.stringify(now)}`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+
+  /* Nothing else here runs extension.js itself, so a name used before its declaration, or a hook that throws, would show
+     only in the editor. A stand-in for the editor's API, in a process whose home is a temporary folder: activation, a
+     change of setting, every timer once, the hooks the patched bundles call, a change of extensions, and deactivation. */
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-activate-'));
+  try {
+    const stub = path.join(home, 'vscode-stub.js');
+    fs.writeFileSync(stub, `
+      const listeners = { config: [], ext: [] }, values = {}, disposable = { dispose() {} };
+      class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
+      module.exports = { listeners, values, TreeItem, TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+        ThemeIcon: class {}, ThemeColor: class {}, MarkdownString: class {}, TabInputWebview: class {}, version: '1.120.0',
+        EventEmitter: class { constructor() { this.event = () => disposable; } fire() {} },
+        Uri: { file: (p) => ({ fsPath: p }) }, RelativePattern: class {}, ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
+        workspace: { workspaceFolders: [], createFileSystemWatcher: () => ({ onDidCreate() {}, onDidChange() {}, onDidDelete() {}, dispose() {} }),
+          getConfiguration: () => ({ get: (k, d) => (k in values ? values[k] : d), inspect: () => undefined, update: async (k, v) => { values[k] = v; } }),
+          onDidChangeConfiguration: (fn) => { listeners.config.push(fn); return disposable; } },
+        window: { createOutputChannel: () => ({ appendLine() {}, show() {}, dispose() {} }), createTreeView: () => ({ dispose() {} }),
+          showInformationMessage: async () => undefined, showWarningMessage: async () => undefined, setStatusBarMessage() {},
+          tabGroups: { all: [], activeTabGroup: null }, showTextDocument: async () => {} },
+        commands: { registerCommand: () => disposable, executeCommand: async () => {} },
+        extensions: { getExtension: () => undefined, onDidChange: (fn) => { listeners.ext.push(fn); return disposable; } } };`);
+    const root = path.join(__dirname, '..');
+    const script = `
+      const Module = require('module'), realResolve = Module._resolveFilename, path = require('path'), fs = require('fs');
+      Module._resolveFilename = function (request, ...rest) { return request === 'vscode' ? ${JSON.stringify(stub)} : realResolve.call(this, request, ...rest); };
+      const vs = require(${JSON.stringify(stub)});
+      const ext = require(${JSON.stringify(path.join(root, 'extension.js'))});
+      const store = path.join(${JSON.stringify(home)}, 'storage');
+      fs.mkdirSync(store, { recursive: true });
+      const memo = () => { const m = new Map(); return { get: (k, d) => (m.has(k) ? m.get(k) : d), update: async (k, v) => { m.set(k, v); } }; };
+      const subs = [], timers = [], keep = setInterval;
+      global.setInterval = (fn, ms) => { timers.push({ fn, ms }); return keep(() => {}, 1 << 30); };
+      const SID = 'abababab-1111-4222-8333-444444444444';
+      (async () => {
+        const out = { threw: '' };
+        try {
+          await ext.activate({ subscriptions: subs, extensionPath: ${JSON.stringify(root)}, globalState: memo(), workspaceState: memo(),
+            extension: { id: 'x.y', packageJSON: require(${JSON.stringify(path.join(root, 'package.json'))}) },
+            globalStorageUri: { fsPath: store }, logUri: { fsPath: path.join(store, 'logs', 'exthost1', 'x.y') } });
+          out.listeners = vs.listeners.config.length;
+          out.timers = timers.map((t) => t.ms).sort((a, b) => a - b);
+          for (const fn of vs.listeners.config) fn({ affectsConfiguration: () => true });
+          for (const t of timers) t.fn();
+          globalThis.__cceActiveChat = SID;
+          globalThis.__cceChatHook();
+          globalThis.__ccePinHook(SID, true);
+          globalThis.__cceDeleteHook([{ id: SID, title: 't' }]);
+          globalThis.__cceClosedHook(SID);
+          out.recent = globalThis.__cceRecentClosed().ids;
+          await new Promise((r) => setTimeout(r, 200));
+          for (const fn of vs.listeners.ext) await fn();
+          ext.deactivate();
+        } catch (e) { out.threw = String(e && e.stack); }
+        for (const s of subs) { try { s.dispose(); } catch (e) { out.threw = out.threw || 'dispose: ' + e.message; } }
+        process.stdout.write(JSON.stringify(out));
+        process.exit(0);
+      })();
+      process.on('unhandledRejection', (e) => { process.stdout.write(JSON.stringify({ threw: 'unhandled: ' + (e && e.stack) })); process.exit(0); });`;
+    let r;
+    const env = Object.assign({}, process.env, { HOME: home });
+    delete env.CLAUDE_CONFIG_DIR;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 60000, env })); }
+    catch (e) { r = { threw: e.message }; }
+    if (!r.threw && r.listeners === 1 && JSON.stringify(r.timers) === JSON.stringify([1000, 30000, 1800000]) && JSON.stringify(r.recent) === JSON.stringify(['abababab-1111-4222-8333-444444444444'])) {
+      ok('activation, a change of setting, every timer, the hooks and deactivation run against a stand-in editor without throwing');
+    } else bad(`against a stand-in editor: ${JSON.stringify(r).slice(0, 600)}`);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
 
 /* ── 24. a panel whose bundle never arrives says so ──

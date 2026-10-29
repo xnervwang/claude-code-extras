@@ -217,7 +217,7 @@ function hostFile(claudeExtensionPath) { return path.join(claudeExtensionPath, '
 
 /** Pure transform. Returns { out, chosen } or { error }. Never partially applies. */
 function patchSource(src) {
-  if (src.includes(ANY_MARK)) return { error: 'already patched' };
+  if (src.includes(ANY_MARK)) return { error: 'the source to patch already carries a host patch' };
   const r = applyEdits(src, EDITS);
   if (r.error) return { error: r.error };
   const out = MARK + '\n' + r.out;
@@ -250,25 +250,30 @@ function writeAtomic(file, text) {
   }
 }
 
-/** Apply (or upgrade) the host patch. Returns { changed, liveChanged, message }. */
+/*
+ * Apply (or upgrade) the host patch. Returns { changed, liveChanged, current, message }: `current` says the file already
+ * carries this patch, so that a caller does not have to tell that apart from a failure by the words of the message.
+ */
 function apply(claudeExtensionPath) {
   const file = hostFile(claudeExtensionPath);
   const backup = file + BACKUP_SUFFIX;
   const state = status(claudeExtensionPath);
-  if (state === 'missing') return { changed: false, liveChanged: false, message: `Claude Code host bundle not found at ${file}` };
-  if (state === 'patched') return { changed: false, liveChanged: false, message: 'already patched' };
+  const no = (message) => ({ changed: false, liveChanged: false, current: false, message });
+  if (state === 'missing') return no(`Claude Code host bundle not found at ${file}`);
+  if (state === 'patched') return { changed: false, liveChanged: false, current: true, message: 'already patched' };
   let original;
   if (state === 'outdated') {
-    if (!fs.existsSync(backup)) return { changed: false, liveChanged: false, message: 'an older host patch is present but its backup is missing; reinstall Claude Code' };
+    if (!fs.existsSync(backup)) return no('an older host patch is present but its backup is missing; reinstall Claude Code');
     original = fs.readFileSync(backup, 'utf8');
+    if (original.includes(ANY_MARK)) return no('an older host patch is present and its backup carries one too; reinstall Claude Code');
   } else {
     original = fs.readFileSync(file, 'utf8');
   }
   const r = patchSource(original);
-  if (r.error) return { changed: false, liveChanged: false, message: r.error };
+  if (r.error) return no(r.error);
   if (state === 'clean') fs.writeFileSync(backup, original);
   writeAtomic(file, r.out);
-  return { changed: true, liveChanged: false, message: 'patched' };
+  return { changed: true, liveChanged: false, current: true, message: 'patched' };
 }
 
 /** Put the original host bundle back and remove the backup. Returns { changed, message }. */

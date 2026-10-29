@@ -80,4 +80,41 @@ function readTasks(dirs) {
   return out;
 }
 
-module.exports = { readTasks, MAX_TASKS, MAX_PROMPT };
+/* More directories than this are not read for tasks: a machine that has opened hundreds of projects over a year would
+   otherwise turn one refresh into hundreds of reads. */
+const MAX_DIRS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Which project directories to look for scheduled prompts in, remembered across windows: `stored` is what the windows
+ * keep between them, a directory -> the day it was last open in any of them, and `open` the ones this window has open.
+ * Returns { dirs, store, changed }; `store` is what to keep, `changed` whether it differs from `stored`.
+ *
+ * Every window writes the same stylesheet from this, so every window has to arrive at the same list. Each puts its own
+ * folders in with today, the days are merged by the latest, and the list is ordered by day and then by path - so two
+ * windows with different folders open converge on one list instead of each putting its own first and writing the shared
+ * store on every refresh, and past the cap they keep the same directories rather than each its own. A day rather than a
+ * time, so the store changes when the set does or a day turns, and not on every refresh.
+ *
+ * A list kept by an earlier build reads as every directory last seen on day 0.
+ */
+const isDirectory = (d) => { try { return fs.statSync(d).isDirectory(); } catch (_) { return false; } };
+function rememberDirs(stored, open, { now = Date.now(), isDir = isDirectory, max = MAX_DIRS } = {}) {
+  const seen = {};
+  if (Array.isArray(stored)) { for (const d of stored) if (typeof d === 'string' && d) seen[d] = 0; }
+  else if (stored && typeof stored === 'object') {
+    for (const [d, day] of Object.entries(stored)) if (d && Number.isFinite(day)) seen[d] = day;
+  }
+  const today = Math.floor(now / DAY_MS);
+  for (const d of open || []) if (typeof d === 'string' && d) seen[d] = Math.max(seen[d] || 0, today);
+  const store = {};
+  let kept = 0;
+  for (const d of Object.keys(seen).sort((a, b) => seen[b] - seen[a] || (a < b ? -1 : a > b ? 1 : 0))) {
+    if (kept >= max) break;
+    if (isDir(d)) { store[d] = seen[d]; kept++; }
+  }
+  const canon = (m) => (m && typeof m === 'object' && !Array.isArray(m) ? JSON.stringify(Object.keys(m).sort().map((k) => [k, m[k]])) : '');
+  return { dirs: Object.keys(store), store, changed: canon(store) !== canon(stored) };
+}
+
+module.exports = { readTasks, rememberDirs, MAX_TASKS, MAX_PROMPT, MAX_DIRS };
