@@ -155,7 +155,7 @@
         "claudeCodeWorkPlan.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Show what this extension adds to the panel: a timestamp on every message and content block, a line on each reply with its duration, context share, estimated cost and model, and a name tag on sub-agent messages. Off leaves those out and shows Claude Code's own message times again; the other additions have their own settings. Changes apply live, without a reload."
+          "markdownDescription": "Show three of the panel additions: a timestamp on every message and content block, a line on each reply with its duration, context share, estimated cost and model, and a name tag on sub-agent messages. Off leaves those out and shows Claude Code's own message times again; the other additions have their own settings. Changes apply live, without a reload."
         },
         "claudeCodeWorkPlan.userMessageColor": {
           "type": "string",
@@ -233,7 +233,7 @@
         "claudeCodeWorkPlan.show.contextMeter": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Keep the usage meter on screen after the panel would have hidden it. Turning it off hands the meter back to Claude Code from its next redraw, without a reload."
+          "markdownDescription": "Keep the usage meter on screen after the panel would have hidden it. Turning it off lets Claude Code show and hide the meter by its own rule again from the meter's next update, without a reload."
         },
         "claudeCodeWorkPlan.show.chime": {
           "type": "boolean",
@@ -254,7 +254,7 @@
           "type": "number",
           "default": 14,
           "minimum": 1,
-          "markdownDescription": "Days a pinned conversation stays safe from Claude Code's transcript cleanup while no VS Code window with this extension connects to the machine that holds its transcript. Each refresh leaves its files at least this many days short of `cleanupPeriodDays` (Claude Code's setting, 30 days by default), and at most a day more. A larger value covers longer gaps but sorts old pinned conversations higher in the session list; a smaller one keeps the order closer to their real activity. A value above half of `cleanupPeriodDays` counts as half."
+          "markdownDescription": "Days a pinned conversation stays safe from Claude Code's transcript cleanup while no VS Code window with this extension connects to the machine that holds its transcript. After each refresh its files are this many days, or at most one day more, short of `cleanupPeriodDays` (Claude Code's setting, 30 days by default). A larger value covers longer gaps but sorts old pinned conversations higher in the session list; a smaller one keeps the order closer to their real activity. A value above half of `cleanupPeriodDays` counts as half."
         },
         "claudeCodeWorkPlan.show.footerInfo": {
           "type": "boolean",
