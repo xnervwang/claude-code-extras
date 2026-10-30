@@ -2095,6 +2095,13 @@ console.log('\none live stylesheet, several windows');
     if (later.changed && gone.dirs.join() === '/p/a' && legacy.dirs.join() === '/p/x,/p/y' && legacy.changed) {
       ok('the store changes again when a day turns, drops a directory that is gone, and reads the list an earlier build kept');
     } else bad(`a day on changed ${later.changed}; with one gone ${JSON.stringify(gone.dirs)}; from a list ${JSON.stringify(legacy.dirs)}`);
+    /* A window still on an earlier build keeps its plain list under the old key; one key holding both shapes would have
+       the two builds rewriting it in turn. */
+    const extDirs = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+    if (/const DIRS_KEY = 'claudeCodeExtras\.projectDirDays';/.test(extDirs) && /const OLD_DIRS_KEY = 'claudeCodeExtras\.projectDirs';/.test(extDirs)
+      && /context\.globalState\.update\(DIRS_KEY, r\.store\)/.test(extDirs) && !/update\(OLD_DIRS_KEY/.test(extDirs)) {
+      ok('the folders and their days are kept under a key of their own, started from the list an earlier build keeps');
+    } else bad('the remembered folders share a key with the list an earlier build writes');
   }
 
   const wv = path.join(root, 'webview');

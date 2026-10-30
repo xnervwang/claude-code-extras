@@ -218,9 +218,13 @@ function start(context, renamed) {
    * The known gap: a session started in a SUBdirectory of an open folder is not found, and its section simply does not
    * appear. Walking directories would trade a certain cost for an uncertain gain, so it waits for a real case.
    */
-  const DIRS_KEY = 'claudeCodeExtras.projectDirs';
+  /* Kept under a key of its own. A window still running an earlier build reads and writes a plain list under the old
+     key, and two shapes in one key would have the two builds rewriting it in turn; the old list is where this starts. */
+  const DIRS_KEY = 'claudeCodeExtras.projectDirDays';
+  const OLD_DIRS_KEY = 'claudeCodeExtras.projectDirs';
   const knownDirs = perTick(() => {
-    const r = rememberDirs(context.globalState.get(DIRS_KEY, {}), openDirs());
+    const stored = context.globalState.get(DIRS_KEY);
+    const r = rememberDirs(stored !== undefined ? stored : context.globalState.get(OLD_DIRS_KEY, []), openDirs());
     if (r.changed) context.globalState.update(DIRS_KEY, r.store);
     return r.dirs;
   });
