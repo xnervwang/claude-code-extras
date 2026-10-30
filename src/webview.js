@@ -158,6 +158,17 @@ function pinsProperty(data) {
 }
 
 /*
+ * The session list's text colors, in the same encoding: [1, [[session ID, name], ...]] in session ID order. The leading
+ * 1 keeps the property present when nothing is colored, and the page offers Text color only while the property is
+ * there.
+ */
+function colorsProperty(colors) {
+  if (!colors || typeof colors !== 'object') return '';
+  const pairs = Object.keys(colors).sort().map((id) => [id, colors[id]]);
+  return `:root{--cce-colors:"${Buffer.from(JSON.stringify([1, pairs]), 'utf8').toString('base64')}";}\n`;
+}
+
+/*
  * This extension's own version and id, taken from its manifest rather than passed in by a caller, so that forgetting to
  * thread them through could not quietly disable the rule in writeLive that depends on them.
  */
@@ -222,6 +233,7 @@ const SWITCHES = [
   'deleteArchived',   // Delete in the Archived sessions menu
   'sessionHoverDetails', // a session list row's group and session ID on hover
   'sessionIdSearch',  // the session list's search also matching part of a session ID
+  'sessionColors',    // a conversation's text color in the session list, and Text color in its menu
 ];
 
 /** The live stylesheet for one set of settings. */
@@ -246,12 +258,13 @@ function liveCss(opts = {}) {
      and a build that predates a switch treats it as on. Written in SWITCHES order so that every window produces the
      same bytes.
 
-     `on` switches only the marks; the off flags, the agent map's scheduled prompts and background sessions, and the
-     pins below are written either way. */
+     `on` switches only the marks; the off flags, the agent map's scheduled prompts and background sessions, the pins
+     and the text colors below are written either way. */
   if (off.length) css += ':root{' + off.map((k) => `--cce-off-${k}:1;`).join('') + '}\n';
   css += scheduleProperty(opts.tasks);
   if (!off.includes('backgroundSessions')) css += backgroundProperty(opts.background);
   css += pinsProperty(opts.pins);
+  if (!off.includes('sessionColors')) css += colorsProperty(opts.colors);
   return css;
 }
 
@@ -369,6 +382,20 @@ const EDITS = [
     re: /if\(([\w$]+)\.unarchiveSelection\)([\w$]+)\.push\(\{label:([\w$]+)\.length>1\?`Unarchive \$\{\3\.length\} sessions`:"Unarchive session",separatorBefore:\2\.length>0,onSelect:\1\.unarchiveSelection\}\);return \2\}/g,
     to: (m, act, items, keys) => m.slice(0, -(`return ${items}}`).length)
       + `{let cceD=typeof window.__cceDeleteItem==="function"?window.__cceDeleteItem(${keys}):null;if(cceD)${items}.push(cceD)}return ${items}}`,
+  },
+  {
+    // Text color before Archive in a conversation's menu (84-session-colors.js); the page returning null leaves it out.
+    name: 'text color in the session list menu',
+    re: /if\(([\w$]+)\.archiveSelection\)([\w$]+)\.push\(\{label:([\w$]+)\.length>1\?`Archive \$\{\3\.length\} sessions`:"Archive session",/g,
+    to: (m, act, items, keys) => `{let cceC=typeof window.__cceColorItem==="function"?window.__cceColorItem(${keys},${items}.length>0):null;`
+      + `if(cceC)${items}.push(cceC)}${m}`,
+  },
+  {
+    // The same in the Archived sessions menu, before Unarchive.
+    name: 'text color in the archived list menu',
+    re: /if\(([\w$]+)\.unarchiveSelection\)([\w$]+)\.push\(\{label:([\w$]+)\.length>1\?`Unarchive \$\{\3\.length\} sessions`:"Unarchive session",/g,
+    to: (m, act, items, keys) => `{let cceC=typeof window.__cceColorItem==="function"?window.__cceColorItem(${keys},${items}.length>0):null;`
+      + `if(cceC)${items}.push(cceC)}${m}`,
   },
   {
     // The panel's open request, carrying where the session list's two buttons and two Resume items asked for.

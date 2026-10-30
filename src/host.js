@@ -90,10 +90,10 @@ const EDITS = [
   },
   /*
    * Messages from a panel meant for this extension: the panel's time zone, a conversation pinned or unpinned in the
-   * session list, and archived conversations to delete.
+   * session list, a text color chosen for conversations there, and archived conversations to delete.
    *
    * Every message a panel sends passes through the one function that logs it, before anything decides what the message
-   * is, and Claude Code itself ignores both types. A global is how each reaches this extension - both run in one
+   * is, and Claude Code itself ignores all of these types. A global is how each reaches this extension - both run in one
    * extension host process, the same way the active conversation does.
    */
   {
@@ -104,6 +104,8 @@ const EDITS = [
       + `globalThis.__cceTzHook&&globalThis.__cceTzHook(${msg}.timeZone)}`
       + `else if(${msg}&&${msg}.type==="cce_session_pin"&&typeof ${msg}.sessionId==="string"){`
       + `globalThis.__ccePinHook&&globalThis.__ccePinHook(${msg}.sessionId,${msg}.pinned===true)}`
+      + `else if(${msg}&&${msg}.type==="cce_session_color"&&Array.isArray(${msg}.sessionIds)){`
+      + `globalThis.__cceColorHook&&globalThis.__cceColorHook(${msg}.sessionIds,typeof ${msg}.color==="string"?${msg}.color:null)}`
       + `else if(${msg}&&${msg}.type==="cce_delete_sessions"&&Array.isArray(${msg}.sessions)){`
       + `globalThis.__cceDeleteHook&&globalThis.__cceDeleteHook(${msg}.sessions)}}catch(e){}${rest}`,
   },

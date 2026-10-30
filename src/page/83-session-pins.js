@@ -121,6 +121,8 @@
   };
   window.__ccePin = function(h, row){
     try {
+      // The Text color menu draws its swatches with the same factory (84-session-colors.js).
+      if (typeof h === 'function') listJsx = h;
       if (!row || row.transcriptOnDisk !== true) return null;
       var id = row.sessionId && row.sessionId.value;
       if (typeof id !== 'string' || !PIN_SESSION.test(id)) return null;

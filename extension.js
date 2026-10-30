@@ -31,6 +31,7 @@ const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
 const sessionPins = require('./src/sessionpins');
+const sessionColors = require('./src/sessioncolors');
 const droppedTabs = require('./src/droppedtabs');
 const deleteSession = require('./src/deletesession');
 const recentClosed = require('./src/recentclosed');
@@ -237,6 +238,8 @@ function start(context, renamed) {
   const pinsFile = () => path.join(context.globalStorageUri.fsPath, sessionPins.FILE);
   const pinsOn = () => !removed() && cfg().get(PINS_SETTING, true) !== false;
   const pinMargin = () => cfg().get(PIN_MARGIN_SETTING, sessionPins.MARGIN_DAYS);
+  const colorsFile = () => path.join(context.globalStorageUri.fsPath, sessionColors.FILE);
+  const colorsOn = () => !removed() && !switchedOff().includes('sessionColors');
   const options = () => {
     const off = switchedOff();
     return {
@@ -245,6 +248,7 @@ function start(context, renamed) {
       tasks: readTasks(knownDirs()),
       background: off.includes('backgroundSessions') ? [] : background.collect(),
       pins: pinsOn() ? sessionPins.pageData(sessionPins.read(pinsFile()), sessionPins.retentionDays(), pinMargin()) : null,
+      colors: off.includes('sessionColors') || removed() ? null : sessionColors.read(colorsFile()),
     };
   };
   /* Never after Remove, which has just taken these files out of Claude Code's folder: a scan finishing afterwards would
@@ -548,6 +552,7 @@ function start(context, renamed) {
     /* Efforts files beside the panel are pruned with the live-session list from the sweep just made; when that list is
        unknown, nothing is removed. */
     if (r.live) for (const dir of installs(webview, true)) webview.pruneEfforts(dir, r.live);
+    try { if (r.live && sessionColors.prune(colorsFile(), r.live)) writeLiveNow(); } catch (_) { /* tried again tomorrow */ }
   };
   /* The reader's time zone as a panel of this window last reported it (src/panel-tz.js), or empty until one has. */
   const clientZone = () => {
@@ -721,17 +726,34 @@ function start(context, renamed) {
       } catch (e) { log.appendLine('pinned conversations: ' + ((e && e.message) || e)); }
     }, 0);
   };
-  /* A pin made in another window - one that may not be able to write the stylesheet itself - reaches this one's panels
-     as soon as its file changes, rather than at the next periodic refresh. The file is replaced rather than written in
-     place, so the folder is what is watched. */
+  /* The patched host calls this from inside its own message handling, so it defers the work. */
+  let toldColorStale = false;
+  globalThis.__cceColorHook = (ids, name) => {
+    setTimeout(() => {
+      try {
+        if (!colorsOn()) return;
+        if (!sessionColors.setColor(colorsFile(), ids, name)) return;
+        log.appendLine(`session colors: ${name || 'default'} for ${ids.length} conversation${ids.length === 1 ? '' : 's'}`);
+        if (replaced() && !toldColorStale) {
+          toldColorStale = true;
+          offerReload('The color is saved, but this window is running an earlier build of Work Plan for Claude Code than '
+            + 'the one now installed, so the session list here cannot show it. Reload the window to see it.');
+        }
+        writeLiveNow();
+      } catch (e) { log.appendLine('session colors: ' + ((e && e.message) || e)); }
+    }, 0);
+  };
+  /* A pin or a color chosen in another window reaches this one's panels as soon as its file changes, rather than at the
+     next periodic refresh, even when that window cannot write the stylesheet itself. The files are replaced rather than
+     written in place, so the folder is what is watched. */
   let pinsWatch = null, pinsSettle = 0;
   try {
     const dir = context.globalStorageUri.fsPath;
     fs.mkdirSync(dir, { recursive: true });
     pinsWatch = fs.watch(dir, { persistent: false }, (event, name) => {
-      if (name && name !== sessionPins.FILE) return;
+      if (name && name !== sessionPins.FILE && name !== sessionColors.FILE) return;
       if (pinsSettle) clearTimeout(pinsSettle);
-      pinsSettle = setTimeout(() => { pinsSettle = 0; if (pinsOn()) writeLiveNow(); }, 300);
+      pinsSettle = setTimeout(() => { pinsSettle = 0; if (pinsOn() || colorsOn()) writeLiveNow(); }, 300);
     });
     pinsWatch.on('error', () => { try { pinsWatch.close(); } catch (_) { /* closed */ } pinsWatch = null; });
   } catch (_) { /* the periodic refresh still carries a change across */ }
@@ -745,6 +767,7 @@ function start(context, renamed) {
     clearTimeout(keepFirst); clearInterval(keepTimer); if (keepSoon) clearTimeout(keepSoon); if (pinsSettle) clearTimeout(pinsSettle);
     if (pinsWatch) { try { pinsWatch.close(); } catch (_) { /* closed */ } }
     if (globalThis.__ccePinHook) delete globalThis.__ccePinHook;
+    if (globalThis.__cceColorHook) delete globalThis.__cceColorHook;
     if (globalThis.__ccePinnedIds) delete globalThis.__ccePinnedIds;
   } });
   /*
@@ -871,6 +894,7 @@ function start(context, renamed) {
     for (const g of go) {
       failed.push(...deleteSession.remove(g.found));
       try { sessionPins.setPinned(pinsFile(), g.id, false); } catch (_) { /* not pinned */ }
+      try { sessionColors.setColor(colorsFile(), [g.id], null); } catch (_) { /* not colored */ }
       log.appendLine(`Deleted "${g.title}" (${g.id}): ${deleteSession.describe(g.found)}`);
     }
     try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }

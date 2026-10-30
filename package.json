@@ -306,6 +306,11 @@
           "default": true,
           "markdownDescription": "The session list's search also finds a conversation by part of its session ID, such as `69f9`: four or more characters, using only 0-9, a-f and hyphens. Shorter searches, and ones with other characters, match titles and branches only. Takes effect without a reload."
         },
+        "claudeCodeWorkPlan.show.sessionColors": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Add **Text color** to the right-click menu of a conversation in the session list, to give its title one of the colors of Claude Code's `/color`. The color shows wherever the conversation is listed, except on the conversation you have open, which keeps the usual highlight. Takes effect without a reload."
+        },
         "claudeCodeWorkPlan.recentClosedSessions": {
           "type": "integer",
           "default": 10,

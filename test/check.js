@@ -687,7 +687,15 @@ function checkEdits(adapter, src, label) {
   if (r.error) bad(`${label}: patchSource refused: ${r.error}`);
   else if (!r.out.includes(adapter.MARK)) bad(`${label}: patched output carries no marker`);
   else ok(`${label}: patched output parses and is marked`);
-  if (adapter.name === 'Claude Code panel') checkReplyShape(src, label);
+  if (adapter.name === 'Claude Code panel') { checkReplyShape(src, label); checkRowIds(src, label); }
+}
+
+/* Text colors find a conversation's rows by the end of their id (84-session-colors.js). No edit covers how the list
+   builds that id, so it is checked here. */
+function checkRowIds(src, label) {
+  const n = [...src.matchAll(/function [\w$]+\(([\w$]+),([\w$]+)\)\{return`\$\{[\w$]+\}-row-\$\{\1\.sessionId\.value\?\?\2\}`\}/g)].length;
+  if (n === 1) ok(`${label}: a session list row's id ends in its session ID`);
+  else bad(`${label}: the session list's row id was built in ${n} places (expected 1); text colors find rows by it`);
 }
 
 /* What a reply holds, read out of the real bundle (test/reply-shape.js says why the stand-in panel cannot tell). The
@@ -5386,11 +5394,11 @@ console.log('\nconversations pinned in the session list');
     && /globalThis\.__ccePinHook = /.test(extSrc) && /globalThis\.__ccePinnedIds = \(\) => \{\s*try \{ return pinsOn\(\) \?/.test(extSrc)
     && /if \(keeping \|\| !pinsOn\(\)\) return;/.test(extSrc) && /pins: pinsOn\(\) \?/.test(extSrc)
     && /if \(replaced\(\) && !toldStale\) \{[\s\S]{0,80}offerReload\('The pin is saved/.test(extSrc)
-    && /fs\.watch\(dir, \{ persistent: false \}, \(event, name\) => \{\s*if \(name && name !== sessionPins\.FILE\) return;/.test(extSrc)
+    && /fs\.watch\(dir, \{ persistent: false \}, \(event, name\) => \{\s*if \(name && name !== sessionPins\.FILE && name !== sessionColors\.FILE\) return;/.test(extSrc)
     && manifest['claudeCodeWorkPlan.sessionPins'] && manifest['claudeCodeWorkPlan.sessionPins'].default === true
     && !manifest['claudeCodeWorkPlan.keepGroupedSessions']) {
     ok('one setting, on by default, decides whether pins are drawn, files are kept and pinned conversations escape the archive');
-    ok('a pin made in a window that can no longer write the stylesheet is saved and the reader told to reload, and every window redraws when the pins change');
+    ok('a pin made in a window that can no longer write the stylesheet is saved and the reader told to reload, and every window redraws when the pins or the text colors change');
   } else bad('extension.js or the manifest does not wire the pins to their setting');
 }
 
@@ -6323,6 +6331,128 @@ console.log('\na patched file written by several windows at once');
   }
 }
 
+console.log('\ntext colors in the session list');
+{
+  const colors = require('../src/sessioncolors');
+  const { applyEdits } = require('../src/edits');
+  const frag = (n) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', n), 'utf8');
+  const A = '69f92b14-1833-4321-8d21-58c2b8ca27a7', B = '183f7e74-ec1e-408a-b4cd-da3791f683cb', C = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-colors-'));
+  const file = path.join(dir, colors.FILE);
+  try {
+    const steps = [
+      colors.setColor(file, [A], 'red'), colors.setColor(file, [A], 'red'),
+      colors.setColor(file, [B, A, 'remote:x'], 'blue'), colors.setColor(file, [C], 'magenta'),
+      colors.setColor(file, ['not-an-id'], 'green'), colors.setColor(file, [B], null), colors.setColor(file, [B], null),
+    ];
+    const after = colors.read(file);
+    if (JSON.stringify(steps) === JSON.stringify([true, false, true, false, false, true, false]) && JSON.stringify(after) === JSON.stringify({ [A]: 'blue' })) {
+      ok('a color is set for one conversation or several and taken away with Default; an unknown name or a remote conversation changes nothing, and repeating a choice writes nothing');
+    } else bad(`setting colors gave ${JSON.stringify(steps)} and left ${JSON.stringify(after)}`);
+    colors.setColor(file, [C], 'green');
+    const one = fs.readFileSync(file, 'utf8');
+    fs.writeFileSync(file, JSON.stringify({ colors: { [C]: 'green', x: 'red', [A]: 'blue', [B]: 'teal' } }));
+    colors.write(file, colors.read(file));
+    if (fs.readFileSync(file, 'utf8') === one) ok('the file is written in session ID order, so windows writing the same colors write the same bytes, and an entry that is not a session ID with one of the eight names is dropped');
+    else bad(`the colors file read back as ${fs.readFileSync(file, 'utf8')}, expected ${one}`);
+    const kept = colors.prune(file, null), pruned = colors.prune(file, new Set([A, B]));
+    if (!kept && pruned && JSON.stringify(colors.read(file)) === JSON.stringify({ [A]: 'blue' })) ok('the colors of conversations no longer on disk are dropped, and none when the transcripts could not all be read');
+    else bad(`pruning gave ${kept}/${pruned} and left ${JSON.stringify(colors.read(file))}`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+
+  const unpack = (css) => { const m = /--cce-colors:"([^"]+)"/.exec(css); return m ? JSON.parse(Buffer.from(m[1], 'base64').toString('utf8')) : null; };
+  const full = unpack(webview.liveCss({ colors: { [A]: 'cyan', [B]: 'red' } })), empty = unpack(webview.liveCss({ colors: {} }));
+  const none = unpack(webview.liveCss({})), off = unpack(webview.liveCss({ colors: { [A]: 'red' }, off: ['sessionColors'] }));
+  if (JSON.stringify(full) === JSON.stringify([1, [[B, 'red'], [A, 'cyan']]]) && JSON.stringify(empty) === '[1,[]]' && none === null && off === null) {
+    ok('the stylesheet carries the colors in session ID order, and says the host acts on a choice even with nothing colored; with the switch off it carries nothing');
+  } else bad(`the stylesheet carried ${JSON.stringify([full, empty, none, off])}`);
+
+  const pack = (v) => '"' + Buffer.from(JSON.stringify(v), 'utf8').toString('base64') + '"';
+  const env = { window: {}, Buffer, TextDecoder, atob: (x) => Buffer.from(x, 'base64').toString('binary'), prop: '', posted: [], timers: [], appended: [], offKey: '' };
+  env.getComputedStyle = () => ({ getPropertyValue: (n) => (n === '--cce-colors' ? env.prop : '') });
+  env.document = { documentElement: {}, createElement: (t) => ({ tag: t, textContent: '', setAttribute() {} }) };
+  env.head = { appendChild: (el) => env.appended.push(el) };
+  env.acquireVsCodeApi = () => ({ postMessage: (m) => env.posted.push(m) });
+  env.setTimeout = (f, ms) => { env.timers.push([f, ms]); return env.timers.length; };
+  env.isOff = (k) => env.offKey === k;
+  vm.createContext(env);
+  vm.runInContext(frag('82-scheduled-tasks.js') + frag('84-session-colors.js')
+    + ';this.reset = function(){ propCache = {}; };this.paint = function(){ paintColors(); };', env);
+  const item = (keys, after) => env.window.__cceColorItem(keys, after);
+  const labels = (it) => it ? [it.label + (it.separatorBefore ? '|' : ''), it.submenu.map((x) => (x.separatorBefore ? '|' : '') + x.label)] : null;
+  const missing = item([A], true);
+  env.prop = pack([1, [[A, 'red']]]); env.reset();
+  const red = labels(item([A], true)), mixed = labels(item([A, B], false)), plain = labels(item([B], true));
+  const remote = item(['remote:x'], true);
+  env.offKey = 'sessionColors'; const switched = item([A], true); env.offKey = '';
+  const names = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink', 'Cyan'];
+  const sub = (mark) => ['Default' + (mark === 'Default' ? ' ✓' : '')].concat(names.map((n, i) => (i === 0 ? '|' : '') + n + (mark === n ? ' ✓' : '')));
+  const want = [['Text color|', sub('Red')], ['Text color', sub('')], ['Text color|', sub('Default')]];
+  if (missing === null && remote === null && switched === null && JSON.stringify([red, mixed, plain]) === JSON.stringify(want)) {
+    ok('Text color offers Default and the eight /color colors and marks the one the selection has; nothing for a remote conversation, with the switch off, or from a host that would not act on it');
+  } else bad(`the Text color item was ${JSON.stringify({ missing, red, mixed, plain, remote, switched })}`);
+  env.listJsx = (type, props) => ({ type, props });
+  const drawn = item([A], true).submenu[1].label;
+  env.listJsx = null;
+  if (drawn && drawn.props.children[0].props.style.background === 'var(--vscode-charts-red,#f14c4c)' && drawn.props.children[1] === 'Red ✓') {
+    ok('with the list\'s element factory each color is shown with a swatch in the theme\'s own color');
+  } else bad(`a color entry was drawn as ${JSON.stringify(drawn)}`);
+  env.paint();
+  const style = env.appended[0];
+  const ruled = style && style.textContent;
+  if (env.appended.length === 1 && ruled === `[class*="sessionItem_"][id$="${A}"]:not([class*=" active_"]) [class*="sessionName_"]{color:var(--vscode-charts-red,#f14c4c)}`) {
+    ok('a colored conversation gets one rule, for its title in every row whose id ends in its session ID, except the row of the conversation shown');
+  } else bad(`the colors were drawn as ${JSON.stringify(ruled)}`);
+  item([A], true).submenu[2].onSelect();
+  const chosen = style.textContent;
+  item([A], true).submenu[0].onSelect();
+  const cleared = style.textContent;
+  if (JSON.stringify(env.posted) === JSON.stringify([{ type: 'cce_session_color', sessionIds: [A], color: 'blue' }, { type: 'cce_session_color', sessionIds: [A], color: null }])
+      && /charts-blue/.test(chosen) && !/charts-red/.test(chosen) && cleared === '' && env.timers.some(([, ms]) => ms > 15000)) {
+    ok('choosing a color asks this extension and shows it at once; Default takes it away; the stylesheet decides again after a while');
+  } else bad(`choosing sent ${JSON.stringify(env.posted)} and drew ${JSON.stringify([chosen, cleared])}`);
+  env.prop = pack([1, [[A, 'red']]]); env.reset(); env.offKey = 'sessionColors'; env.paint(); env.offKey = '';
+  if (style.textContent === '') ok('with the switch off no title is colored');
+  else bad(`with the switch off the colors were ${JSON.stringify(style.textContent)}`);
+
+  const live = webview.EDITS.find((x) => x.name === 'text color in the session list menu');
+  const archived = webview.EDITS.find((x) => x.name === 'text color in the archived list menu');
+  const del = webview.EDITS.find((x) => x.name === 'delete in the archived list');
+  const menus = 'function dF(e,t,n,i){let o=[];if(e.length===1)o.push({label:"Resume session",onSelect:n.resumeSession});o.push({label:"New group from session",separatorBefore:o.length>0,onSelect:n.createGroupFromSelection});'
+    + 'if(n.archiveSelection)o.push({label:e.length>1?`Archive ${e.length} sessions`:"Archive session",separatorBefore:!0,onSelect:n.archiveSelection});return o}'
+    + 'function uF(e,t,n){let i=[];if(e.length===1)i.push({label:"Resume session",onSelect:t.resumeSession});if(t.unarchiveSelection)i.push({label:e.length>1?`Unarchive ${e.length} sessions`:"Unarchive session",separatorBefore:i.length>0,onSelect:t.unarchiveSelection});return i}';
+  const mr = live && archived && del ? applyEdits(menus, [live, archived, del]) : { error: 'no such edit' };
+  if (mr.error) bad('the text color edits did not apply: ' + mr.error);
+  else {
+    const menv = { window: env.window, out: null };
+    vm.createContext(menv);
+    const act = '{resumeSession(){},createGroupFromSelection(){},archiveSelection(){},unarchiveSelection(){}}';
+    const run = (call) => { vm.runInContext(mr.out + `;out=${call}.map((x)=>x.label+(x.separatorBefore?"|":""));`, menv); return menv.out; };
+    const got = [run(`dF(["${A}"],[],${act},{})`), run(`uF(["${A}"],${act},{})`), run(`uF(["${A}","${B}"],${act},{})`)];
+    env.offKey = 'sessionColors'; got.push(run(`dF(["${A}"],[],${act},{})`)); env.offKey = '';
+    const wantM = [['Resume session', 'New group from session|', 'Text color|', 'Archive session|'], ['Resume session', 'Text color|', 'Unarchive session|'],
+      ['Text color', 'Unarchive 2 sessions|'], ['Resume session', 'New group from session|', 'Archive session|']];
+    if (JSON.stringify(got) === JSON.stringify(wantM)) ok('Text color comes before Archive in a conversation\'s menu and before Unarchive in Archived sessions, with Delete still after it, and goes with the switch off');
+    else bad(`the menus were ${JSON.stringify(got)}, expected ${JSON.stringify(wantM)}`);
+  }
+  const me = host.EDITS.find((x) => x.name === 'panel messages');
+  const hr = applyEdits('function eT($,J){let Q=`Received message from webview: ${bl0(J)}`;$.info(Q)}', [me]);
+  const asked = [];
+  const henv = { bl0: (m) => JSON.stringify(m), __cceColorHook: (ids, c) => asked.push([ids, c]) };
+  henv.globalThis = henv;
+  vm.createContext(henv);
+  vm.runInContext(hr.out + `;const L={info(){}};eT(L,{type:"cce_session_color",sessionIds:["${A}"],color:"red"});`
+    + `eT(L,{type:"cce_session_color",sessionIds:["${A}"],color:7});eT(L,{type:"cce_session_color",sessionIds:"${A}",color:"red"});`, henv);
+  if (JSON.stringify(asked) === JSON.stringify([[[A], 'red'], [[A], null]])) ok('the patched host passes a color choice on, reading anything but a name as Default');
+  else bad(`the host passed on ${JSON.stringify(asked)}`);
+  const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/globalThis\.__cceColorHook = \(ids, name\) => \{\s*setTimeout\(/.test(extSrc)
+      && /sessionColors\.setColor\(colorsFile\(\), \[g\.id\], null\)/.test(extSrc)
+      && /r\.live && sessionColors\.prune\(colorsFile\(\), r\.live\)/.test(extSrc)
+      && webview.SWITCHES.includes('sessionColors') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.sessionColors']) {
+    ok('a choice is handled outside the host\'s message handling, a deleted or vanished conversation loses its color, and the switch is a setting of its own');
+  } else bad('the text colors are not wired into the extension as expected');
+}
 console.log('\nthe patch markers follow the code');
 {
   /* A marker that stays the same while what patching writes changes leaves the old patch in place, and every step

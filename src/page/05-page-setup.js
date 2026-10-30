@@ -202,6 +202,7 @@
       sheet = l; loadedOnce = true; onCache = null; offCache = {}; pinsCache = null; propCache = {};
       if (fallback && fallback.parentNode) { fallback.parentNode.removeChild(fallback); fallback = null; }
       try { repaintPins(); } catch (e) { /* the next render of the list draws them anyway */ }
+      try { paintColors(); } catch (e) { /* the next stylesheet draws them */ }
       schedule();
     };
     l.onerror = function(){
