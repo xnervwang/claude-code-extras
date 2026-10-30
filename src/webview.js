@@ -546,7 +546,7 @@ const SCRIPT = ['', MARK, SCRIPT_BODY, ''].join('\n');
 
 /** Pure transform. Returns { out, chosen } or { error }. Never partially applies. */
 function patchSource(src) {
-  if (src.includes(ANY_MARK)) return { error: 'already patched' };
+  if (src.includes(ANY_MARK)) return { error: 'the source to patch already carries a panel patch' };
   const r = applyEdits(src, EDITS);
   if (r.error) return { error: r.error };
   const out = r.out + '\n' + SCRIPT;
@@ -703,24 +703,26 @@ function apply(claudeExtensionPath, opts = {}) {
   const file = webviewFile(claudeExtensionPath);
   const backup = file + BACKUP_SUFFIX;
   const state = status(claudeExtensionPath);
-  if (state === 'missing') return { changed: false, liveChanged: false, message: `Claude Code webview not found at ${file}` };
+  const no = (message) => ({ changed: false, liveChanged: false, current: false, message });
+  if (state === 'missing') return no(`Claude Code webview not found at ${file}`);
   let changed = false, message = 'already patched';
   if (state !== 'patched') {
     let original;
     if (state === 'outdated') {
-      if (!fs.existsSync(backup)) return { changed: false, liveChanged: false, message: 'an older patch is present but its backup is missing; reinstall Claude Code' };
+      if (!fs.existsSync(backup)) return no('an older patch is present but its backup is missing; reinstall Claude Code');
       original = fs.readFileSync(backup, 'utf8');
+      if (original.includes(ANY_MARK)) return no('an older patch is present and its backup carries one too; reinstall Claude Code');
     } else {
       original = fs.readFileSync(file, 'utf8');
     }
     const r = patchSource(original);
-    if (r.error) return { changed: false, liveChanged: false, message: r.error };
+    if (r.error) return no(r.error);
     if (state === 'clean') fs.writeFileSync(backup, original);
     writeAtomic(file, r.out);
     changed = true; message = 'patched';
   }
   const liveChanged = writeLive(claudeExtensionPath, opts);
-  return { changed, liveChanged, message };
+  return { changed, liveChanged, current: true, message };
 }
 
 /** Put the original back and remove the backup and the live files. Returns { changed, message }. */

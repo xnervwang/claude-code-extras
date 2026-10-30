@@ -15,7 +15,7 @@
  * the conversation reads back.
  */
 const vscode = require('vscode');
-const { readPlan, countOpen, openFirst } = require('./workplan');
+const { readPlan, openFirst, OPEN_STATES } = require('./workplan');
 
 /*
  * `clockface` is in the editor's icon font from VS Code 1.111 on. An older editor, or a fork built on one, draws nothing
@@ -55,7 +55,6 @@ const LOOK = {
   done: { icon: 'pass-filled', color: 'charts.green', word: 'done' },
   dropped: { icon: 'circle-slash', color: 'descriptionForeground', word: 'dropped' },
 };
-const OPEN = ['discussing', 'todo', 'doing', 'waiting', 'parked'];
 
 /*
  * How long a row has been in a state it is meant to leave soon, or nothing.
@@ -146,27 +145,20 @@ function stamp(opened, closed, timeZone = '', now = Date.now()) {
 
 /** Whether anything under here still needs doing, which is what decides if a branch opens by itself. */
 function hasOpen(node) {
-  if (OPEN.includes(node.state)) return true;
+  if (OPEN_STATES.includes(node.state)) return true;
   return (node.children || []).some(hasOpen);
-}
-
-function summary(counts) {
-  const parts = [];
-  for (const state of OPEN) if (counts[state]) parts.push(counts[state] + ' ' + LOOK[state].word);
-  const closed = (counts.done || 0) + (counts.dropped || 0);
-  if (closed) parts.push(closed + ' closed');
-  return parts.join(' · ');
 }
 
 class WorkPlanProvider {
   constructor() {
     this._emitter = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._emitter.event;
-    this.plans = [];
+    /* The plan shown, or null. */
+    this.plan = null;
     this.signature = '';
     /* The session id of the conversation in front of the reader, as the Claude Code host itself reports it. Only that
        conversation's plan is shown. Empty means the host has not said - no conversation open yet, or a build this
-       extension could not patch - and then every plan is shown, since listing them is honest where picking one is not. */
+       extension could not patch - and then nothing is, and the view's welcome text explains itself. */
     this.focus = '';
     /* The reader's time zone as the panel reports it, or empty for the host's own. */
     this.timeZone = '';
@@ -176,9 +168,9 @@ class WorkPlanProvider {
     this.problem = null;
   }
 
-  /** What the view is drawing, which is what the badge has to be counted over. */
+  /** The plan the view is drawing, or null, which is what the badge has to be counted over. */
   shown() {
-    return this.plans;
+    return this.plan;
   }
 
   /* Records which conversation to read and says whether that moved; reading and redrawing is refresh()'s job. Doing both
@@ -215,7 +207,7 @@ class WorkPlanProvider {
        shows an empty tree, where the view's welcome text explains itself. Reading the whole directory here is what once
        drew every conversation on the machine into a window that had simply not been told which one it was looking at;
        a view whose only claim is "what THIS conversation has to do" has no business showing other people's leftovers. */
-    const plans = this.focus ? readPlan(this.focus) : [];
+    const plan = this.focus ? readPlan(this.focus) : null;
     /* The focus is part of the signature because two conversations can hold identical plans - most often two empty ones.
        Comparing only the content would then find no change and leave the previous conversation's tree on screen. The
        time a row has been `doing` or `waiting` is part of it for the opposite reason: the figure changes while the file
@@ -224,27 +216,20 @@ class WorkPlanProvider {
        when the panel reports the reader's zone, and the file does not. */
     const now = Date.now();
     const signature = JSON.stringify([this.focus, this.timeZone,
-      plans.map((p) => [p.session, p.title, p.error, p.nodes, heldAll(p.nodes, now)])]);
+      plan && [plan.session, plan.title, plan.error, plan.nodes, heldAll(plan.nodes, now)]]);
     if (signature === this.signature) return false;
-    this.plans = plans;
+    this.plan = plan;
     this.signature = signature;
     this._emitter.fire();
     return true;
   }
 
-  /*
-   * One conversation is shown as its own nodes; several get a root each. The extra level is pure noise in the common
-   * case, and its absence is what makes the first row a task rather than a heading.
-   */
+  /* The conversation's own rows at the top level, with no heading above them: the first row is a task. */
   getChildren(element) {
     if (!element) {
       const first = this.problem ? [{ kind: 'problem', key: '!plugin' }] : [];
-      const plans = this.shown();
-      if (!plans.length) return first;
-      if (plans.length === 1) return first.concat(this.rowsFor(plans[0]));
-      return first.concat(plans.map((p) => ({ kind: 'root', plan: p, key: p.session })));
+      return this.plan ? first.concat(this.rowsFor(this.plan)) : first;
     }
-    if (element.kind === 'root') return this.rowsFor(element.plan);
     if (element.kind === 'node') {
       return this.rowsOf(element.node.children, element.plan, element.key,
         element.path.concat(element.node.title), element.num);
@@ -290,16 +275,6 @@ class WorkPlanProvider {
         `\`${this.problem.step}\` failed.\n\n${this.problem.said || 'It gave no reason.'}\n\n`
         + 'Until this succeeds nothing writes a work plan, so this view stays empty.');
       item.command = { command: 'claudeCodeWorkPlan.installWorkPlanPlugin', title: 'Try again' };
-      return item;
-    }
-    if (element.kind === 'root') {
-      const item = new vscode.TreeItem(element.plan.label, vscode.TreeItemCollapsibleState.Expanded);
-      item.description = element.plan.error ? 'unreadable' : summary(countOpen(element.plan.nodes));
-      item.iconPath = new vscode.ThemeIcon('comment-discussion');
-      item.id = element.key;
-      item.contextValue = 'cceWorkPlanRoot';
-      item.tooltip = element.plan.file;
-      item.resourceUri = vscode.Uri.file(element.plan.file);
       return item;
     }
     if (element.kind === 'error') {
@@ -361,4 +336,4 @@ class WorkPlanProvider {
   }
 }
 
-module.exports = { WorkPlanProvider, summary, hasOpen, stamp, held, heldAll, LOOK, OPEN, TIMED, waitingIcon };
+module.exports = { WorkPlanProvider, hasOpen, stamp, held, heldAll, LOOK, TIMED, waitingIcon };

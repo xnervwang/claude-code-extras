@@ -7,6 +7,7 @@
 - `src/webview.js` holds the panel edits, live stylesheet, and in-page script assembly.
 - `src/host.js` holds the extension-host edit.
 - `src/page/*.js` holds the in-page script, one subject per file. The files are concatenated in file-name order.
+- `src/claude-files.js` locates Claude Code's directory, its transcripts and the plan directory, and reads a transcript as it grows. Code that reads Claude Code's files goes through it.
 - `src/workplan.js` reads plan files. Its header defines the contract between the two halves.
 - `src/workplan-view.js` holds the work plan tree view.
 - `src/plugin-install.js` registers the companion Claude Code plugin and unregisters it on uninstall.

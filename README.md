@@ -50,7 +50,7 @@ Work you ask Claude to do now goes straight to `doing`; work Claude suggests on 
 The extension registers a Claude Code plugin whose hooks hand the plan to Claude on each turn and around compactions. Its skill holds the rules Claude follows to keep the plan up to date.
 
 - The plugin's skill description loads in every session at about 110 tokens.
-- With a plan, every turn carries short fixed instructions and up to 40 rows. A finished row can be included when a row under it is still open. The cost grows with the number of rows and the length of their text; the page linked below has a measured example.
+- With a plan, every turn carries short fixed instructions and up to 40 rows. Every open top-level row is always included; past 40, rows under them are left out, and a last line says how many open rows that was. A finished row can be included when a row under it is still open. The cost grows with the number of rows and the length of their text; the page linked below has a measured example.
 - Before an automatic compaction, Claude is asked to bring the rows it is working on up to date. After compaction, it is asked to read the plan file before anything else.
 
 ### Where the plan lives
@@ -123,7 +123,7 @@ Open `Work Plan for Claude Code: Settings` for all 34 settings. Most apply witho
 
 | What | How |
 | --- | --- |
-| Panel additions | Set `claudeCodeWorkPlan.enabled` to off. The patch stays and its scripts keep running. |
+| Timestamps, reply figures and sub-agent tags | Set `claudeCodeWorkPlan.enabled` to off. Each other addition has its own `claudeCodeWorkPlan.show.*` setting. The patch stays and its scripts keep running. |
 | Your time zone in Claude's context | Set `claudeCodeWorkPlan.tellClaudeYourTimeZone` to off. |
 | Work plan plugin, skill description included | Run `Work Plan for Claude Code: Stop Loading the Work Plan Plugin`. |
 | Reopening Claude Code tabs VS Code did not restore | Set `claudeCodeWorkPlan.reopenDroppedTabs` to off. |
@@ -150,9 +150,9 @@ Settings named `claudeCodeExtras.*` by earlier versions are copied to the same n
 | Command | What it does |
 | --- | --- |
 | `Work Plan for Claude Code: Settings` | Open this extension's settings. |
-| `Work Plan for Claude Code: Toggle On/Off` | Toggle the panel additions listed under Other features. |
-| `Work Plan for Claude Code: Turn On` | Show the panel additions. |
-| `Work Plan for Claude Code: Turn Off` | Hide the panel additions. |
+| `Work Plan for Claude Code: Toggle On/Off` | Toggle the timestamps, reply figures and sub-agent tags. |
+| `Work Plan for Claude Code: Turn On` | Show the timestamps, reply figures and sub-agent tags. |
+| `Work Plan for Claude Code: Turn Off` | Hide the timestamps, reply figures and sub-agent tags. |
 
 **Repair and diagnostics**
 

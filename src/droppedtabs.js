@@ -17,21 +17,14 @@
  * is missing. A conversation in it that is not shown anywhere now, and whose tab title is not among the Claude Code tabs
  * VS Code did restore, is one VS Code dropped.
  */
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const { SESSION, projectsDir, transcriptOf } = require('./claude-files');
 
-const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /* More than this at once is more likely a record gone wrong than tabs a person had open. */
 const LIMIT = 20;
 
-const claudeDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-
 /** Whether a conversation still has a transcript, in any project folder. */
-function transcriptExists(id, projects = path.join(claudeDir(), 'projects')) {
-  let dirs;
-  try { dirs = fs.readdirSync(projects); } catch (_) { return false; }
-  return dirs.some((d) => { try { return fs.statSync(path.join(projects, d, id + '.jsonl')).isFile(); } catch (_) { return false; } });
+function transcriptExists(id, projects = projectsDir()) {
+  return !!transcriptOf(id, projects);
 }
 
 /*
@@ -46,8 +39,18 @@ function find({ record, shown, labels, strip = (t) => t, exists = transcriptExis
     const t = strip(label);
     left.set(t, (left.get(t) || 0) + 1);
   }
+  const entries = Array.isArray(record) ? record : [];
+  /* A conversation shown now answers for its own restored tab first. Left in the count, its label would be taken by the
+     next entry of the same title, and a dropped tab sharing its title with a restored one would never be reopened. */
+  const answered = new Set();
+  for (const e of entries) {
+    if (!e || typeof e.sessionId !== 'string' || !open.has(e.sessionId) || answered.has(e.sessionId)) continue;
+    answered.add(e.sessionId);
+    const t = strip(typeof e.title === 'string' ? e.title : '');
+    if (left.get(t) > 0) left.set(t, left.get(t) - 1);
+  }
   const out = [], seen = new Set();
-  for (const e of Array.isArray(record) ? record : []) {
+  for (const e of entries) {
     if (!e || typeof e.sessionId !== 'string' || !SESSION.test(e.sessionId) || e.inferred === true) continue;
     if (seen.has(e.sessionId) || open.has(e.sessionId)) continue;
     seen.add(e.sessionId);

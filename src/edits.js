@@ -27,13 +27,21 @@ function shapesOf(edit) {
   return edit.shapes || [{ re: edit.re, to: edit.to, note: edit.note }];
 }
 
-/** The one shape this source matches exactly once, or an error saying what each shape did. */
+/*
+ * The one shape this source matches exactly once, and where, or an error saying what each shape did.
+ *
+ * A pattern has to carry the g flag: without it a match returns the first match and its groups rather than every match,
+ * so the count is the number of groups and says nothing about how many places fit.
+ */
 function pickShape(src, edit) {
   const shapes = shapesOf(edit);
   const counts = [];
   for (let i = 0; i < shapes.length; i++) {
-    const n = (src.match(shapes[i].re) || []).length;
-    if (n === 1) return { shape: shapes[i], index: i, note: shapes[i].note, total: shapes.length };
+    const re = shapes[i].re;
+    if (!(re instanceof RegExp) || !re.global) return { error: `"${edit.name}" has a pattern without the g flag, so its matches cannot be counted` };
+    let at = null, n = 0;
+    for (const m of src.matchAll(re)) { if (!n) at = m; n++; }
+    if (n === 1) return { shape: shapes[i], index: i, note: shapes[i].note, total: shapes.length, at: at.index };
     counts.push(n);
   }
   const detail = counts.length === 1
@@ -42,14 +50,22 @@ function pickShape(src, edit) {
   return { error: `"${edit.name}" ${detail} - this Claude Code build is not supported yet` };
 }
 
-/** Apply every edit or none. Returns { out, chosen } or { error }; `chosen` records which shape each edit used. */
+/*
+ * Apply every edit or none. Returns { out, chosen } or { error }; `chosen` records which shape each edit used.
+ *
+ * The bundle is scanned once per shape, to count. The replacement is then made where that count found the match, with a
+ * sticky copy of the pattern that can match only there - the same replacement a global replace would make, without a
+ * second pass over several megabytes on the editor's extension host.
+ */
 function applyEdits(src, edits) {
   let out = src;
   const chosen = [];
   for (const e of edits) {
     const picked = pickShape(out, e);
     if (picked.error) return { error: picked.error };
-    out = out.replace(picked.shape.re, picked.shape.to);
+    const here = new RegExp(picked.shape.re.source, picked.shape.re.flags.replace(/[gy]/g, '') + 'y');
+    here.lastIndex = picked.at;
+    out = out.replace(here, picked.shape.to);
     chosen.push({ name: e.name, index: picked.index, note: picked.note, total: picked.total });
   }
   return { out, chosen };

@@ -17,22 +17,19 @@
  *   debug/<id>.txt                   its debug log
  *   todos/<id>-*.json                its todo lists, from Claude Code versions that kept them
  *
- * and this extension's own files for it: the work plan and its side files, and the stylesheet the panel reads its
- * effort marks from. A background session started with `claude --bg` is a conversation of its own and is not touched.
+ * and this extension's own files for it: the work plan, its side files and the lock a writer of the plan takes, and the
+ * stylesheet the panel reads its effort marks from. A background session started with `claude --bg` is a conversation
+ * of its own and is not touched.
  *
- * Every path is built from the ID, which must have the session ID's form, so nothing outside these places can be named.
- * A conversation still running somewhere is refused: the caller says which are open in this window, and Claude Code's
- * register of running sessions says which are running anywhere on this machine.
+ * Every path is built from the ID, which must have the session ID's form, so nothing outside these places can be named;
+ * and a session folder that is a symbolic link is removed as a link, never listed through. A conversation still running
+ * somewhere is refused: the caller says which are open in this window, and Claude Code's register of running sessions
+ * says which are running anywhere on this machine.
  */
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-
-const SESSION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/* The work plan's files and the side files the plugin keeps beside it, one each per conversation (src/workplan.js). */
-const PLAN_SUFFIXES = ['.json', '.offered', '.nudged', '.background', '.turn', '.watermark', '.tz', '.effort'];
-
-const claudeDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+const { claudeDir, projectFolders, SESSION } = require('./claude-files');
+const { SIDE_SUFFIXES } = require('./workplan');
 
 function list(dir) {
   try { return fs.readdirSync(dir); } catch (_) { return []; }
@@ -52,44 +49,65 @@ function measure(p) {
 }
 
 /*
- * What deleting one conversation would remove: each path that exists, what it is, and its size. `planDir` is the work
- * plan's folder, `extra` further files of this extension's for the conversation.
+ * What deleting each conversation would remove: per ID, each path that exists, what it is, and its size. The project
+ * folders are walked once however many conversations are asked about. `planDir` is the work plan's folder, `extra(id)`
+ * further files of this extension's for a conversation.
  */
-function find(id, { root = claudeDir(), planDir, extra = [] } = {}) {
-  if (typeof id !== 'string' || !SESSION.test(id)) return [];
-  const out = [];
-  const add = (p, kind) => { const m = measure(p); if (m) out.push({ path: p, kind, files: m.files, bytes: m.bytes }); };
-  const projects = path.join(root, 'projects');
-  for (const project of list(projects)) {
-    add(path.join(projects, project, id + '.jsonl'), 'transcript');
-    const dir = path.join(projects, project, id);
-    if (fs.existsSync(dir)) {
+function findAll(ids, { root = claudeDir(), planDir, extra = () => [] } = {}) {
+  const want = [...new Set((Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && SESSION.test(id)))];
+  const out = new Map(want.map((id) => [id, []]));
+  if (!want.length) return out;
+  const add = (id, p, kind) => { const m = measure(p); if (m) out.get(id).push({ path: p, kind, files: m.files, bytes: m.bytes }); };
+  for (const project of projectFolders(path.join(root, 'projects')) || []) {
+    const names = new Set(list(project));
+    for (const id of want) {
+      if (names.has(id + '.jsonl')) add(id, path.join(project, id + '.jsonl'), 'transcript');
+      if (!names.has(id)) continue;
+      const dir = path.join(project, id);
+      let st;
+      try { st = fs.lstatSync(dir); } catch (_) { continue; }
+      /* Not a folder of its own - a link, most likely: it goes as itself. Listing what it points at would delete
+         whatever is there, which can be anywhere. */
+      if (!st.isDirectory()) { add(id, dir, 'session data'); continue; }
       for (const name of list(dir)) {
         const kind = name === 'subagents' ? 'sub-agent' : name === 'tool-results' ? 'tool output' : 'session data';
-        add(path.join(dir, name), kind);
+        add(id, path.join(dir, name), kind);
       }
-      out.push({ path: dir, kind: 'folder', files: 0, bytes: 0 });
+      out.get(id).push({ path: dir, kind: 'folder', files: 0, bytes: 0 });
     }
   }
-  add(path.join(root, 'file-history', id), 'file checkpoint');
-  add(path.join(root, 'session-env', id), 'session data');
-  add(path.join(root, 'debug', id + '.txt'), 'debug log');
-  for (const name of list(path.join(root, 'todos'))) if (name.startsWith(id + '-') && name.endsWith('.json')) add(path.join(root, 'todos', name), 'session data');
-  if (planDir) for (const suffix of PLAN_SUFFIXES) add(path.join(planDir, id + suffix), suffix === '.json' ? 'work plan' : 'work plan data');
-  for (const p of extra) add(p, 'extension data');
+  const todos = list(path.join(root, 'todos'));
+  for (const id of want) {
+    add(id, path.join(root, 'file-history', id), 'file checkpoint');
+    add(id, path.join(root, 'session-env', id), 'session data');
+    add(id, path.join(root, 'debug', id + '.txt'), 'debug log');
+    for (const name of todos) if (name.startsWith(id + '-') && name.endsWith('.json')) add(id, path.join(root, 'todos', name), 'session data');
+    if (planDir) {
+      for (const suffix of SIDE_SUFFIXES) add(id, path.join(planDir, id + suffix), suffix === '.json' ? 'work plan' : 'work plan data');
+      add(id, path.join(planDir, id + '.json.lock'), 'work plan data');
+    }
+    for (const p of extra(id) || []) add(id, p, 'extension data');
+  }
   return out;
 }
 
-/** Whether Claude Code's register of running sessions has a live process for this conversation. */
-function running(id, root = claudeDir(), alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }) {
+/** What deleting one conversation would remove; `extra` lists further files of this extension's for it. */
+function find(id, opts = {}) {
+  const extra = Array.isArray(opts.extra) ? opts.extra : [];
+  return findAll([id], Object.assign({}, opts, { extra: () => extra })).get(id) || [];
+}
+
+/** The conversations Claude Code's register of running sessions has a live process for, read once. */
+function runningSessions(root = claudeDir(), alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }) {
+  const out = new Set();
   for (const name of list(path.join(root, 'sessions'))) {
     if (!name.endsWith('.json')) continue;
     try {
       const d = JSON.parse(fs.readFileSync(path.join(root, 'sessions', name), 'utf8'));
-      if (d && d.sessionId === id && Number.isInteger(d.pid) && alive(d.pid)) return true;
+      if (d && typeof d.sessionId === 'string' && Number.isInteger(d.pid) && alive(d.pid)) out.add(d.sessionId);
     } catch (_) { /* a register entry being written */ }
   }
-  return false;
+  return out;
 }
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
@@ -128,4 +146,4 @@ function remove(found) {
   return failed;
 }
 
-module.exports = { find, running, describe, remove, size, SESSION, PLAN_SUFFIXES };
+module.exports = { find, findAll, runningSessions, describe, remove, size, SESSION };

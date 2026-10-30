@@ -128,7 +128,7 @@ def due(told, now_seen):
 
 
 def told_file(payload, directory=None):
-    """What was said last, per conversation, beside where its plan would go; swept with it (ZONE_TOLD_FILE in
+    """What was said last, per conversation, beside where its plan would go; swept with it (SIDE_SUFFIXES in
     src/workplan.js)."""
     plan = plan_file(payload, directory)
     return side_file(plan, TOLD_SUFFIX) if plan else None

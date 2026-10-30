@@ -422,6 +422,10 @@ console.log('\nwhat the periodic work reads');
         const scan3 = await measure(() => bg.scan(SID, opts));
         const eff2 = await measure(() => E.scan(SID, { dir: plans, transcript }));
         const eff3 = await measure(() => E.scan(SID, { dir: plans, transcript }));
+        // Both started together, as a refresh and a switch of conversation start them, on a conversation neither has read.
+        const SID2 = 'cccccccc-1111-2222-3333-555555555555', fresh = path.join(root, SID2 + '.jsonl');
+        fs.writeFileSync(fresh, row.repeat(4096));
+        const both = await measure(() => Promise.all([bg.scan(SID2, { dir: plans, jobs, transcript: fresh }), E.scan(SID2, { dir: plans, transcript: fresh })]));
         fs.writeFileSync(path.join(plans, 'dddddddd-1111-2222-3333-444444444444.background'),
           JSON.stringify({ ids: ['1a2b3c4d'], scannedTo: 10 }));
         const collect = await measure(() => bg.collect({ dir: plans, jobs }));
@@ -439,6 +443,7 @@ console.log('\nwhat the periodic work reads');
         process.stdout.write(JSON.stringify({
           transcript: before, appended: Buffer.byteLength(more),
           scan: [scan1.bytes, scan2.bytes, scan3.bytes], efforts: [eff1.bytes, eff2.bytes, eff3.bytes], collectFiles: collect.files,
+          both: both.bytes,
           log: logBefore, logAppended: Buffer.byteLength(logMore), logReads: [log1.bytes, log2.bytes, log3.bytes] }));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
@@ -459,6 +464,9 @@ console.log('\nwhat the periodic work reads');
       ok(`the reply-effort scan reads a transcript once, then only what was added: ${e1}, ${e2}, ${e3} bytes`);
     } else bad(`the reply-effort scan read ${e1}, ${e2} and ${e3} bytes of a ${r.transcript}-byte transcript `
       + `with ${r.appended} appended between the first two passes`);
+    if (r.both >= r.transcript && r.both < r.transcript * 1.5) {
+      ok(`the two scans started together on an unread transcript share one pass over it: ${r.both} bytes for a ${r.transcript}-byte file`);
+    } else bad(`the two scans started together read ${r.both} bytes of a ${r.transcript}-byte transcript`);
     if (r.collectFiles.length && !r.collectFiles.some((f) => f.endsWith('.jsonl'))) {
       ok('collecting what the background sessions are doing opens no transcript');
     } else bad('collecting the background sessions read: ' + JSON.stringify(r.collectFiles));
@@ -624,6 +632,30 @@ console.log('\nshape selection');
       else bad(`${what}: expected a refusal naming both shapes, got ${JSON.stringify(got.error || got.index)}`);
     } else if (got.index === want) ok(what);
     else bad(`${what}: expected shape ${want + 1}, got ${got.error || 'shape ' + (got.index + 1)}`);
+  }
+  /* Without the g flag a match returns the first match and its groups, so two places read as one and the edit would be
+     made at the first of them. */
+  const lone = pickShape('aaa then aaa', { name: 'no flag', re: /aaa/, to: () => 'X' });
+  if (lone.error && /g flag/.test(lone.error)) ok('a pattern without the g flag is refused rather than counted wrong');
+  else bad(`a pattern without the g flag gave ${JSON.stringify(lone)}`);
+  /* The bundle is several megabytes and the patch runs on the editor's extension host, so it is scanned once per shape:
+     the count finds the match, and the replacement is made there without a second pass over the whole file. */
+  {
+    const { applyEdits } = require('../src/edits');
+    let passes = 0;
+    class Counting extends RegExp {
+      [Symbol.match](s) { passes++; return super[Symbol.match](s); }
+      [Symbol.matchAll](s) { passes++; return super[Symbol.matchAll](s); }
+      [Symbol.replace](s, r) { passes++; return super[Symbol.replace](s, r); }
+    }
+    const src = 'k1 (?) k2 a=1;b=2 k3';
+    const r = applyEdits(src, [
+      { name: 'function', re: new Counting('(?<=k2 )a=(\\d);b=(\\d)', 'g'), to: (m, x, y, at, whole) => `b=${y};a=${x}@${at}/${whole.length}` },
+      { name: 'string', re: /k(3)/g, to: 'K$1' },
+    ]);
+    const want = src.replace(/(?<=k2 )a=(\d);b=(\d)/g, (m, x, y, at, whole) => `b=${y};a=${x}@${at}/${whole.length}`).replace(/k(3)/g, 'K$1');
+    if (r.out === want && passes === 1) ok('each edit scans the bundle once and is made where that scan found it, as a replace would make it');
+    else bad(`applying edits gave ${JSON.stringify(r.out)} (expected ${JSON.stringify(want)}) after ${passes} pass(es) over the source`);
   }
 }
 
@@ -1185,6 +1217,32 @@ console.log('\nreply efforts');
     if (f.css === rule(`${H(7)}=medium!${H(7)}`, sub) && g.css === rule(`${H(7)}=medium!${H(7)}`, `${H(11)}=low,${H(13)}=high!${H(13)}`)) {
       ok('a pass for the conversation alone leaves the sub-agents unread, and a full pass reads what they added');
     } else bad(`for the conversation alone: ${JSON.stringify(f)}; then in full: ${JSON.stringify(g)}`);
+    /* A full pass asked for while one for the conversation alone runs is not handed that one's result: it gets the pass
+       after it, and that pass reads the sub-agents. */
+    {
+      const subFile = path.join(root, sid, 'subagents', 'agent-a1.jsonl');
+      const script = `
+        const fs = require('fs');
+        const e = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'efforts.js'))});
+        const opts = ${JSON.stringify({ dir: plans, transcript })};
+        const open = fs.promises.open;
+        let full = null;
+        fs.promises.open = async function (...a) {
+          const fh = await open.apply(this, a);
+          if (!full) { fs.appendFileSync(${JSON.stringify(subFile)}, ${JSON.stringify(reply(14, 'max', { isSidechain: true }))}); full = e.scan(${JSON.stringify(sid)}, opts); }
+          return fh;
+        };
+        (async () => {
+          fs.appendFileSync(opts.transcript, ${JSON.stringify(reply(15, 'medium'))});
+          const alone = await e.scan(${JSON.stringify(sid)}, Object.assign({ subagents: false }, opts));
+          process.stdout.write(JSON.stringify({ alone, full: await full }));
+        })().catch((err) => process.stdout.write(JSON.stringify({ error: err.message })));`;
+      let q;
+      try { q = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); } catch (err) { q = { error: err.message }; }
+      if (!q.error && q.full && q.full.css === rule(`${H(7)}=medium!${H(15)}`, `${H(11)}=low,${H(13)}=high,${H(14)}=max!${H(14)}`)) {
+        ok('a full pass asked for while a pass for the conversation alone runs gets a pass after it that reads the sub-agents');
+      } else bad(`a full pass asked for during a partial one gave ${JSON.stringify(q)}`);
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1264,6 +1322,17 @@ console.log('\nreply efforts');
 }
 
 console.log('\nverified builds');
+/* A machine that verified nothing would have written "Verified against Claude Code no build." and then read it back as a
+   build called "no build". Nothing is written for none, and that sentence claims none. */
+{
+  const was = fs.readFileSync(supported.README_FILE, 'utf8');
+  const wrote = supported.syncReadme([]);
+  const same = fs.readFileSync(supported.README_FILE, 'utf8') === was;
+  const none = supported.readmeClaims('Verified against Claude Code no build.\n');
+  if (!wrote && same && Array.isArray(none) && !none.length) ok('an empty record is not written into the README, and the sentence for none reads back as none');
+  else bad(`with nothing verified: wrote ${wrote}, README unchanged ${same}, the sentence for none read as ${JSON.stringify(none)}`);
+  if (!same) fs.writeFileSync(supported.README_FILE, was);
+}
 if (process.argv.includes('--without-version-record')) {
   note('asked to skip the record check, which is what writing the record does while it runs this suite');
 } else {
@@ -1448,6 +1517,107 @@ console.log('\nscheduled prompts');
   }
 }
 
+/* ── Claude Code's directory, read the same way everywhere ──
+   Where Claude Code's directory is, which project folder holds a transcript, and which conversations still have one were
+   answered in five places, and they disagreed: two of them ignored CLAUDE_CONFIG_DIR, and one skipped a project folder it
+   could not read where another refused to go on. They are answered once now, in src/claude-files.js. */
+console.log("\nClaude Code's directory, read the same way everywhere");
+{
+  const cf = require('../src/claude-files');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-files-'));
+  try {
+    const SID = 'abababab-1111-4222-8333-444444444444';
+    const cfg = path.join(root, 'cfg');
+    fs.mkdirSync(path.join(cfg, 'projects', '-p'), { recursive: true });
+    fs.mkdirSync(path.join(cfg, 'jobs', '1a2b3c4d'), { recursive: true });
+    fs.writeFileSync(path.join(cfg, 'jobs', '1a2b3c4d', 'state.json'), JSON.stringify({ state: 'working', createdAt: '2026-10-02T10:00:00.000Z' }));
+    const id = 'toolu_1';
+    fs.writeFileSync(path.join(cfg, 'projects', '-p', SID + '.jsonl'),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id, input: { command: 'claude --bg x' } }] } }) + '\n'
+      + JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'backgrounded · 1a2b3c4d\n' }] } }) + '\n');
+    const script = `
+      const path = require('path');
+      const cf = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'claude-files.js'))});
+      const bg = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))});
+      (async () => {
+        const live = cf.liveSessions();
+        const scanned = await bg.scan(${JSON.stringify(SID)}, { dir: ${JSON.stringify(path.join(root, 'plans'))} });
+        process.stdout.write(JSON.stringify({ dir: cf.claudeDir(), transcript: cf.transcriptOf(${JSON.stringify(SID)}), live: live ? [...live] : null, scanned }));
+      })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
+    let r;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: Object.assign({}, process.env, { CLAUDE_CONFIG_DIR: cfg }) })); }
+    catch (e) { r = { error: e.message }; }
+    if (!r.error && r.dir === cfg && r.transcript.startsWith(cfg) && JSON.stringify(r.live) === JSON.stringify([SID]) && r.scanned.added === 1) {
+      ok('CLAUDE_CONFIG_DIR moves where transcripts, the conversations still on disk and the background sessions are looked for, alike');
+    } else bad(`with CLAUDE_CONFIG_DIR set: ${JSON.stringify(r)}`);
+
+    /* A conversation whose transcript is not written yet is asked about by several callers at the same moment and on
+       every refresh; each search stats a file in every project folder. */
+    const projects = path.join(cfg, 'projects');
+    const missing = 'cdcdcdcd-1111-4222-8333-444444444444';
+    let walks = 0;
+    const realReaddir = fs.readdirSync;
+    fs.readdirSync = function (p, ...rest) { if (String(p) === projects) walks++; return realReaddir.call(fs, p, ...rest); };
+    let got;
+    try {
+      const t0 = Date.now();
+      got = [cf.transcriptOf(missing, projects, t0), cf.transcriptOf(missing, projects, t0 + 1000), walks,
+        cf.transcriptOf(missing, projects, t0 + cf.MISS_MS + 1), walks];
+    } finally { fs.readdirSync = realReaddir; }
+    if (JSON.stringify(got) === JSON.stringify(['', '', 1, '', 2])) ok('a transcript not found is looked for again only once a short while has passed');
+    else bad(`looking for a missing transcript gave ${JSON.stringify(got)}`);
+
+    /* One project folder that cannot be listed would make every conversation in it look gone, and their plans would be
+       deleted as abandoned. */
+    const locked = path.join(projects, '-locked');
+    fs.mkdirSync(locked);
+    fs.writeFileSync(path.join(locked, 'efefefef-1111-4222-8333-444444444444.jsonl'), '{}\n');
+    fs.chmodSync(locked, 0);
+    const blind = cf.liveSessions(projects);
+    fs.chmodSync(locked, 0o755);
+    if (process.getuid && process.getuid() === 0) note('running as root, so a folder cannot be made unreadable to check that');
+    else if (blind === null) ok('a project folder that cannot be listed makes the conversations still on disk unknown, not fewer');
+    else bad(`with a project folder unreadable the live set was ${JSON.stringify([...blind])}`);
+
+    /* Several windows write the same files beside the plans. */
+    const file = path.join(root, 'shared.json');
+    const renames = [];
+    const realRename = fs.renameSync;
+    let threw = '';
+    try {
+      fs.renameSync = (from, to) => { renames.push(from); return realRename.call(fs, from, to); };
+      cf.writeAtomic(file, 'one'); cf.writeAtomic(file, 'two');
+      fs.renameSync = () => { throw new Error('rename failed'); };
+      try { cf.writeAtomic(file, 'three'); } catch (e) { threw = e.message; }
+    } finally { fs.renameSync = realRename; }
+    const leftover = fs.readdirSync(root).filter((n) => n.startsWith('shared.json.'));
+    if (renames.length === 2 && renames[0] !== renames[1] && renames.every((t) => t.includes('.' + process.pid + '.'))
+      && fs.readFileSync(file, 'utf8') === 'two' && threw === 'rename failed' && !leftover.length) {
+      ok('a shared file is replaced through a temporary copy of this process\'s own, removed again when it cannot be put in place');
+    } else bad(`writing a shared file: renames ${JSON.stringify(renames.map((t) => path.basename(t)))}, left ${JSON.stringify(leftover)}, threw ${JSON.stringify(threw)}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+  /* One pass per key at a time, and every request made during a pass shares the one after it, with the options merged. */
+  const script = `
+    const cf = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'claude-files.js'))});
+    const runs = [];
+    let release;
+    const run = (key, opts) => new Promise((resolve) => {
+      runs.push(opts);
+      if (runs.length === 1) release = () => resolve('first'); else resolve('again ' + runs.length);
+    });
+    const go = cf.oneAtATime(run, (a, b) => ({ tags: a.tags.concat(b.tags) }));
+    const a = go('k', { tags: ['a'] }), b = go('k', { tags: ['b'] }), c = go('k', { tags: ['c'] }), other = go('j', { tags: ['j'] });
+    setTimeout(() => release(), 10);
+    Promise.all([a, b, c, other]).then((got) => process.stdout.write(JSON.stringify({ got, runs })));`;
+  let q;
+  try { q = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); } catch (e) { q = { error: e.message }; }
+  if (q && !q.error && JSON.stringify(q.got) === JSON.stringify(['first', 'again 3', 'again 3', 'again 2'])
+    && JSON.stringify(q.runs.map((o) => o.tags)) === JSON.stringify([['a'], ['j'], ['b', 'c']])) {
+    ok('a request made during a pass waits for one more pass, shared by every such request, with their options together');
+  } else bad(`one pass at a time gave ${JSON.stringify(q)}`);
+}
+
 /* ── 5. the installed copy must match this working tree ──
    The extension host loads the installed copy, not this tree. A source file added here but missing there makes the
    extension fail to activate on the next reload - it cannot require what was never packaged - and the only symptom is
@@ -1586,9 +1756,10 @@ console.log('\nbackground sessions');
     } else bad(`a hint that was not a launch was recorded: ${JSON.stringify(ids)}`);
   }
 
-  // No file for a conversation that started nothing - one per conversation looked at would be clutter. How far it was
-  // read is still kept by the host, so the next pass starts there: the part already read is rewritten below to hold a
-  // launch, which only a pass starting again from the first byte would find.
+  // A conversation that started nothing still gets a file, with no sessions in it: it is what tells the next window, or
+  // the next start, how far its transcript was read. The part already read is rewritten below to hold a launch, which only
+  // a pass starting again from the first byte would find - and the second pass is a process of its own, as a window
+  // starting up is.
   {
     const SID2 = 'bbbbbbbb-1111-2222-3333-444444444444';
     const t2 = path.join(proj, SID2 + '.jsonl');
@@ -1596,22 +1767,22 @@ console.log('\nbackground sessions');
       + [1, 2, 3, 4, 5, 6].map((n) => prose('still nothing, line ' + n)).join('');
     const rewritten = ran('claude --bg "late"', launched('1a2b3c4d')) + before;
     fs.writeFileSync(t2, before);
-    const script = `
+    const once = () => JSON.parse(cp.execFileSync(process.execPath, ['-e', `
       const bg = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))});
-      const fs = require('fs');
-      const opts = ${JSON.stringify({ dir: plans, jobs, transcript: t2 })};
-      (async () => {
-        const first = await bg.scan(${JSON.stringify(SID2)}, opts);
-        fs.writeFileSync(opts.transcript, ${JSON.stringify(rewritten)});
-        const second = await bg.scan(${JSON.stringify(SID2)}, opts);
-        process.stdout.write(JSON.stringify({ first, second }));
-      })().catch((e) => { process.stdout.write(JSON.stringify({ error: e.message })); });`;
-    const r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' }));
-    if (!fs.existsSync(path.join(plans, SID2 + '.background'))) ok('a conversation that started nothing gets no file');
-    else bad('a file was written for a conversation that started nothing');
-    if (!r.error && r.first.added === 0 && r.second.added === 0 && r.second.scannedTo > r.first.scannedTo) {
-      ok('and the next pass over it reads on from where the last one stopped, not from the first byte');
-    } else bad(`two passes over a conversation that started nothing gave ${JSON.stringify(r)}`);
+      bg.scan(${JSON.stringify(SID2)}, ${JSON.stringify({ dir: plans, jobs, transcript: t2 })})
+        .then((r) => process.stdout.write(JSON.stringify(r)), (e) => process.stdout.write(JSON.stringify({ error: e.message })));`],
+    { encoding: 'utf8' }));
+    const first = once();
+    let link = null;
+    try { link = JSON.parse(fs.readFileSync(path.join(plans, SID2 + '.background'), 'utf8')); } catch (_) { /* none */ }
+    fs.writeFileSync(t2, rewritten);
+    const second = once();
+    if (link && Array.isArray(link.ids) && !link.ids.length && link.scannedTo === Buffer.byteLength(before)) {
+      ok('a conversation that started nothing gets a file saying how far it was read, and naming no session');
+    } else bad(`for a conversation that started nothing the file held ${JSON.stringify(link)}`);
+    if (!first.error && first.added === 0 && second.added === 0 && second.scannedTo === Buffer.byteLength(rewritten)) {
+      ok('and a new process reads on from that point rather than from the first byte');
+    } else bad(`two processes over a conversation that started nothing gave ${JSON.stringify([first, second])}`);
   }
 
   // What the stylesheet carries.
@@ -1637,6 +1808,69 @@ console.log('\nbackground sessions');
   fs.rmSync(path.join(jobs, '77777777'), { recursive: true });
   if (!bg.collect({ dir: plans, jobs }).some((e) => e.id === '77777777')) ok('a session whose record is gone drops out');
   else bad('a session with no record left was still listed');
+
+  /* The list is ordered by when each conversation last launched a session, which every window reads the same. A link
+     file is rewritten as its transcript is read, so ordering by its modification time moved conversations about - and
+     past MAX_SESSIONS in and out of the list - and rewrote the stylesheet every panel reloads. A file written before
+     the launch time was kept is ordered by its sessions' own records. */
+  {
+    const order = path.join(root, 'plans-order');
+    fs.mkdirSync(order);
+    job('aaaa0001', { createdAt: '2026-10-03T10:00:00.000Z' });
+    job('aaaa0002', { createdAt: '2026-10-01T10:00:00.000Z' });
+    job('aaaa0003', { createdAt: '2026-10-02T10:00:00.000Z' });
+    const S = (n) => `${n}${n}${n}${n}${n}${n}${n}${n}-1111-2222-3333-444444444444`;
+    const put = (n, link, ageMin) => {
+      const f = path.join(order, S(n) + '.background');
+      fs.writeFileSync(f, JSON.stringify(link));
+      const t = new Date(Date.now() - ageMin * 60000);
+      fs.utimesSync(f, t, t);
+    };
+    put(1, { ids: ['aaaa0001'], scannedTo: 5, launched: Date.parse('2026-10-03T10:00:00.000Z') }, 30);
+    put(2, { ids: ['aaaa0002'], scannedTo: 5, launched: Date.parse('2026-10-01T10:00:00.000Z') }, 20);
+    put(3, { ids: ['aaaa0003'], scannedTo: 5 }, 10);
+    const first = bg.collect({ dir: order, jobs }).map((e) => e.session);
+    // A pass reads on through the oldest launcher's transcript and writes down how far, which makes its file the newest.
+    put(2, { ids: ['aaaa0002'], scannedTo: 5 + bg.PERSIST_EVERY, launched: Date.parse('2026-10-01T10:00:00.000Z') }, 0);
+    const second = bg.collect({ dir: order, jobs }).map((e) => e.session);
+    const want = [S(1), S(3), S(2)];
+    if (JSON.stringify(first) === JSON.stringify(want) && JSON.stringify(second) === JSON.stringify(want)) {
+      ok('the agent map lists conversations newest launch first, and a file rewritten as its transcript is read does not move');
+    } else bad(`ordered ${JSON.stringify(first)}, then after a rewrite ${JSON.stringify(second)}, expected ${JSON.stringify(want)}`);
+  }
+
+  /* A request made while a pass runs is not handed that pass's result: the pass took the transcript's size before the
+     request, so a launch appended in between was left for whatever came next. It gets one more pass instead. */
+  {
+    const SID4 = 'dddddddd-1111-2222-3333-444444444444';
+    const t4 = path.join(proj, SID4 + '.jsonl');
+    const plans4 = path.join(root, 'plans4');
+    job('0f0f0f0f');
+    fs.writeFileSync(t4, ran('claude --bg "first"', launched('0a0b0c0d')));
+    const late = ran('claude --bg "second"', launched('0f0f0f0f'));
+    const script = `
+      const fs = require('fs');
+      const bg = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'background.js'))});
+      const opts = ${JSON.stringify({ dir: plans4, jobs, transcript: t4 })};
+      const open = fs.promises.open;
+      let second = null;
+      fs.promises.open = async function (...a) {
+        const fh = await open.apply(this, a);
+        if (!second) { fs.appendFileSync(opts.transcript, ${JSON.stringify(late)}); second = bg.scan(${JSON.stringify(SID4)}, opts); }
+        return fh;
+      };
+      (async () => {
+        const first = await bg.scan(${JSON.stringify(SID4)}, opts);
+        const then = await second;
+        const link = JSON.parse(fs.readFileSync(opts.dir + '/' + ${JSON.stringify(SID4)} + '.background', 'utf8'));
+        process.stdout.write(JSON.stringify({ first, then, ids: link.ids }));
+      })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
+    let r;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); } catch (e) { r = { error: e.message }; }
+    if (!r.error && r.first.added === 1 && r.then.added === 1 && r.ids.join() === '0a0b0c0d,0f0f0f0f') {
+      ok('a scan asked for while one runs gets a pass of its own after it, which reads what was appended meanwhile');
+    } else bad(`a scan asked for during another gave ${JSON.stringify(r)}`);
+  }
 
   {
     const HIDE = '[data-message-stamp] time{display:none !important;}';
@@ -2000,6 +2234,32 @@ console.log('\nabandoned work plans');
         return t;
       },
       (t, r) => r.deleted === 1 && left(t.dir).sort().join() === 'client-time-zone.json,config.json'],
+    /* The lock a writer of a plan takes is a directory beside it, held for milliseconds. One a day old was abandoned, and
+       stands in every writer's way until each has waited it out; one younger is somebody's, whatever the transcripts say. */
+    ['a plan\'s lock a day old is removed, and a younger one is left to whoever holds it',
+      () => {
+        const t = build([id(1), id(2)], [[id(1), NEW], [id(2), NEW]]);
+        fs.mkdirSync(path.join(t.dir, id(1) + '.json.lock'));
+        fs.utimesSync(path.join(t.dir, id(1) + '.json.lock'), OLD / 1000, OLD / 1000);
+        fs.mkdirSync(path.join(t.dir, id(2) + '.json.lock'));
+        return t;
+      },
+      (t, r) => r.deleted === 0 && left(t.dir).join() === [id(1) + '.json', id(2) + '.json', id(2) + '.json.lock'].join()],
+    ['what the sweep read of the transcripts comes back with it, for the efforts beside the panel',
+      () => build([id(1), id(2)], []),
+      (t, r) => r.live instanceof Set && r.live.size === 2 && r.live.has(id(1))],
+    /* A project folder that cannot be listed hides its conversations; taking them for gone deletes their plans. */
+    ['nothing is deleted when one project folder cannot be read',
+      () => {
+        const t = build([id(1)], [[id(2), OLD]]);
+        const locked = path.join(t.projects, '-locked');
+        fs.mkdirSync(locked);
+        fs.writeFileSync(path.join(locked, id(2) + '.jsonl'), '{}\n');
+        fs.chmodSync(locked, 0);
+        t.restore = () => fs.chmodSync(locked, 0o755);
+        return t;
+      },
+      (t, r) => (process.getuid && process.getuid() === 0) || (r.deleted === 0 && !!r.why && left(t.dir).length === 1)],
   ];
 
   for (const [what, make, want] of cases) {
@@ -2007,6 +2267,7 @@ console.log('\nabandoned work plans');
     let r;
     try { r = plan.sweepOrphans({ dir: t.dir, projects: t.projects }); }
     catch (e) { bad(`${what}: threw ${e.message}`); fs.rmSync(t.root, { recursive: true, force: true }); continue; }
+    finally { if (t.restore) t.restore(); }
     if (want(t, r)) ok(what);
     else bad(`${what}: got ${JSON.stringify(r)} leaving ${JSON.stringify(left(t.dir))}`);
     fs.rmSync(t.root, { recursive: true, force: true });
@@ -2041,6 +2302,42 @@ console.log('\none live stylesheet, several windows');
   if (JSON.stringify(tasks.readTasks([c, e])) === JSON.stringify(tasks.readTasks([e, c]))) {
     ok(`at the cap of ${tasks.MAX_TASKS}, which tasks survive does not depend on that order either`);
   } else bad('at the cap, the surviving tasks still depend on the order the directories arrived in');
+
+  /* Which directories to read, kept in a store every window shares. Each window put its own folders first and wrote the
+     store whenever the order differed, so two windows with different folders rewrote it on every refresh; and past the
+     cap each kept a different set, so the tasks and the stylesheet differed between them. Two windows, taking turns: */
+  {
+    const day = 86400000, t0 = Date.UTC(2026, 9, 29, 12);
+    const isDir = () => true;
+    const many = Array.from({ length: tasks.MAX_DIRS + 8 }, (_, i) => '/p/' + String(i).padStart(2, '0'));
+    const windowA = ['/p/a', ...many.slice(0, 20)], windowB = ['/p/b', ...many.slice(20)];
+    let store = ['/p/old-list', '/p/a'];
+    const writes = [], lists = [];
+    for (let round = 0; round < 4; round++) {
+      for (const [name, open] of [['A', windowA], ['B', windowB]]) {
+        const r = tasks.rememberDirs(store, open, { now: t0 + round * 60000, isDir });
+        if (r.changed) { writes.push(name + round); store = r.store; }
+        lists.push(JSON.stringify(r.dirs));
+      }
+    }
+    const settled = lists.slice(-4);
+    if (writes.length <= 2 && new Set(settled).size === 1 && JSON.parse(settled[0]).length === tasks.MAX_DIRS) {
+      ok(`two windows with different folders open settle on one list of ${tasks.MAX_DIRS} directories and stop rewriting the store`);
+    } else bad(`two windows taking turns wrote ${JSON.stringify(writes)} and read ${settled.map((l) => JSON.parse(l).length).join('/')} directories`);
+    const later = tasks.rememberDirs(store, windowA, { now: t0 + day, isDir });
+    const gone = tasks.rememberDirs({ '/p/a': 1, '/nowhere': 1 }, [], { now: t0, isDir: (d) => d !== '/nowhere' });
+    const legacy = tasks.rememberDirs(['/p/x', '/p/y'], [], { now: t0, isDir });
+    if (later.changed && gone.dirs.join() === '/p/a' && legacy.dirs.join() === '/p/x,/p/y' && legacy.changed) {
+      ok('the store changes again when a day turns, drops a directory that is gone, and reads the list an earlier build kept');
+    } else bad(`a day on changed ${later.changed}; with one gone ${JSON.stringify(gone.dirs)}; from a list ${JSON.stringify(legacy.dirs)}`);
+    /* A window still on an earlier build keeps its plain list under the old key; one key holding both shapes would have
+       the two builds rewriting it in turn. */
+    const extDirs = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+    if (/const DIRS_KEY = 'claudeCodeExtras\.projectDirDays';/.test(extDirs) && /const OLD_DIRS_KEY = 'claudeCodeExtras\.projectDirs';/.test(extDirs)
+      && /context\.globalState\.update\(DIRS_KEY, r\.store\)/.test(extDirs) && !/update\(OLD_DIRS_KEY/.test(extDirs)) {
+      ok('the folders and their days are kept under a key of their own, started from the list an earlier build keeps');
+    } else bad('the remembered folders share a key with the list an earlier build writes');
+  }
 
   const wv = path.join(root, 'webview');
   fs.mkdirSync(wv, { recursive: true });
@@ -2620,82 +2917,21 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`summarise gave ${JSON.stringify(rows)}`);
     fs.rmSync(root, { recursive: true, force: true });
   }
-  /* The host-busy watcher is temporary and spread over two files, so each place that carries it has to say so. A
-     diagnostic whose own code no longer admits to being one is a diagnostic nobody will ever remove: the comment is the
-     only thing that licenses deleting it, and by the time anyone wonders, the investigation it belongs to will be months
-     past. Checked rather than trusted because the three are easy to edit apart. */
+  /* The host-busy watcher and the record of patch writes served one investigation, which traced the slow first message
+     to the editor's webview service-worker cache. A per-second timer in every window is not something to keep for its
+     own sake, so nothing of either is left: not the code, not its call sites, not its lines in the report. */
   {
-    const marked = [
-      ['src/openlatency.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
-      ['extension.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
-      ['src/openlatency.js', 'TEMPORARY, part of the investigation at writeAtomic'],
-      ['extension.js', 'TEMPORARY, part of that same investigation'],
-    ];
-    const bare = marked.filter(([f, mark]) =>
-      !fs.readFileSync(path.join(__dirname, '..', f), 'utf8').includes(mark));
-    if (!bare.length) ok(`all ${marked.length} parts of the host-busy diagnostic say they are temporary`);
-    else bad(`no longer marked temporary, so nothing licenses removing it: ${bare.map(([f]) => f).join(', ')}`);
-  }
-
-  /* Whether this extension host was running during a wait, which the wait alone cannot say: silence either side of a long
-     one means either the host was blocked and could not act, or it was idle with nothing to act on, and those are opposite
-     halves of the machine. A clock read on a timer tells them apart. Folding consecutive overruns matters as much as
-     noticing them - a host stalled for a minute would otherwise write sixty records of one stall. */
-  {
-    let t = 1000000;
-    const w = L.lagWatcher({ now: () => t, write: false, version: 'v1' });
-    const step = (ms) => { t += ms; return w.tick(); };
-    step(1000); step(1000);                        // on time: nothing to say
-    if (!w.records.length && !w.open) ok('a timer arriving on time records nothing');
-    else bad(`an on-time timer produced ${JSON.stringify(w.records)}`);
-
-    step(1000 + 5000);                             // five seconds late
-    step(1000 + 30000);                            // thirty more, same stretch
-    if (w.open && !w.records.length) ok('a stretch of delay is held open rather than written once per tick');
-    else bad(`mid-stall state was ${JSON.stringify({ open: w.open, records: w.records })}`);
-
-    step(1000);                                    // on time again, so the stretch closes
-    const r = w.records[0];
-    if (w.records.length === 1 && r.what === 'hostbusy' && r.blocked === 35000 && r.ticks === 2) {
-      ok('it comes out as one record naming the whole span');
-    } else bad(`the closed stretch was ${JSON.stringify(w.records)}`);
-
-    // The report has to put the two kinds together, since reading one against the other is the entire point.
-    const together = L.report([
-      { what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: '2026-10-01T01:05:22.831Z' }, r,
-    ]).join('\n');
-    if (together.includes('busy') && together.includes('waiting on the panel')) {
-      ok('the report lists host-busy stretches beside the waits, and says what no overlap means');
-    } else bad('the report did not mention both kinds');
-
-    const alone = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
-    if (alone.includes('waiting on the panel rather than on this side')) ok('with no busy stretch it says so outright');
-    else bad('a report with no busy stretch left the reader to infer it');
-  }
-  /* Replacing a patched file during startup is the leading suspect for a panel that takes minutes to open, so the write
-     has to be recorded with its offset into startup - the wall clock cannot say whether it landed while the panel was
-     still reading. Written every time rather than past a threshold: a write that did NOT coincide with a slow open is
-     exactly as informative, and which of the two happens is the whole question. */
-  {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-patchrec-'));
-    const r = L.patchRecord({ dir, version: 'v1', target: 'Claude Code panel', intoStartup: 1840, took: 95,
-      at: '2026-10-01T05:00:00.000Z', pid: 999 });
-    const back = L.readAll(dir);
-    if (r && back.length === 1 && back[0].what === 'patched' && back[0].intoStartup === 1840 && back[0].took === 95) {
-      ok('replacing a patched file is recorded with its offset into startup and how long it took');
-    } else bad(`the write record came back as ${JSON.stringify(back)}`);
-
-    const withWait = L.report(back.concat([
-      { what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: '2026-10-01T05:00:01.000Z' },
-    ])).join('\n');
-    if (withWait.includes('into startup') && withWait.includes('script reached at')) {
-      ok('and is printed against the waits, pointing at the panel number to compare it with');
-    } else bad('the report did not put the write beside the waits');
-
-    const none = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
-    if (none.includes('no patched file has been replaced')) ok('a window that wrote nothing and still waited says so, which rules the write out');
-    else bad('a report with no write left the reader to infer it');
-    fs.rmSync(dir, { recursive: true, force: true });
+    const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+    const lat = fs.readFileSync(path.join(__dirname, '..', 'src', 'openlatency.js'), 'utf8');
+    const left = [
+      ['lagWatcher in src/openlatency.js', /lagWatcher|INTERVAL_MS|LAG_FLOOR_MS/.test(lat)],
+      ['patchRecord in src/openlatency.js', /patchRecord/.test(lat)],
+      ['their report lines', /hostbusy|into startup/.test(lat)],
+      ['their call sites in extension.js', /lagWatcher|patchRecord|lagTimer|startedAt|intoStartup/.test(ext)],
+    ].filter(([, there]) => there).map(([what]) => what);
+    const said = L.report([{ what: 'panel', trigger: 'window', waited: 94297, version: 'v1', at: 'x' }]).join('\n');
+    if (!left.length && !/busy|patched file/.test(said)) ok('the temporary host-busy watcher and patch-write record are gone, call sites and report lines included');
+    else bad('still there: ' + left.concat(/busy|patched file/.test(said) ? ['the report still talks about them'] : []).join(', '));
   }
   {
     /* Closing the window is the other moment the count is complete; losing it would lose the denominator. */
@@ -2804,7 +3040,7 @@ console.log('\nthe waiting, paired out of the official log');
     const dir = path.join(root, 'rec');
     /* `now` has to sit near the log's own clock, or the pending request is older than the ceiling and gets written off
        as one that never arrived - which is the other new behaviour, not this one. */
-    const t0 = Date.parse('2026-09-29T21:00:05Z');
+    const t0 = new Date(2026, 8, 29, 21, 0, 5).getTime();
     fs.writeFileSync(log, at('0:00.000', clicked) + '\n');
     const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 808, thresholdMs: 10000 });
     fs.appendFileSync(log, at('1:30.000', up) + '\n');
@@ -2838,7 +3074,7 @@ console.log('\nthe waiting, paired out of the official log');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat8-'));
     const log = path.join(root, 'Claude VSCode.log');
     const dir = path.join(root, 'rec');
-    const t0 = Date.parse('2026-09-29T21:00:00Z');
+    const t0 = new Date(2026, 8, 29, 21, 0, 0).getTime();
     fs.writeFileSync(log, at('0:00.000', clicked) + '\n');
     const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 909, thresholdMs: 10000 });
     fs.appendFileSync(log, at('0:30.000', 'AuthManager initialized') + '\n');
@@ -2873,6 +3109,108 @@ console.log('\nthe waiting, paired out of the official log');
     if (rows.length === 2 && worst.version === 'b' && worst.n === 1 && rows[1].n === 2) {
       ok('versions are summarised apart, worst first, which is what shows a regression');
     } else bad(`summarise gave ${JSON.stringify(rows)}`);
+  }
+  /* The log's times are the extension host's local time with no zone. Read as UTC, a click five seconds old on a machine
+     in Los Angeles was a request seven hours old, written off at once as a panel that never opened. Run in a zone that is
+     not UTC, since this machine may well be in UTC. */
+  {
+    const script = `
+      const fs = require('fs'), os = require('os'), path = require('path');
+      const L = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'openlatency.js'))});
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lattz-'));
+      try {
+        const now = Date.now(), d = new Date(now - 5000), p = (n, w = 2) => String(n).padStart(w, '0');
+        const local = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':'
+          + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3);
+        const log = path.join(root, 'Claude VSCode.log');
+        fs.writeFileSync(log, local + ' [info] ' + ${JSON.stringify(clicked)} + '\\n');
+        const r = L.sample({ log, dir: path.join(root, 'rec'), state: {}, version: 'v', now, pid: 1, thresholdMs: 10000 });
+        process.stdout.write(JSON.stringify({ added: r.added, waiting: !!(r.state.pending && r.state.pending.asked),
+          parsed: L.lines(local + ' [info] x')[0].ms, want: d.getTime(), offset: d.getTimezoneOffset() }));
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }`;
+    let z;
+    try { z = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: Object.assign({}, process.env, { TZ: 'America/Los_Angeles' }) })); }
+    catch (e) { z = { error: e.message }; }
+    if (z.error) bad('reading the log in another time zone failed: ' + z.error);
+    else if (!z.offset) note('no time zone data here to run in America/Los_Angeles, so the local reading was not tried away from UTC');
+    else if (z.parsed === z.want && !z.added.length && z.waiting) ok('the log\'s times are read as local time, so a click five seconds ago is still waiting rather than hours old');
+    else bad(`in America/Los_Angeles a click 5s old read as ${z.parsed} (want ${z.want}) and gave ${JSON.stringify(z.added)}`);
+  }
+  /* Each window writes a log of its own and a reload starts a new one. A request still open in one log belongs to it: a
+     panel that comes up in another window's log answers a different request. */
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat10-'));
+    const one = path.join(root, 'exthost1', 'Claude VSCode.log'), two = path.join(root, 'exthost2', 'Claude VSCode.log');
+    fs.mkdirSync(path.dirname(one)); fs.mkdirSync(path.dirname(two));
+    const t0 = new Date(2026, 8, 29, 21, 0, 5).getTime();
+    fs.writeFileSync(one, at('0:00.000', clicked) + '\n');
+    fs.writeFileSync(two, at('0:20.000', up) + '\n');
+    const first = L.sample({ log: one, dir: path.join(root, 'rec'), state: {}, version: 'v1', now: t0, pid: 1111, thresholdMs: 10000 });
+    const second = L.sample({ log: two, dir: path.join(root, 'rec'), state: first.state, version: 'v1', now: t0 + 20000, pid: 1111, thresholdMs: 10000 });
+    if (first.state.pending.asked && !second.added.length && !second.state.pending.asked) {
+      ok('a request still open in one window\'s log is dropped rather than paired with a panel in another log');
+    } else bad(`a request carried into another log gave ${JSON.stringify(second.added)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* A request replaced by a newer one twenty minutes later was not waited on for twenty minutes: past the ceiling it is
+       a window left alone, as it is for a panel that does come up that late. */
+    const line = (clock, msg) => `2026-09-29 21:${clock} [info] ${msg}`;
+    const waits = one([line('00:00.000', clicked), line('20:00.000', clicked), line('20:05.000', up)].join('\n'));
+    if (!waits.some((w) => w.what === 'abandoned') && waits.some((w) => w.what === 'panel' && w.waited === 5000)) {
+      ok('a request replaced by another past the ceiling is a window left alone, not a twenty-minute abandonment');
+    } else bad(`a request replaced twenty minutes later gave ${JSON.stringify(waits)}`);
+  }
+  {
+    /* The host's own silence can start in one read and end in the next, like any other wait. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat11-'));
+    const log = path.join(root, 'Claude VSCode.log'), dir = path.join(root, 'rec');
+    const t0 = new Date(2026, 8, 29, 21, 0, 1).getTime();
+    fs.writeFileSync(log, at('0:00.000', 'AuthManager initialized') + '\n');
+    const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 1212, thresholdMs: 1000 });
+    fs.appendFileSync(log, at('0:05.000', 'Something else entirely') + '\n');
+    const second = L.sample({ log, dir, state: first.state, version: 'v1', now: t0 + 5000, pid: 1212, thresholdMs: 1000 });
+    if (second.added.length === 1 && second.added[0].what === 'host' && second.added[0].waited === 5000) {
+      ok('a silence of the host\'s that spans two reads is measured, from the last line of the first');
+    } else bad(`a silence across two reads gave ${JSON.stringify(second.added)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* The last line may still be being written when it is read. Taken as it stood, it was classified on half its text and
+       the rest of it, read next time, was no line at all. */
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat12-'));
+    const log = path.join(root, 'Claude VSCode.log'), dir = path.join(root, 'rec');
+    const t0 = new Date(2026, 8, 29, 21, 0, 31).getTime();
+    const head = at('0:00.000', clicked) + '\n', tail = at('0:30.000', up) + '\n';
+    fs.writeFileSync(log, head + tail.slice(0, 70));
+    const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 1313, thresholdMs: 10000 });
+    fs.appendFileSync(log, tail.slice(70));
+    const second = L.sample({ log, dir, state: first.state, version: 'v1', now: t0, pid: 1313, thresholdMs: 10000 });
+    if (first.state.size === Buffer.byteLength(head) && second.added.length === 1 && second.added[0].waited === 30000) {
+      ok('a line still being written is left for the next read, and pairs once it is whole');
+    } else bad(`a half-written line: read to ${first.state.size} of ${Buffer.byteLength(head)}, then ${JSON.stringify(second.added)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  {
+    /* At its size limit the editor moves the log to `.1.log` and starts a new one. What was written to the old one after
+       the last read is read from there before the new one is read from its start - whether the new one is still shorter
+       than the old offset or has already grown past it. */
+    const rotated = (grown) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat13-'));
+      const log = path.join(root, 'Claude VSCode.log'), dir = path.join(root, 'rec');
+      const t0 = new Date(2026, 8, 29, 21, 0, 1).getTime();
+      fs.writeFileSync(log, at('0:00.000', clicked) + '\n');
+      const first = L.sample({ log, dir, state: {}, version: 'v1', now: t0, pid: 1414, thresholdMs: 10000 });
+      fs.appendFileSync(log, at('0:30.000', up) + '\n');
+      fs.renameSync(log, path.join(root, 'Claude VSCode.1.log'));
+      const fresh = (at('0:40.000', 'a new log begins') + '\n').repeat(grown ? 20 : 1);
+      fs.writeFileSync(log, fresh);
+      const second = L.sample({ log, dir, state: first.state, version: 'v1', now: t0 + 40000, pid: 1414, thresholdMs: 10000 });
+      fs.rmSync(root, { recursive: true, force: true });
+      return second.added.some((w) => w.what === 'panel' && w.waited === 30000) && second.state.size === Buffer.byteLength(fresh);
+    };
+    if (rotated(false) && rotated(true)) ok('a log moved aside at its size limit is finished before the new one is read from its start');
+    else bad(`after the log was moved aside: new log shorter ${rotated(false)}, longer ${rotated(true)}`);
   }
 }
 
@@ -3085,11 +3423,24 @@ console.log('\nwhose plan the tree shows');
   if (seen === 1) ok('a focused conversation is read by id alone');
   else bad(`readPlan takes ${seen} args, expected 1`);
 
-  /* No path that shows all plans is left in the view: readPlans is gone, and the fallback is the empty list. */
+  /* No path that shows all plans is left in the view: readPlans is gone, and the fallback is no plan. */
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan-view.js'), 'utf8');
-  if (/this\.focus \? readPlan\(this\.focus\) : \[\]/.test(src) && !/readPlans/.test(src)) {
+  if (/this\.focus \? readPlan\(this\.focus\) : null/.test(src) && !/readPlans/.test(src)) {
     ok('with no conversation in focus the tree is empty, never every conversation on the machine');
   } else bad('the view can still fall back to showing all plans');
+  /* One plan or none is all the view is ever given, so what drew several - a heading row per conversation with its own
+     summary and menu value, a count "across N conversations", a picker of plans - drew nothing anyone could reach. */
+  const extText = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const leftovers = [
+    ['a heading row per conversation', /kind: 'root'|cceWorkPlanRoot|function summary\(/.test(src)],
+    ['a second list of the open states', /const OPEN = \[/.test(src)],
+    ['a count across conversations', /across \$\{/.test(extText)],
+    ['a picker of plans', /showQuickPick/.test(extText)],
+    ['a modification time nothing reads', /mtime: st\.mtimeMs/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan.js'), 'utf8'))],
+  ].filter(([, there]) => there).map(([what]) => what);
+  const one = plan.readPlan('');
+  if (!leftovers.length && one === null) ok('the view holds one plan or none, with nothing left of drawing several');
+  else bad(`still there: ${leftovers.join(', ')}${one === null ? '' : '; readPlan without a session gave ' + JSON.stringify(one)}`);
   if (!/readPlans/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'workplan.js'), 'utf8'))) {
     ok('the show-everything function is gone, not just unreferenced');
   } else bad('readPlans is still defined in workplan.js');
@@ -3567,6 +3918,11 @@ console.log('\nwhere the hook settings are written');
       && !/(path\.join|mkdirSync)\(PLAN_DIR\b/.test(body)) {
     ok('config.json is written into the data directory the hooks read, by its full path');
   } else bad('writeHookSettings does not write config.json under planDir(), so the hooks would never see it');
+  /* A hook can read either file at any moment, and one written in place is caught half-written. */
+  const zone = (/const writeClientZone = \(\) => \{[\s\S]*?\n  \};\n/.exec(ext) || [''])[0];
+  if (/writeAtomic\(file, next\)/.test(body) && /writeAtomic\(file, next\)/.test(zone) && !/writeFileSync\(file/.test(body + zone)) {
+    ok('config.json and the reader\'s time zone are replaced whole, never written in place where a hook could read half');
+  } else bad('config.json or client-time-zone.json is still written in place');
 }
 
 /* ── 19b. the hooks around a compaction ──
@@ -3906,10 +4262,14 @@ console.log('\nan uninstall puts Claude Code back at once');
     const checks = [
       ['deactivate restores and hands the rest on, and only for an uninstall',
         /beingUninstalled\(selfPath, ID\)/.test(deact) && /restoreAll/.test(deact) && /finishLater/.test(deact)],
-      ['a window that has not restarted yet restores rather than patching again', /if \(removed\(\) \|\| leaving\)/.test(ext)],
+      /* Another editor on this machine can have this extension installed and running; sweeping its folder from here took
+         its patch out from under it. The uninstall hook, run when this folder is deleted, is what looks everywhere. */
+      ['deactivate restores only this editor\'s extensions folder', /removal\.restoreAll\(\[path\.dirname\(selfPath\)\]\)/.test(deact) && !/roots\(/.test(deact)],
+      ['a window that has not restarted yet restores rather than patching again',
+        /const restoring = removed\(\) \|\| leaving;/.test(ext) && /if \(restoring\) \{\s*const r = adapter\.restore\(dir\);/.test(ext)],
       ['and writes no stylesheet back',
-        /const writeLiveNow = \(\) => \{\s*if \(uninstalling\(\)( \|\| replaced\(\))?\) return;/.test(ext)
-        && /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\)( \|\| replaced\(\))?\) return;/.test(ext)],
+        /const writeLiveNow = \(\) => \{\s*if \(removed\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;/.test(ext)
+        && /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) \{ unwatchEffort\(\); return; \}/.test(ext)],
       ['the uninstall hook restores through the same code', /removal\.restoreAll\(removal\.roots\(/.test(un) && !/adapter\.restore\(/.test(un)],
     ];
     for (const [what, pass] of checks) {
@@ -3956,6 +4316,56 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
   if (/registrationGone\(\)/.test(body) && /!undone/.test(body) && /&& staged\) return;/.test(body)) {
     ok('registering consults Claude Code\'s records and the staged copy, not only its own memory');
   } else bad('syncPlugin still trusts only its remembered state');
+  /* The staged copy is there or not by its contents: one cut short, or being replaced by another window, is there. */
+  if (/const staged = pluginInstall\.digest\(to\) === stamp;/.test(body)) ok('the staged copy counts as in place only when its contents are the plugin\'s');
+  else bad('the staged copy is still taken as in place because its folder exists');
+
+  /* Every window stages into the same folder. With one shared name for the copy being made, two of them emptied each
+     other's copy halfway; and a window finding the place already taken by the same plugin has nothing left to do. */
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-stage-'));
+    const from = path.join(root, 'from'), to = path.join(root, 'storage', 'claude-plugin');
+    fs.mkdirSync(path.join(from, 'agent-work-plan'), { recursive: true });
+    fs.writeFileSync(path.join(from, 'agent-work-plan', 'a.txt'), 'plugin');
+    const copies = [];
+    const realCp = fs.cpSync, realRename = fs.renameSync;
+    let threw = '';
+    try {
+      fs.cpSync = (a, b, o) => { copies.push(String(b)); return realCp.call(fs, a, b, o); };
+      pi.stage(from, to);
+      pi.stage(from, to);
+      // Another window puts the same plugin in place between this one's copy and its rename.
+      fs.renameSync = (a, b) => { realCp.call(fs, from, b, { recursive: true }); return realRename.call(fs, a, b); };
+      try { pi.stage(from, to); } catch (e) { threw = e.message; }
+    } finally { fs.cpSync = realCp; fs.renameSync = realRename; }
+    const left = fs.readdirSync(path.dirname(to));
+    if (copies.length === 3 && new Set(copies).size === 3 && copies.every((c) => c.includes('.' + process.pid + '.'))
+      && !threw && left.join() === 'claude-plugin' && pi.digest(to) === pi.digest(from)) {
+      ok('the plugin is staged through a folder of this process\'s own, and finding the same plugin already in place is not a failure');
+    } else bad(`staging: copies ${JSON.stringify(copies.map((c) => path.basename(c)))}, threw ${JSON.stringify(threw)}, left ${JSON.stringify(left)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  /* The command that stops the plugin loading asked for Claude Code's binary with no installs to look in, so it never
+     found one and the command never did anything. A stand-in binary records what it is told. */
+  {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-disable-'));
+    const bin = path.join(root, 'install', pi.BINARY);
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.writeFileSync(bin, '#!/bin/sh\necho "$@" > "$(dirname "$0")/told"\necho done\n');
+    fs.chmodSync(bin, 0o755);
+    const script = `
+      const pi = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'plugin-install.js'))});
+      pi.disable([${JSON.stringify(path.join(root, 'install'))}]).then((r) => process.stdout.write(JSON.stringify(r)));`;
+    let r;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); } catch (e) { r = { error: e.message }; }
+    let told = '';
+    try { told = fs.readFileSync(path.join(path.dirname(bin), 'told'), 'utf8').trim(); } catch (_) { /* never run */ }
+    if (r.ok && told === `plugin disable ${pi.REF}` && /pluginInstall\.disable\(claudeFolders\(\)\)/.test(ext)) {
+      ok('stopping the plugin loading finds Claude Code\'s binary in its installs and tells it to disable the plugin');
+    } else bad(`disabling the plugin gave ${JSON.stringify(r)}, the binary was told ${JSON.stringify(told)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 /* ── 23. every call on the work plan view is one it has ──
@@ -4214,13 +4624,180 @@ console.log('\na window whose install was replaced by a rebuild of the same vers
   fs.rmSync(dir, { recursive: true, force: true });
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   const guarded = [
-    ['writing the live stylesheet', /const writeLiveNow = \(\) => \{\s*if \(uninstalling\(\) \|\| replaced\(\)\) return;/],
+    ['writing the live stylesheet', /const writeLiveNow = \(\) => \{\s*if \(removed\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;/],
     ['patching or restoring', /async function sync\([^)]*\) \{\s*if \(replaced\(\)\) \{/],
-    ['the timed refresh', /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;\s*scanBackground\(\);/],
+    ['the timed refresh', /if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) \{ unwatchEffort\(\); return; \}\s*scanBackground\(\);/],
+    ['the efforts beside the panel', /if \(!r \|\| !r\.css \|\| removed\(\) \|\| uninstalling\(\) \|\| replaced\(\)\) return;\s*for \(const dir of installs\(webview\)\) webview\.writeEffort/],
+    ['the record of background sessions', /const scanBackground = \(\) => \{\s*if \(removed\(\) \|\| !enabled\(\) \|\| uninstalling\(\) \|\| replaced\(\) \|\|/],
   ];
   const missing = guarded.filter(([, re]) => !re.test(ext)).map(([what]) => what);
   if (!missing.length) ok('a replaced window writes nothing shared: ' + guarded.map(([what]) => what).join(', '));
   else bad('not guarded against a replaced install: ' + missing.join(', '));
+}
+
+/* A window still running an older version of this extension after a newer one was installed beside it: its folder is
+   marked for deletion, and another version's is not. It is neither being uninstalled nor reinstalled over, so it went on
+   syncing - read the newer build's marker as outdated, patched both bundles back to its own edits on any settings or
+   extensions change, and took turns with every window that had reloaded. It counts as replaced. */
+console.log('\na window still running a version that another one has replaced');
+{
+  const removal = require('../src/removal');
+  const ID = 'xnervwang.claude-code-extras';
+  const old = ID + '-1.0.17', next = ID + '-1.0.18';
+  const stage = (folders, marked, stamp) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-standing-'));
+    for (const f of folders) {
+      fs.mkdirSync(path.join(dir, f));
+      fs.writeFileSync(path.join(dir, f, 'package.json'), JSON.stringify({ name: 'x', __metadata: { installedTimestamp: stamp || 1000 } }));
+    }
+    fs.writeFileSync(path.join(dir, '.obsolete'), JSON.stringify(Object.fromEntries(marked.map((m) => [m, true]))));
+    return dir;
+  };
+  const cases = [
+    ['a newer version installed beside it, its own folder marked: replaced', [old, next], [old], 1000, 'replaced'],
+    ['an older version installed in its place, its own folder marked: replaced', [next, old], [next], 1000, 'replaced', next],
+    ['its own folder marked and no other version left: being uninstalled', [old], [old], 1000, 'uninstalling'],
+    ['the same version installed again over it: replaced', [old], [], 2000, 'replaced'],
+    ['nothing marked and the same install: neither', [old, next], [], 1000, ''],
+  ];
+  for (const [what, folders, marked, stamp, want, mine] of cases) {
+    const dir = stage(folders, marked, stamp);
+    const got = removal.standing(path.join(dir, mine || old), ID, 1000);
+    (got === want ? ok : bad)(got === want ? what : `${what}: said ${JSON.stringify(got)}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  /* Claude Code's own folders: a sibling marked for deletion is a build nobody runs, so it is not patched - but the one
+     this window runs stays whatever its mark, and taking the patch back out still reaches every folder. */
+  const dirs = ['/x/anthropic.claude-code-2.1.311', '/x/anthropic.claude-code-2.1.312', '/x/anthropic.claude-code-2.1.313'];
+  const marked = { 'anthropic.claude-code-2.1.311': true, 'anthropic.claude-code-2.1.312': true };
+  const got = removal.unmarked(dirs, dirs[1], marked);
+  if (JSON.stringify(got) === JSON.stringify(dirs.slice(1))) ok('a Claude Code folder marked for deletion is left unpatched, unless it is the one this window runs');
+  else bad(`the installs to patch were ${JSON.stringify(got)}`);
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/const replaced = \(\) => standing\(\) === 'replaced';/.test(ext) && /removal\.standing\(context\.extensionPath, ID, loadedStamp/.test(ext)
+    && /return all \? found : removal\.unmarked\(found, ext\.extensionPath, markedIn\(root\)\);/.test(ext)
+    && /for \(const dir of installs\(adapter, restoring\)\)/.test(ext)) {
+    ok('the extension takes a replaced build from that one reading, patches no marked sibling, and restores every one');
+  } else bad('extension.js does not take replaced from removal.standing, or still patches the marked siblings');
+}
+
+/* What a tick and a change of setting cost, read from the source since they need the editor to run. Each was cheap on
+   its own and paid several times over: two half-minute timers doing much the same, four listeners on the settings, the
+   marks and the manifest re-read three or four times a tick, a couple of dozen fresh copies of the settings per tick, the
+   live stylesheet's options worked out for each bundle though only the panel's uses them, and a colour change re-reading
+   ten megabytes of bundles. */
+console.log('\nwhat a tick and a change of setting cost');
+{
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const count = (re) => (ext.match(re) || []).length;
+  const listener = (/context\.subscriptions\.push\(vscode\.workspace\.onDidChangeConfiguration\(\(e\) => \{([\s\S]*?)\n  \}\)\);/.exec(ext) || [])[1] || '';
+  const checks = [
+    ['one listener on the settings', count(/onDidChangeConfiguration\(/g) === 1],
+    ['one half-minute timer', count(/setInterval\([^\n]*REFRESH_MS\)|\}, REFRESH_MS\);/g) === 1],
+    ['the settings read once until they change', /const cfg = \(\) => settings \|\| \(settings = vscode\.workspace\.getConfiguration\(\)\);/.test(ext)
+      && /^\s*settings = null;/.test(listener)],
+    ['where this build stands read once per turn', /const standing = perTick\(/.test(ext) && !/removal\.(beingUninstalled|replacedSince)\(context/.test(ext)],
+    ['the live options worked out once per sync, for the panel only', /adapter\.apply\(dir, adapter === webview \? \(opts \|\| \(opts = options\(\)\)\) : undefined\)/.test(ext)],
+    ['a setting of the panel\'s writes the stylesheet and nothing more', /writeLiveNow\(\);\s*$/.test(listener) && !/sync\(/.test(listener)],
+    ['a patch already in is told by the adapter\'s answer, not its words', /else if \(!r\.changed && !r\.current\)/.test(ext) && !/'already patched'/.test(ext)],
+  ];
+  for (const [what, pass] of checks) (pass ? ok : bad)(what);
+
+  /* The host's half of that answer: a backup that carries a patch of its own is reported as such. It used to come back as
+     "already patched", the very words that mean nothing is wrong, so the bundle stayed outdated without a warning. */
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-current-'));
+  try {
+    fs.writeFileSync(host.hostFile(dir), host.ANY_MARK + '1-000000000000 */\nold');
+    fs.writeFileSync(host.hostFile(dir) + host.BACKUP_SUFFIX, host.ANY_MARK + '0-000000000000 */\nolder');
+    const both = host.apply(dir);
+    fs.writeFileSync(host.hostFile(dir), host.MARK + '\nnew');
+    const now = host.apply(dir);
+    if (!both.changed && both.current === false && both.message !== 'already patched' && now.current === true && !now.changed) {
+      ok('a host bundle whose backup is patched too is reported, and one already carrying this patch says so in a field');
+    } else bad(`with both patched: ${JSON.stringify(both)}; with this patch in: ${JSON.stringify(now)}`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  // The panel's adapter answers the same way.
+  const wdir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-current-panel-'));
+  try {
+    const file = webview.webviewFile(wdir);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, webview.ANY_MARK + '1-000000000000 */\nold');
+    fs.writeFileSync(file + webview.BACKUP_SUFFIX, webview.ANY_MARK + '0-000000000000 */\nolder');
+    const both = webview.apply(wdir, {});
+    fs.writeFileSync(file, 'x\n' + webview.MARK + '\nnew');
+    const now = webview.apply(wdir, {});
+    if (!both.changed && both.current === false && both.message !== 'already patched' && now.current === true && !now.changed) {
+      ok('a panel bundle whose backup is patched too is reported, and one already carrying this patch says so in a field');
+    } else bad(`panel with both patched: ${JSON.stringify(both)}; with this patch in: ${JSON.stringify(now)}`);
+  } finally { fs.rmSync(wdir, { recursive: true, force: true }); }
+
+  /* Nothing else here runs extension.js itself, so a name used before its declaration, or a hook that throws, would show
+     only in the editor. A stand-in for the editor's API, in a process whose home is a temporary folder: activation, a
+     change of setting, every timer once, the hooks the patched bundles call, a change of extensions, and deactivation. */
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-activate-'));
+  try {
+    const stub = path.join(home, 'vscode-stub.js');
+    fs.writeFileSync(stub, `
+      const listeners = { config: [], ext: [] }, values = {}, disposable = { dispose() {} };
+      class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
+      module.exports = { listeners, values, TreeItem, TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+        ThemeIcon: class {}, ThemeColor: class {}, MarkdownString: class {}, TabInputWebview: class {}, version: '1.120.0',
+        EventEmitter: class { constructor() { this.event = () => disposable; } fire() {} },
+        Uri: { file: (p) => ({ fsPath: p }) }, RelativePattern: class {}, ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
+        workspace: { workspaceFolders: [], createFileSystemWatcher: () => ({ onDidCreate() {}, onDidChange() {}, onDidDelete() {}, dispose() {} }),
+          getConfiguration: () => ({ get: (k, d) => (k in values ? values[k] : d), inspect: () => undefined, update: async (k, v) => { values[k] = v; } }),
+          onDidChangeConfiguration: (fn) => { listeners.config.push(fn); return disposable; } },
+        window: { createOutputChannel: () => ({ appendLine() {}, show() {}, dispose() {} }), createTreeView: () => ({ dispose() {} }),
+          showInformationMessage: async () => undefined, showWarningMessage: async () => undefined, setStatusBarMessage() {},
+          tabGroups: { all: [], activeTabGroup: null }, showTextDocument: async () => {} },
+        commands: { registerCommand: () => disposable, executeCommand: async () => {} },
+        extensions: { getExtension: () => undefined, onDidChange: (fn) => { listeners.ext.push(fn); return disposable; } } };`);
+    const root = path.join(__dirname, '..');
+    const script = `
+      const Module = require('module'), realResolve = Module._resolveFilename, path = require('path'), fs = require('fs');
+      Module._resolveFilename = function (request, ...rest) { return request === 'vscode' ? ${JSON.stringify(stub)} : realResolve.call(this, request, ...rest); };
+      const vs = require(${JSON.stringify(stub)});
+      const ext = require(${JSON.stringify(path.join(root, 'extension.js'))});
+      const store = path.join(${JSON.stringify(home)}, 'storage');
+      fs.mkdirSync(store, { recursive: true });
+      const memo = () => { const m = new Map(); return { get: (k, d) => (m.has(k) ? m.get(k) : d), update: async (k, v) => { m.set(k, v); } }; };
+      const subs = [], timers = [], keep = setInterval;
+      global.setInterval = (fn, ms) => { timers.push({ fn, ms }); return keep(() => {}, 1 << 30); };
+      const SID = 'abababab-1111-4222-8333-444444444444';
+      (async () => {
+        const out = { threw: '' };
+        try {
+          await ext.activate({ subscriptions: subs, extensionPath: ${JSON.stringify(root)}, globalState: memo(), workspaceState: memo(),
+            extension: { id: 'x.y', packageJSON: require(${JSON.stringify(path.join(root, 'package.json'))}) },
+            globalStorageUri: { fsPath: store }, logUri: { fsPath: path.join(store, 'logs', 'exthost1', 'x.y') } });
+          out.listeners = vs.listeners.config.length;
+          out.timers = timers.map((t) => t.ms).sort((a, b) => a - b);
+          for (const fn of vs.listeners.config) fn({ affectsConfiguration: () => true });
+          for (const t of timers) t.fn();
+          globalThis.__cceActiveChat = SID;
+          globalThis.__cceChatHook();
+          globalThis.__ccePinHook(SID, true);
+          globalThis.__cceDeleteHook([{ id: SID, title: 't' }]);
+          globalThis.__cceClosedHook(SID);
+          out.recent = globalThis.__cceRecentClosed().ids;
+          await new Promise((r) => setTimeout(r, 200));
+          for (const fn of vs.listeners.ext) await fn();
+          ext.deactivate();
+        } catch (e) { out.threw = String(e && e.stack); }
+        for (const s of subs) { try { s.dispose(); } catch (e) { out.threw = out.threw || 'dispose: ' + e.message; } }
+        process.stdout.write(JSON.stringify(out));
+        process.exit(0);
+      })();
+      process.on('unhandledRejection', (e) => { process.stdout.write(JSON.stringify({ threw: 'unhandled: ' + (e && e.stack) })); process.exit(0); });`;
+    let r;
+    const env = Object.assign({}, process.env, { HOME: home });
+    delete env.CLAUDE_CONFIG_DIR;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 60000, env })); }
+    catch (e) { r = { threw: e.message }; }
+    if (!r.threw && r.listeners === 1 && JSON.stringify(r.timers) === JSON.stringify([1000, 30000, 1800000]) && JSON.stringify(r.recent) === JSON.stringify(['abababab-1111-4222-8333-444444444444'])) {
+      ok('activation, a change of setting, every timer, the hooks and deactivation run against a stand-in editor without throwing');
+    } else bad(`against a stand-in editor: ${JSON.stringify(r).slice(0, 600)}`);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
 
 /* ── 24. a panel whose bundle never arrives says so ──
@@ -4415,59 +4992,23 @@ console.log('\na panel whose bundle never arrives says so');
     if (i > csp && csp >= 0 && on.slice(i + watch.length).startsWith('<link href="style.css" rel="stylesheet">') && link > i) {
       ok('the watch goes into the panel\'s HTML word for word, with its nonce, after the policy and just ahead of the stylesheet');
     } else bad('the watch is not where it should be in the generated HTML');
-    const clear = '<script nonce="n0nce">' + host.CACHE_CLEAR + '</script>';
-    const c = on.indexOf(clear);
-    if (c > csp && c < i) ok('the cache clearing goes in ahead of the watch, with the same nonce');
-    else bad('the cache clearing is not ahead of the watch in the generated HTML');
     const zone = '<script nonce="n0nce">' + host.PANEL_TZ + '</script>';
     const z = on.indexOf(zone);
-    if (z > c && z < i) ok('the time zone report goes in after the cache clearing and ahead of the watch, with the same nonce');
-    else bad('the time zone report is not between the cache clearing and the watch in the generated HTML');
+    if (z > csp && z < i) ok('the time zone report goes in after the policy and ahead of the watch, with the same nonce');
+    else bad('the time zone report is not between the policy and the watch in the generated HTML');
+    /* The clearing of the editor's resource cache that builds up to 1.0.8 made necessary went with them; nothing of it
+       is left for every panel to run. */
+    if (!/resourceCacheCleared|caches\.keys/.test(on) && !('CACHE_CLEAR' in host)
+      && !fs.existsSync(path.join(__dirname, '..', 'src', 'panel-cache-clear.js'))) {
+      ok('the panel\'s HTML no longer carries the one-off clearing of the resource cache');
+    } else bad('the one-off clearing of the resource cache is still put into every panel');
     globalThis[host.LOAD_WATCH_OFF] = true;
     const off = html('n0nce', 'style.css', false, 'worker-src x');
     delete globalThis[host.LOAD_WATCH_OFF];
     const own = new Function('U', 'K', 'X', 'j', tpl)('n0nce', 'style.css', false, 'worker-src x');
-    if (off.replace(clear, '').replace(zone, '') === own && off.includes(clear) && off.includes(zone)) {
-      ok('with the recording turned off the HTML is Claude Code\'s own plus the cache clearing and the time zone report, '
-        + 'which are not behind that setting');
-    } else bad('with the recording turned off the HTML is not Claude Code\'s own plus the cache clearing and the time zone report');
-  }
-
-  /* The clearing itself: the editor's resource caches and nothing else, once per origin, and again if it did not finish.
-     It settles on promises, so it runs in a child process that can wait for them. */
-  const clearing = cp.spawnSync(process.execPath, ['-e', `
-    const vm = require('vm');
-    const CLEAR = ${JSON.stringify(host.CACHE_CLEAR)};
-    const run = (opts) => {
-      const deleted = [], store = Object.assign({}, opts.stored || {});
-      const env = {
-        caches: {
-          keys: () => Promise.resolve(['vscode-resource-cache-4', 'vscode-resource-cache-6', 'another-cache']),
-          delete: (n) => { deleted.push(n); return opts.fails ? Promise.reject(new Error('no')) : Promise.resolve(true); },
-        },
-        localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
-        Promise,
-      };
-      vm.createContext(env);
-      vm.runInContext(CLEAR, env);
-      return new Promise((r) => setTimeout(() => r({ deleted, store }), 20));
-    };
-    (async () => {
-      const out = [await run({}), await run({ stored: { 'cce.resourceCacheCleared': '1' } }), await run({ fails: true })];
-      process.stdout.write(JSON.stringify(out));
-    })();`], { encoding: 'utf8' });
-  let runs = null;
-  try { runs = JSON.parse(clearing.stdout); } catch (e) { bad('the clearing could not be run: ' + (clearing.stderr || e.message)); }
-  if (runs) {
-    const [first, again, failed] = runs;
-    if (JSON.stringify(first.deleted) === JSON.stringify(['vscode-resource-cache-4', 'vscode-resource-cache-6'])
-      && first.store['cce.resourceCacheCleared'] === '1') {
-      ok('the clearing deletes the editor\'s resource caches, leaves any other cache, and remembers it did');
-    } else bad(`the clearing did ${JSON.stringify(first)}`);
-    if (!again.deleted.length) ok('once done for an origin, it does not run again');
-    else bad(`it ran again: ${JSON.stringify(again.deleted)}`);
-    if (!('cce.resourceCacheCleared' in failed.store)) ok('a clearing that fails is not remembered, so the next panel tries again');
-    else bad('a failed clearing was remembered as done');
+    if (off.replace(zone, '') === own && off.includes(zone)) {
+      ok('with the recording turned off the HTML is Claude Code\'s own plus the time zone report, which is not behind that setting');
+    } else bad('with the recording turned off the HTML is not Claude Code\'s own plus the time zone report');
   }
   /* The panel's time zone: sent once from the panel, kept by the patched host, read by this extension. */
   {
@@ -4798,7 +5339,13 @@ console.log('\nconversations pinned in the session list');
         const ages = ['p/p1/${A}.jsonl', 'p/p1/${A}/tool-results/a.txt', 'p/p1/${A}/tool-results/s/b.txt', 'p/p1/${A}/tool-results/s/d/c.txt',
           'p/p1/${A}/subagents/agent-1.jsonl', 'p/p2/${B}.jsonl', 'p/p2/${D}.jsonl'].map(age);
         const times = { '${A}': first.updates['${A}'] };
-        const later = now + DAY;
+        // Half an hour on, as the next pass in any window comes: the files are past the floor, so nothing moves.
+        const soon = await pins.keep({ ids: new Set(['${A}']), times, days: 90, projectsDir: path.join(root, 'p'), now: now + 30 * 60000 });
+        // Another window's pass moved the file between this one reading the record and looking at the file, so the record
+        // in hand is the one before.
+        const stale = await pins.keep({ ids: new Set(['${A}']), times: { '${A}': { real: times['${A}'].real, set: times['${A}'].set - 2 * DAY } },
+          days: 90, projectsDir: path.join(root, 'p'), now: now + 30 * 60000 });
+        const later = now + 2 * DAY;
         const second = await pins.keep({ ids: new Set(['${A}']), times, days: 90, projectsDir: path.join(root, 'p'), now: later });
         put('p/p1/${A}.jsonl', 0);
         const written = await pins.keep({ ids: new Set(), times: { '${A}': second.updates['${A}'] }, days: 90, projectsDir: path.join(root, 'p'), now: later });
@@ -4809,7 +5356,7 @@ console.log('\nconversations pinned in the session list');
         fs.chmodSync(path.join(root, 'r', 'locked'), 0);
         const partial = await pins.keep({ ids: new Set(['${A}']), days: 90, projectsDir: path.join(root, 'r'), now });
         fs.chmodSync(path.join(root, 'r', 'locked'), 0o755);
-        process.stdout.write(JSON.stringify({ first, ages, second, written, short: age('q/one/${A}.jsonl'), empty, partial,
+        process.stdout.write(JSON.stringify({ first, ages, soon, stale, second, written, short: age('q/one/${A}.jsonl'), empty, partial,
           root: process.getuid ? process.getuid() === 0 : false }));
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
@@ -4819,21 +5366,27 @@ console.log('\nconversations pinned in the session list');
   if (k.error) bad('keeping pinned conversations failed: ' + k.error);
   else {
     const NOW = Date.UTC(2026, 9, 16, 12), DAY = 86400000;
-    const want = [76, 76, 76, 100, 100, 10, 100];
+    const want = [75, 75, 75, 100, 100, 10, 100];
     if (JSON.stringify(k.ages) === JSON.stringify(want) && k.first.found === 2 && k.first.touched === 3 && k.first.errors === 0) {
-      ok('a pinned transcript and its tool outputs past the margin are set to 14 days inside a 90-day cleanup; '
+      ok('a pinned transcript and its tool outputs past the margin are set to a day inside 14 days of a 90-day cleanup; '
         + 'fresh ones, other conversations, and what the cleanup does not reach are left alone');
     } else bad(`ages after keeping: ${JSON.stringify(k.ages)} (expected ${JSON.stringify(want)}), counts ${JSON.stringify(k.first)}`);
     const rec = k.first.updates[A] || {}, rec2 = (k.second.updates || {})[A] || {};
-    if (Math.round((NOW - rec.real) / DAY) === 100 && rec.set === NOW - 76 * DAY && !(B in k.first.updates)
-      && rec2.real === rec.real && rec2.set === NOW + DAY - 76 * DAY) {
+    if (Math.round((NOW - rec.real) / DAY) === 100 && rec.set === NOW - 75 * DAY && !(B in k.first.updates)
+      && rec2.real === rec.real && rec2.set === NOW + 2 * DAY - 75 * DAY) {
       ok('the first move records the time the transcript had, and the next keeps that time while recording the new one');
     } else bad(`records: first ${JSON.stringify(k.first.updates)}, second ${JSON.stringify(k.second.updates)}`);
+    /* Every window passes every half hour. Moved to exactly the floor, each pass found the files half an hour behind it,
+       moved them again, rewrote the record, and the stylesheet every panel reloads changed with it. */
+    if (k.soon.touched === 0 && !Object.keys(k.soon.updates).length) ok('a pass half an hour after another moves no file and changes no record');
+    else bad(`a pass half an hour on touched ${k.soon.touched} file(s) and gave ${JSON.stringify(k.soon.updates)}`);
+    if (!(A in k.stale.updates)) ok('a file another window\'s pass has just moved is not taken for one written to, so its real time is kept');
+    else bad(`with a record from before another window's pass the record became ${JSON.stringify(k.stale.updates[A])}`);
     if (k.written.updates[A] === null && k.written.touched === 0) ok('once the transcript is written to, its record goes');
     else bad(`after a write the pass returned ${JSON.stringify(k.written)}`);
     if (JSON.stringify(k.first.gone) === JSON.stringify([C])) ok('a pinned conversation with no transcript left is reported gone');
     else bad(`gone after the first pass: ${JSON.stringify(k.first.gone)}`);
-    if (k.short === 5) ok('with a 10-day cleanup, the margin is half of it');
+    if (k.short === 4) ok('with a 10-day cleanup, the margin is half of it');
     else bad(`with a 10-day cleanup the transcript was left ${k.short} days old`);
     if (!k.empty.gone.length && (k.root || !k.partial.gone.length)) {
       ok('nothing is reported gone when no transcript at all was found, or a project folder could not be read');
@@ -5376,6 +5929,15 @@ console.log('\ntabs VS Code did not restore');
       === JSON.stringify([[id(1)], [id(2)], [], [id(2)], [id(2)], [], []])) {
     ok('a dropped tab whose conversation runs in another window waits, is reopened once it runs nowhere, and is let go if it gets shown here meanwhile');
   } else bad(`the waiting tabs went ${JSON.stringify([ids(sp2.now), ids(sp2.later), ids(st1.ready), ids(st1.waiting), ids(st2.ready), ids(st3.ready), ids(st3.waiting)])}`);
+  /* Two conversations with one title, one restored in a tab and the other dropped: the restored tab is the shown one's,
+     so its label cannot also stand for the dropped one, which is reopened. */
+  {
+    const twins = [{ sessionId: id(1), title: 'Same title' }, { sessionId: id(2), title: 'Same title' }];
+    const back = dropped.find({ record: twins, shown: [id(1)], labels: ['Same title'], strip, exists: () => true });
+    if (JSON.stringify(back.map((t) => t.sessionId)) === JSON.stringify([id(2)])) {
+      ok('a dropped tab sharing its title with a restored one is reopened, the restored tab counted for its own conversation');
+    } else bad(`with two of one title, one restored and one dropped, reopened ${JSON.stringify(back)}`);
+  }
   const many = Array.from({ length: 30 }, (_, i) => ({ sessionId: `${String(i).padStart(8, '0')}-0000-4000-8000-000000000000`, title: 't' + i }));
   if (dropped.find({ record: many, shown: [], labels: [], exists: () => true }).length === dropped.LIMIT) ok(`no more than ${dropped.LIMIT} are reopened at once`);
   else bad('the limit on reopened tabs did not hold');
@@ -5445,9 +6007,56 @@ console.log('\ndeleting an archived conversation');
     else bad('a path-like ID found something to delete');
     put('sessions/1.json', JSON.stringify({ pid: process.pid, sessionId: A }));
     put('sessions/2.json', JSON.stringify({ pid: 2147483646, sessionId: B }));
-    if (del.running(A, root) && !del.running(B, root)) ok('a conversation with a live process in Claude Code\'s register counts as running, one whose process is gone does not');
-    else bad('the running check was wrong');
+    const live = del.runningSessions(root);
+    if (live.has(A) && !live.has(B)) ok('a conversation with a live process in Claude Code\'s register counts as running, one whose process is gone does not');
+    else bad(`the running check gave ${JSON.stringify([...live])}`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+  /* A session folder that is a symbolic link goes as a link. Listed through, it put what the link points at - which can
+     be anywhere - among what the confirmation named and the delete removed. */
+  {
+    const base = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-delete-link-'));
+    const root2 = path.join(base, 'claude'), outside = path.join(base, 'elsewhere');
+    try {
+      fs.mkdirSync(path.join(root2, 'projects', '-a'), { recursive: true });
+      fs.mkdirSync(path.join(outside, 'subagents'), { recursive: true });
+      fs.writeFileSync(path.join(outside, 'subagents', 'agent-1.jsonl'), 'keep me');
+      fs.writeFileSync(path.join(root2, 'projects', '-a', A + '.jsonl'), 'x');
+      fs.symlinkSync(outside, path.join(root2, 'projects', '-a', A));
+      const found = del.find(A, { root: root2 });
+      const failed = del.remove(found);
+      const linkGone = !fs.existsSync(path.join(root2, 'projects', '-a', A)) && (() => { try { fs.lstatSync(path.join(root2, 'projects', '-a', A)); return false; } catch (_) { return true; } })();
+      if (!found.some((f) => f.path.startsWith(path.join(root2, 'projects', '-a', A) + path.sep)) && !failed.length && linkGone
+        && fs.readFileSync(path.join(outside, 'subagents', 'agent-1.jsonl'), 'utf8') === 'keep me') {
+        ok('a session folder that is a symbolic link is removed as a link, and nothing it points at is listed or deleted');
+      } else bad(`with the session folder a link: found ${JSON.stringify(found.map((f) => path.relative(base, f.path)))}, failures ${JSON.stringify(failed)}`);
+    } finally { fs.rmSync(base, { recursive: true, force: true }); }
+  }
+
+  /* Several conversations asked about at once are found in one walk of the project folders, and the lock a plan's writer
+     takes goes with the plan. */
+  {
+    const root3 = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-delete-many-'));
+    try {
+      for (const p of ['-a', '-b', '-c']) fs.mkdirSync(path.join(root3, 'projects', p), { recursive: true });
+      fs.writeFileSync(path.join(root3, 'projects', '-a', A + '.jsonl'), 'x');
+      fs.writeFileSync(path.join(root3, 'projects', '-c', B + '.jsonl'), 'x');
+      fs.mkdirSync(path.join(root3, 'plans', A + '.json.lock'), { recursive: true });
+      const realReaddir = fs.readdirSync;
+      const listed = [];
+      fs.readdirSync = function (p, ...rest) { listed.push(String(p)); return realReaddir.call(fs, p, ...rest); };
+      let all;
+      try { all = del.findAll([A, B, 'not-an-id'], { root: root3, planDir: path.join(root3, 'plans') }); }
+      finally { fs.readdirSync = realReaddir; }
+      const walked = listed.filter((p) => p.startsWith(path.join(root3, 'projects')));
+      const kinds = (id) => all.get(id).map((f) => path.relative(root3, f.path)).sort();
+      if (all.size === 2 && walked.length === 4 && new Set(walked).size === 4
+        && JSON.stringify(kinds(A)) === JSON.stringify([`plans/${A}.json.lock`, `projects/-a/${A}.jsonl`])
+        && JSON.stringify(kinds(B)) === JSON.stringify([`projects/-c/${B}.jsonl`])) {
+        ok('several conversations are found in one walk of the project folders, a plan\'s lock with its plan');
+      } else bad(`finding two at once listed ${JSON.stringify(walked.map((p) => path.relative(root3, p)))} and found ${JSON.stringify([...all].map(([k, v]) => [k, v.map((f) => path.relative(root3, f.path))]))}`);
+    } finally { fs.rmSync(root3, { recursive: true, force: true }); }
+  }
 
   // The menu: Delete after Unarchive, for local conversations only, and it only asks this extension.
   const posted = [];
@@ -5492,10 +6101,19 @@ console.log('\ndeleting an archived conversation');
   else bad(`the host passed on ${JSON.stringify(asked)}, panels told ${tenv.n}`);
   const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   if (/showWarningMessage\([\s\S]{0,200}\{ modal: true, detail: lines\.join\('\\n'\) \}, 'Delete'\);\s*if \(pick !== 'Delete'\) return;/.test(extSrc)
-      && /shown\.includes\(w\.id\) \|\| deleteSession\.running\(w\.id\)/.test(extSrc)
+      && /shown\.includes\(w\.id\) \|\| running\.has\(w\.id\)/.test(extSrc) && /const running = deleteSession\.runningSessions\(\);/.test(extSrc)
       && webview.SWITCHES.includes('deleteArchived') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.deleteArchived']) {
     ok('nothing is deleted before a modal confirmation is accepted, an open or running conversation is left alone, and the switch is a setting of its own');
   } else bad('the delete is not guarded as expected');
+  /* The hook is called inside Claude Code's own message handling, and finding what is on disk walks every project
+     folder, so the work waits for that handling to finish. And not knowing which conversations are open is a refusal: an
+     empty list there would let an open conversation be deleted. */
+  const hook = (/globalThis\.__cceDeleteHook = \(asked\) => \{([\s\S]*?)\n  \};/.exec(extSrc) || [])[1] || '';
+  const work = (/const deleteArchived = async \(asked\) => \{([\s\S]*?)\n  \};/.exec(extSrc) || [])[1] || '';
+  if (/^\s*setTimeout\(\(\) => deleteArchived\(asked\)[\s\S]*, 0\);\s*$/.test(hook)
+      && /if \(!Array\.isArray\(shown\)\) \{[\s\S]{0,200}return;/.test(work) && /deleteSession\.findAll\(/.test(work) && !/deleteSession\.find\(/.test(work)) {
+    ok('a delete is worked out after Claude Code\'s message handling, in one walk, and refused when the open conversations cannot be told');
+  } else bad('the delete hook runs inside Claude Code\'s message handling, walks per conversation, or deletes when it cannot tell what is open');
 }
 
 console.log('\nthe pins\' margin setting');
@@ -5524,7 +6142,7 @@ console.log('\nthe pins\' margin setting');
   let m;
   try { m = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' })); }
   catch (e) { m = { error: e.message }; }
-  if (m.age === 60) ok('a pass with a 30-day margin under a 90-day retention gives an 80-day-old pinned file the age of 60 days');
+  if (m.age === 59) ok('a pass with a 30-day margin under a 90-day retention gives an 80-day-old pinned file the age of 59 days, a day inside the margin');
   else bad(`the margin pass gave ${JSON.stringify(m)}`);
   if (sp.pageData({ pinned: [], times: {} }, 90, 30)[2] === 30) ok('the page is told the same margin, for the pin\'s hover text');
   else bad('the page was not told the margin');
@@ -5564,6 +6182,23 @@ console.log('\nrecently closed sessions');
     vm.runInContext(hr.out + ';var o={discardedReplacements:new Set(["p2"]),pushRecentlyClosedSession(z){pushed.push(z)}};d.call(o,"p1","S1",1,0);d.call(o,"p2","S2",1,0);', henv);
     if (JSON.stringify(henv.closed) === '["S1"]' && JSON.stringify(henv.pushed) === '["S1"]') ok('a tab the person closed reaches this extension as Claude Code notes it, and a replaced tab does not');
     else bad(`closings reported ${JSON.stringify(henv.closed)}, noted ${JSON.stringify(henv.pushed)}`);
+  }
+  /* In the bundle the closing sits in a loop inside Claude Code's onDidDispose, ahead of the broadcast of the open
+     conversations and the disposal of the panel's listeners, so a hook that throws must not skip them. */
+  {
+    const loop = 'function d($,Z,q,X){for(let F of [1]){if(!this.discardedReplacements.has($))this.pushRecentlyClosedSession(Z,q,!!X)}this.after.push(Z)}';
+    const lr = he ? applyEdits(loop, [he]) : { error: 'no such edit' };
+    const lenv = { pushed: [], after: [], threw: '' };
+    lenv.globalThis = lenv;
+    lenv.__cceClosedHook = () => { throw new Error('broken hook'); };
+    if (lr.error) bad('the closed-tab edit did not apply inside a loop: ' + lr.error);
+    else {
+      vm.createContext(lenv);
+      vm.runInContext(lr.out + ';try{d.call({discardedReplacements:new Set,pushRecentlyClosedSession(z){pushed.push(z)},after},"p","S3",1,0)}catch(e){threw=e.message}', lenv);
+      if (!lenv.threw && JSON.stringify(lenv.after) === '["S3"]' && JSON.stringify(lenv.pushed) === '["S3"]') {
+        ok('a closed-tab hook that throws leaves the rest of Claude Code\'s tab disposal running');
+      } else bad(`with a throwing hook: threw ${JSON.stringify(lenv.threw)}, then ran ${JSON.stringify(lenv.after)}`);
+    }
   }
   const se = host.EDITS.find((e) => e.name === 'session states message carries whether the sidebar is shown');
   const sr = applyEdits('class C{send(m){this.m=m}sendSessionStates($,J,Q,X,Y,W){let z={type:"request",channelId:"",requestId:l$(),request:{type:"session_states_update",sessions:$,activeSessionId:J,openSessionIds:Q,unreadSessionKeys:X,liveElsewhereSessions:Y,sidebarSessionIds:W}};this.send(z)}}', [se]);
@@ -5666,6 +6301,37 @@ console.log('\nrecently closed sessions');
       ok(`drawn again over 201 conversations, the two sections read an id ${again} times for the five they show, and one given its id later is still found`);
     } else bad(`drawn again over 201 conversations the two sections read a conversation's id ${again} times (drew both: ${drewBoth}); `
       + `the one given its id later was drawn ${late.length} time(s)`);
+  }
+}
+
+/* Every window writes the same patched file, so the copy each one writes before renaming it into place has to be its
+   own: two of them sharing one temporary name truncate each other's copy, and one of the renames then fails. Read off
+   the renames a restore makes, which goes through the same writer as a patch. */
+console.log('\na patched file written by several windows at once');
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-atomic-'));
+  const file = host.hostFile(dir);
+  const renames = [];
+  const realRename = fs.renameSync;
+  const stage = () => { fs.writeFileSync(file, 'patched'); fs.writeFileSync(file + host.BACKUP_SUFFIX, 'original'); };
+  try {
+    fs.renameSync = (from, to) => { renames.push(from); return realRename.call(fs, from, to); };
+    stage(); host.restore(dir);
+    stage(); host.restore(dir);
+    fs.renameSync = () => { throw Object.assign(new Error('rename failed'), { code: 'ENOENT' }); };
+    stage();
+    let threw = '';
+    try { host.restore(dir); } catch (e) { threw = e.message; }
+    fs.renameSync = realRename;
+    const left = fs.readdirSync(dir).filter((n) => n !== 'extension.js' && n !== 'extension.js' + host.BACKUP_SUFFIX);
+    if (renames.length === 2 && renames[0] !== renames[1] && renames.every((t) => t.includes('.' + process.pid + '.'))) {
+      ok('each write goes through a temporary copy named for this process, never the same name twice');
+    } else bad(`the temporary copies were ${JSON.stringify(renames.map((t) => path.basename(t)))}`);
+    if (threw === 'rename failed' && !left.length) ok('a copy that could not be renamed into place is removed, and the failure still reported');
+    else bad(`a failed rename threw ${JSON.stringify(threw)} and left ${JSON.stringify(left)}`);
+  } finally {
+    fs.renameSync = realRename;
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 

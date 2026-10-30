@@ -65,6 +65,11 @@ if (!write) {
   process.exit(1);
 }
 
+// An empty record would claim that this commit patches nothing; a machine with no Claude Code install proves nothing.
+if (!here.length) {
+  console.log(`\nno Claude Code build here could be verified; nothing written to ${rel}`);
+  process.exit(1);
+}
 console.log('\nrunning the check suite before claiming anything...');
 const run = cp.spawnSync(process.execPath, [SUITE, '--without-version-record'], { cwd: ROOT, encoding: 'utf8' });
 const tail = (run.stdout || '').trim().split('\n').slice(-1)[0] || '';

@@ -62,11 +62,10 @@ function obsolete(extensionsDir) {
  * build, so the pattern requires a digit after the dash - another extension whose name merely starts with this one's is
  * not mistaken for a version of it.
  */
-function beingUninstalled(extensionPath, id) {
+function beingUninstalled(extensionPath, id, marked = obsolete(path.dirname(extensionPath || '.'))) {
   if (!extensionPath || !id) return false;
   const dir = path.dirname(extensionPath);
   const mine = path.basename(extensionPath);
-  const marked = obsolete(dir);
   if (marked[mine] !== true) return false;
   const own = new RegExp('^' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-\\d', 'i');
   let names;
@@ -137,4 +136,31 @@ function installStamp(extensionPath) {
   }
 }
 
-module.exports = { roots, obsolete, beingUninstalled, restoreAll, finishLater, replacedSince, installStamp };
+/**
+ * Where the copy this window loaded stands: 'uninstalling', 'replaced', or '' for neither.
+ *
+ * Replaced is any case of this window running a build that is no longer the installed one, and there are two. The same
+ * version installed again over this copy changes its install stamp (replacedSince). Another version installed beside it
+ * marks this folder for deletion while a folder of the new version stays unmarked - an update, or a downgrade - and a
+ * window that has not reloaded keeps running this one. It reads the newer build's marker as outdated, and patching both
+ * bundles back to its own edits on the next settings or extensions change, it takes turns with every reloaded window.
+ * Either way the window leaves every shared file to the windows running the installed build.
+ *
+ * `marked` is the extensions folder's record of folders marked for deletion, when the caller has it already.
+ */
+function standing(extensionPath, id, loadedStamp, marked = obsolete(path.dirname(extensionPath || '.'))) {
+  if (!extensionPath) return '';
+  if (marked[path.basename(extensionPath)] === true) return beingUninstalled(extensionPath, id, marked) ? 'uninstalling' : 'replaced';
+  return replacedSince(extensionPath, loadedStamp) ? 'replaced' : '';
+}
+
+/*
+ * Of the installs of another extension found in one extensions folder, the ones its editor has not marked for deletion,
+ * plus `keep`, the one this window runs, whatever its mark. A marked folder holds a build nobody will run again: patching
+ * it costs a full read and write of its bundles and, when they no longer fit, a warning about a build no one uses.
+ */
+function unmarked(dirs, keep, marked) {
+  return dirs.filter((d) => d === keep || (marked || {})[path.basename(d)] !== true);
+}
+
+module.exports = { roots, obsolete, beingUninstalled, restoreAll, finishLater, replacedSince, installStamp, standing, unmarked };

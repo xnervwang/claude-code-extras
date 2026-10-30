@@ -21,10 +21,11 @@ const path = require('path');
 const webview = require('./src/webview');
 const host = require('./src/host');
 const { safeColor } = webview;
-const { readTasks } = require('./src/tasks');
+const { readTasks, rememberDirs } = require('./src/tasks');
 const background = require('./src/background');
 const efforts = require('./src/efforts');
-const { countOpen, sweepOrphans, liveSessions, planDir, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
+const { countOpen, sweepOrphans, planDir, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
+const { transcriptOf, writeAtomic } = require('./src/claude-files');
 const { WorkPlanProvider } = require('./src/workplan-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
@@ -69,14 +70,43 @@ const HOOK_SETTINGS = {
   tellTimeZone: PREFIX + 'tellClaudeYourTimeZone',
 };
 
-/** Every install of Claude Code this adapter can see: the active one plus sibling versions in the same folder. */
-function installs(adapter) {
-  const ext = vscode.extensions.getExtension(adapter.id);
-  if (!ext) return [];
-  return Array.from(new Set([ext.extensionPath, ...adapter.findInstalls(path.dirname(ext.extensionPath))]));
+/*
+ * A reading taken at most once per turn of the event loop. A timer or an event asks the same question several times
+ * while it is handled, and the answer is read once and read again the next time.
+ */
+function perTick(read) {
+  let value, have = false;
+  return () => {
+    if (!have) { value = read(); have = true; setImmediate(() => { have = false; }); }
+    return value;
+  };
 }
 
-const cfg = () => vscode.workspace.getConfiguration();
+/* Which folders of an extensions directory the editor has marked for deletion, read once per turn of the event loop. */
+const marks = new Map();
+function markedIn(root) {
+  if (!marks.size) setImmediate(() => marks.clear());
+  if (!marks.has(root)) marks.set(root, removal.obsolete(root));
+  return marks.get(root);
+}
+
+/*
+ * Every install of Claude Code this adapter can see: the one this window runs plus sibling versions in the same folder,
+ * less the siblings the editor has marked for deletion, which nobody will run again. `all` keeps those too, for taking
+ * our changes back out: a marked folder can still carry them until the editor deletes it.
+ */
+function installs(adapter, all = false) {
+  const ext = vscode.extensions.getExtension(adapter.id);
+  if (!ext) return [];
+  const root = path.dirname(ext.extensionPath);
+  const found = Array.from(new Set([ext.extensionPath, ...adapter.findInstalls(root)]));
+  return all ? found : removal.unmarked(found, ext.extensionPath, markedIn(root));
+}
+
+/* The editor's settings as last read. Reading them builds a merged copy of every scope, and a tick asks for a couple of
+   dozen values, so the copy is kept until the editor reports a change, when start() drops it. */
+let settings = null;
+const cfg = () => settings || (settings = vscode.workspace.getConfiguration());
 function enabled() { return cfg().get(SETTING, true); }
 
 /** Folders this window has open, which is where a session started here keeps its scheduled-prompt file. */
@@ -160,59 +190,44 @@ function start(context, renamed) {
   const log = vscode.window.createOutputChannel('Work Plan for Claude Code');
   context.subscriptions.push(log);
   if (renamed) log.appendLine(`settings moved from ${LEGACY_PREFIX}* to ${PREFIX}*: ${renamed}`);
-  /*
-   * When this host started, so that the patch write can be placed against the panel's own startup.
-   *
-   * The panel logs how far into its startup its bundle finished evaluating; this gives the other half of the comparison -
-   * how far into the same startup we replaced that bundle. Without it the only way to line the two up was the file's
-   * modification time, which says nothing about when startup began and is gone as soon as the next write lands.
-   *
-   * TEMPORARY, part of the investigation at writeAtomic in src/webview.js. Goes when that is settled.
-   */
-  const startedAt = Date.now();
   const removed = () => context.globalState.get(REMOVED_KEY, false) === true;
   selfPath = context.extensionPath;
-  /* True once the editor has marked this copy for deletion with no other version staying - an uninstall that is waiting
-     for this window to restart its extensions. Until then this window must not patch what another window restored on
-     its way out (see src/removal.js). */
-  const uninstalling = () => removal.beingUninstalled(context.extensionPath, ID);
-  /* True once this copy has been installed again over itself while this window kept running the earlier build. That
-     window then leaves every shared file alone; the windows that reload run the new build and keep them current. */
+  /*
+   * Where the copy this window runs stands (src/removal.js), read once per turn of the event loop.
+   *
+   * Uninstalling: the editor has marked it for deletion with no other version staying, and waits for this window to
+   * restart its extensions. Until then this window must not patch what another window restored on its way out.
+   *
+   * Replaced: another build of this extension is installed now - another version beside it, or the same version again
+   * over it - while this window keeps running this one. It then leaves every shared file alone; the windows that reload
+   * run the installed build and keep those files current.
+   */
   const loadedStamp = removal.installStamp(context.extensionPath);
-  const replaced = () => removal.replacedSince(context.extensionPath, loadedStamp);
+  const standing = perTick(() => removal.standing(context.extensionPath, ID, loadedStamp, markedIn(path.dirname(context.extensionPath))));
+  const uninstalling = () => standing() === 'uninstalling';
+  const replaced = () => standing() === 'replaced';
 
   /*
    * Which project directories to look for scheduled prompts in - remembered across windows, not taken from this one.
    *
    * The stylesheet the page reads sits in Claude Code's own folder, so every window writes the SAME file. If each wrote
    * only what its own open folders yielded, two windows would take turns adding and removing the section every refresh.
-   * Remembering the union makes every window write the same content, so whoever writes last changes nothing.
-   *
-   * Directories that no longer exist are dropped, and the list is capped, so a machine that has opened hundreds of
-   * projects over a year does not turn one refresh into hundreds of reads.
+   * Remembering the union, merged and ordered the same way by every window (rememberDirs in src/tasks.js), makes every
+   * window write the same content, so whoever writes last changes nothing.
    *
    * The known gap: a session started in a SUBdirectory of an open folder is not found, and its section simply does not
    * appear. Walking directories would trade a certain cost for an uncertain gain, so it waits for a real case.
    */
-  const DIRS_KEY = 'claudeCodeExtras.projectDirs';
-  const MAX_DIRS = 30;
-  function knownDirs() {
-    const remembered = context.globalState.get(DIRS_KEY, []);
-    const merged = [...openDirs(), ...(Array.isArray(remembered) ? remembered : [])]
-      .filter((d) => typeof d === 'string' && d);
-    const kept = [];
-    for (const d of merged) {
-      if (kept.includes(d)) continue;
-      try { if (!fs.statSync(d).isDirectory()) continue; } catch (_) { continue; }
-      kept.push(d);
-      if (kept.length >= MAX_DIRS) break;
-    }
-    // Most recently opened first, so the cap drops the oldest rather than whatever happened to be listed last.
-    if (kept.join('\u0000') !== (Array.isArray(remembered) ? remembered : []).join('\u0000')) {
-      context.globalState.update(DIRS_KEY, kept);
-    }
-    return kept;
-  }
+  /* Kept under a key of its own. A window still running an earlier build reads and writes a plain list under the old
+     key, and two shapes in one key would have the two builds rewriting it in turn; the old list is where this starts. */
+  const DIRS_KEY = 'claudeCodeExtras.projectDirDays';
+  const OLD_DIRS_KEY = 'claudeCodeExtras.projectDirs';
+  const knownDirs = perTick(() => {
+    const stored = context.globalState.get(DIRS_KEY);
+    const r = rememberDirs(stored !== undefined ? stored : context.globalState.get(OLD_DIRS_KEY, []), openDirs());
+    if (r.changed) context.globalState.update(DIRS_KEY, r.store);
+    return r.dirs;
+  });
 
   /* One setting per switchable addition, named after it. Reading them here rather than in src/webview.js keeps that
      file free of the editor's API, which is what lets the tests run it. */
@@ -232,8 +247,10 @@ function start(context, renamed) {
       pins: pinsOn() ? sessionPins.pageData(sessionPins.read(pinsFile()), sessionPins.retentionDays(), pinMargin()) : null,
     };
   };
+  /* Never after Remove, which has just taken these files out of Claude Code's folder: a scan finishing afterwards would
+     put them back. */
   const writeLiveNow = () => {
-    if (uninstalling() || replaced()) return;
+    if (removed() || uninstalling() || replaced()) return;
     try {
       const opts = options();
       for (const dir of installs(webview)) webview.writeLive(dir, opts);
@@ -251,11 +268,17 @@ function start(context, renamed) {
     const id = activeChat();
     if (!id) return;
     efforts.scan(id, opts || {})
-      .then((r) => { if (r && r.css) for (const dir of installs(webview)) webview.writeEffort(dir, id, r.css); })
+      .then((r) => {
+        // Asked again: the scan may have finished after Remove, or once this window no longer runs the installed build.
+        if (!r || !r.css || removed() || uninstalling() || replaced()) return;
+        for (const dir of installs(webview)) webview.writeEffort(dir, id, r.css);
+      })
       .catch((e) => log.appendLine('reply efforts: ' + e.message));
   };
+  /* Where Claude Code's own command line can be found: its binary ships inside each install. */
+  const claudeFolders = () => Array.from(new Set(ADAPTERS.flatMap((adapter) => installs(adapter))));
   const scanBackground = () => {
-    if (removed() || !enabled() || switchedOff().includes('backgroundSessions')) return;
+    if (removed() || !enabled() || uninstalling() || replaced() || switchedOff().includes('backgroundSessions')) return;
     const id = activeChat();
     if (!id) return;
     background.scan(id)
@@ -273,40 +296,25 @@ function start(context, renamed) {
     }
     const patched = [], restored = [], problems = [];
     const leaving = uninstalling();
+    const restoring = removed() || leaving;
+    /* What the live stylesheet says, worked out once and only for the panel's bundle: the host's ignores it, and working
+       it out reads the background sessions, the scheduled prompts and the pins. */
+    let opts = null;
     let found = 0;
     for (const adapter of ADAPTERS) {
-      for (const dir of installs(adapter)) {
+      for (const dir of installs(adapter, restoring)) {
         found++;
         const label = `${adapter.name} (${path.basename(dir)})`;
         try {
-          if (removed() || leaving) {
+          if (restoring) {
             const r = adapter.restore(dir);
             log.appendLine(`${label}: ${r.message}`);
             if (r.changed && !restored.includes(adapter.name)) restored.push(adapter.name);
           } else {
-            /* Where the panel's bundle is rewritten, during startup and alongside the panel loading that same file. That was
-               suspected of causing the panel that takes minutes to open, and a two-restart test ruled it out - see writeAtomic
-               in src/webview.js for the test and for why the evidence looked convincing, before suspecting it again. */
-            const intoStartup = Date.now() - startedAt;
-            const t0 = Date.now();
-            const r = adapter.apply(dir, options());
-            const took = Date.now() - t0;
-            /* TEMPORARY, part of that same investigation: how far into startup the file was replaced and how long the
-               replacement took. The panel logs the other half - how far into its own startup its bundle finished
-               evaluating - and the two together say whether they overlapped, which no amount of reasoning about the file's
-               modification time could settle. Only for a write: "already patched" touches nothing, and logging it here
-               would bury the case that matters among the ones that cannot have caused anything. */
-            if (r.changed) {
-              log.appendLine(`${label}: ${r.message} - wrote at ${intoStartup}ms into this host's startup, took ${took}ms`);
-              try {
-                latency.patchRecord({ dir: latencyDir(), version: stamp(), target: adapter.name,
-                  intoStartup, took, at: new Date(t0).toISOString() });
-              } catch (_) { /* a reading that cannot be filed is not worth failing activation over */ }
-            } else {
-              log.appendLine(`${label}: ${r.message}${r.liveChanged ? ' (live settings updated)' : ''}`);
-            }
+            const r = adapter.apply(dir, adapter === webview ? (opts || (opts = options())) : undefined);
+            log.appendLine(`${label}: ${r.message}${r.liveChanged ? ' (live settings updated)' : ''}`);
             if (r.changed && !patched.includes(adapter.name)) patched.push(adapter.name);
-            else if (!r.changed && r.message !== 'already patched') problems.push(`${label}: ${r.message}`);
+            else if (!r.changed && !r.current) problems.push(`${label}: ${r.message}`);
           }
         } catch (e) {
           problems.push(`${label}: ${e.message}`);
@@ -330,9 +338,12 @@ function start(context, renamed) {
    * hitting it by accident silently changed a global setting. The three commands remain for anyone who wants it.
    */
   const setEnabled = async (value) => {
-    if (value && removed()) await context.globalState.update(REMOVED_KEY, false);
+    const unremoving = value && removed();
+    if (unremoving) await context.globalState.update(REMOVED_KEY, false);
     if (enabled() === value) { await sync({ interactive: true }); return; }
     await cfg().update(SETTING, value, vscode.ConfigurationTarget.Global);
+    // The setting reaches the live stylesheet only; coming back from Remove needs the patch put back in as well.
+    if (unremoving) await sync({ interactive: true });
   };
 
   context.subscriptions.push(
@@ -345,7 +356,7 @@ function start(context, renamed) {
     }),
     registerCommand('status', () => {
       const lines = [];
-      for (const adapter of ADAPTERS) for (const d of installs(adapter)) lines.push(`${adapter.name} ${path.basename(d)}: ${adapter.status(d)}`);
+      for (const adapter of ADAPTERS) for (const d of installs(adapter, true)) lines.push(`${adapter.name} ${path.basename(d)}: ${adapter.status(d)}`);
       vscode.window.showInformationMessage('Work Plan for Claude Code — ' + (lines.join(' | ') || 'Claude Code is not installed') + (removed() ? ' (removed)' : ''));
     }),
     /* Every setting this extension has, in the editor's own settings UI: search, per-workspace values, sync and a JSON
@@ -366,7 +377,7 @@ function start(context, renamed) {
         + 'description it loads every session. Your existing plans are left alone.',
         { modal: true }, 'Stop loading it');
       if (yes !== 'Stop loading it') return;
-      const r = await pluginInstall.disable();
+      const r = await pluginInstall.disable(claudeFolders());
       log.appendLine('work plan plugin: ' + r.said);
       log.show(true);
       if (r.ok) await offerReload('The work plan plugin will stop loading in conversations started after a reload.');
@@ -385,39 +396,16 @@ function start(context, renamed) {
       log.appendLine(`  records: ${path.join(latencyDir(), 'open-latency-<pid>.jsonl')}, one per window`);
       log.show(true);
     }),
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();
-      /* A switch has to reach the panel the moment it is flipped, which is what writing the stylesheet does. */
-      const touched = [SETTING, COLOR_SETTING, EDGE_SETTING, PINS_SETTING, PIN_MARGIN_SETTING]
-        .concat(webview.SWITCHES.map((k) => PREFIX + 'show.' + k));
-      if (!touched.some((k) => e.affectsConfiguration(k))) return;
-      const c = cfg().get(COLOR_SETTING, '');
-      if (c && !safeColor(c)) vscode.window.showWarningMessage(`Work Plan for Claude Code: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
-      sync();
-    }),
     // A Claude Code update arrives as a new folder, so patch it as soon as that folder appears.
     vscode.extensions.onDidChange(() => sync()),
   );
 
-  /* A task file is written by another process, so nothing in this extension would otherwise notice it change and the
-     panel would keep showing the reading from startup. Only the live settings are rewritten here - a full sync re-reads
-     a five-megabyte bundle to check its state - and the write bumps the page's revision only when the content differs,
-     so a quiet machine costs one small read per folder and nothing else. */
   const REFRESH_MS = 30000;
-  const refresh = setInterval(() => {
-    if (removed() || !enabled() || uninstalling() || replaced()) return;
-    scanBackground();
-    scanEffort();
-    watchEffort();
-    writeLiveNow();
-    sampleLatency();
-  }, REFRESH_MS);
-  context.subscriptions.push({ dispose: () => clearInterval(refresh) });
 
   /*
    * How long this window makes you wait, taken from the official extension's log rather than measured here - see
-   * src/openlatency.js for what is paired with what. It rides the timer above because it costs one stat of one file
-   * when nothing has been written, and reads only the bytes appended since the last pass.
+   * src/openlatency.js for what is paired with what. It rides the half-minute timer because it costs one stat of one
+   * file when nothing has been written, and reads only the bytes appended since the last pass.
    *
    * It is deliberately not in the injected script. A readout added there once made reloading the window crash, and the
    * mechanism was never established; the panel is also the wrong side to measure from, since what is being timed is a
@@ -433,9 +421,12 @@ function start(context, renamed) {
     return `${ours || '?'}/${theirs || '?'}`;
   };
   const thresholdMs = () => Math.max(1, cfg().get(THRESHOLD_SETTING, 10)) * 1000;
-  /* The running count of fast opens lives here rather than in globalState: that store is shared by every window, so two
-     of them incrementing one counter would lose each other's increments - the same reason the records are a file each. */
-  let latencyState = context.globalState.get(LATENCY_KEY, {});
+  /* How far this window's log has been read, the pairings still open in it, and the running count of fast opens, all in
+     memory. Each window writes a log of its own and a reload starts a new one, so none of it means anything to another
+     window or survives a reload; kept in the store every window shares, it would be carried into the wrong log and pair
+     lines that have nothing to do with each other. */
+  let latencyState = {};
+  if (context.globalState.get(LATENCY_KEY) !== undefined) context.globalState.update(LATENCY_KEY, undefined);
   function sampleLatency() {
     /* Off means nothing is read either. Stopping only the writing would leave the log being opened and parsed every
        thirty seconds, which is most of what this costs. */
@@ -448,13 +439,7 @@ function start(context, renamed) {
         version: stamp(),
         thresholdMs: thresholdMs(),
       });
-      if (r.state) {
-        latencyState = r.state;
-        /* The offset and any half-finished pairing survive a restart; a half-counted day does not, and writing the count
-           on every tick would put a store every window shares back in the path of something each counts for itself. */
-        context.globalState.update(LATENCY_KEY,
-          { file: r.state.file, size: r.state.size, pending: r.state.pending });
-      }
+      if (r.state) latencyState = r.state;
       /* Anything recorded is already past the threshold, so it is worth saying without being asked. */
       for (const w of r.added) {
         log.appendLine(`waited ${(w.waited / 1000).toFixed(1)}s for ${w.what} (${w.trigger}) at ${w.at}`);
@@ -470,41 +455,7 @@ function start(context, renamed) {
      the setting reaches the next panel opened without a reload. */
   const loadWatchOff = () => { globalThis[host.LOAD_WATCH_OFF] = !cfg().get(LATENCY_ON_SETTING, true); };
   loadWatchOff();
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => { if (e.affectsConfiguration(LATENCY_ON_SETTING)) loadWatchOff(); }),
-    { dispose: () => { delete globalThis[host.LOAD_WATCH_OFF]; } },
-  );
-
-  /*
-   * TEMPORARY, FOR ONE INVESTIGATION - delete with the watcher in src/openlatency.js once the panel's slow first message
-   * is understood. A per-second timer is not something this extension should carry for its own sake; it is here because
-   * one question could not be answered any other way.
-   *
-   * Whether this extension host was running during a wait, which a wait on its own cannot say.
-   *
-   * The silence either side of a 94-second wait has two opposite readings - this host blocked and unable to act, or this
-   * host idle with nothing to act on - and they point at different halves of the machine. A timer that only reads the
-   * clock tells them apart: late means this side was busy, on time through a long wait means it was free and the delay
-   * belongs to the panel.
-   *
-   * On its own interval rather than the thirty-second one above: a timer cannot measure a delay that also delayed it, and
-   * the sampling has to be finer than what it is trying to see. Under the same setting as the rest of the recording,
-   * since it is the same kind of data about the same question.
-   */
-  const lag = latency.lagWatcher({ dir: latencyDir(), version: stamp() });
-  let lastLag = null;
-  const lagTimer = setInterval(() => {
-    if (!cfg().get(LATENCY_ON_SETTING, true)) return;
-    try {
-      const over = lag.tick();
-      // Reported as a stretch ends, with its whole span, rather than once per late tick.
-      if (!over && lag.records.length && lag.records[lag.records.length - 1] !== lastLag) {
-        lastLag = lag.records[lag.records.length - 1];
-        log.appendLine(`this extension host was busy ${(lastLag.blocked / 1000).toFixed(1)}s from ${lastLag.at}`);
-      }
-    } catch (_) { /* a missed reading is not worth a message every second */ }
-  }, latency.INTERVAL_MS);
-  context.subscriptions.push({ dispose: () => clearInterval(lagTimer) });
+  context.subscriptions.push({ dispose: () => { delete globalThis[host.LOAD_WATCH_OFF]; } });
 
   /*
    * Hand the hooks their thresholds.
@@ -533,7 +484,8 @@ function start(context, renamed) {
          them from taking turns rewriting one file, the way the live stylesheet already does. */
       if (current === next) return;
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(file, next);
+      // Replaced whole: the hooks read it at any moment, and a file written in place can be caught half-written.
+      writeAtomic(file, next);
     } catch (e) {
       log.appendLine('work plan hook settings: ' + e.message);
     }
@@ -565,14 +517,10 @@ function start(context, renamed) {
   const paintBadge = () => {
     /* Counted over what the view is showing, not over the machine. A count that includes conversations the tree does not
        show says a number the reader cannot find, which reads as the tree being broken rather than the count being wider. */
-    const plans = workplan.shown();
-    let open = 0;
-    for (const plan of plans) {
-      const n = countOpen(plan.nodes);
-      open += (n.todo || 0) + (n.discussing || 0);
-    }
-    const where = plans.length === 1 ? 'in this conversation' : `across ${plans.length} conversation(s)`;
-    view.badge = open ? { value: open, tooltip: `${open} still open ${where}` } : undefined;
+    const plan = workplan.shown();
+    const n = plan ? countOpen(plan.nodes) : {};
+    const open = (n.todo || 0) + (n.discussing || 0);
+    view.badge = open ? { value: open, tooltip: `${open} still open in this conversation` } : undefined;
   };
   /* The id of the conversation in front of the reader, or empty. The patched field writes it on every change; before
      anything has, or when the panel has no conversation open, it is not a string and reads as empty - the view shows
@@ -599,9 +547,9 @@ function start(context, renamed) {
     const r = sweepOrphans();
     if (r.why) log.appendLine('orphan work plans: ' + r.why);
     else if (r.deleted) log.appendLine(`orphan work plans: deleted ${r.deleted}, kept ${r.kept}`);
-    // The efforts written beside the panel go with the conversation; an unreadable list of them removes nothing.
-    const live = liveSessions();
-    if (live) for (const dir of installs(webview)) webview.pruneEfforts(dir, live);
+    /* The efforts written beside the panel go with the conversation, judged by the same reading of the transcripts the
+       sweep just made; when it could not be made, nothing is removed. */
+    if (r.live) for (const dir of installs(webview, true)) webview.pruneEfforts(dir, r.live);
   };
   /* The reader's time zone as a panel of this window last reported it (src/panel-tz.js), or empty until one has. */
   const clientZone = () => {
@@ -621,7 +569,7 @@ function start(context, renamed) {
       try { current = fs.readFileSync(file, 'utf8'); } catch (_) {}
       if (current === next) return;
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, next);
+      writeAtomic(file, next);
     } catch (e) {
       log.appendLine('client time zone: ' + e.message);
     }
@@ -658,7 +606,7 @@ function start(context, renamed) {
     const id = activeChat();
     if (id !== effortWatch.id) unwatchEffort();
     if (!id || removed() || !enabled() || replaced() || switchedOff().includes('modelName')) { unwatchEffort(); return; }
-    const transcript = background.transcriptOf(id);
+    const transcript = transcriptOf(id);
     if (!transcript) return;
     effortWatch.id = id;
     /* Only the side that changed is read: the sub-agents are looked at when their folder changed, not on every row the
@@ -751,10 +699,6 @@ function start(context, renamed) {
     } finally { keeping = false; }
   };
   let keepSoon = 0, toldStale = false;
-  /* A wider margin moves pinned files forward on the next pass, so that pass is not left waiting half an hour. */
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration(PIN_MARGIN_SETTING) && !keepSoon) keepSoon = setTimeout(() => { keepSoon = 0; keepPinned(); }, 5000);
-  }));
   /*
    * Called by the patched host from inside its own message handling, so the work is put off rather than done there.
    *
@@ -880,53 +824,62 @@ function start(context, renamed) {
    * Archived conversations deleted from disk, asked for from the Archived sessions menu (src/deletesession.js). Nothing
    * goes before the person accepts a confirmation that names each conversation and what of it is on disk. One that is
    * open in this window or running anywhere on this machine is left alone and named as such.
+   *
+   * Called by the patched host from inside its own message handling, so the work is put off rather than done there, as
+   * the pin hook's is: finding what is on disk walks every project folder.
    */
   globalThis.__cceDeleteHook = (asked) => {
-    (async () => {
-      const seen = new Set(), want = [];
-      for (const s of Array.isArray(asked) ? asked : []) {
-        if (s && typeof s.id === 'string' && deleteSession.SESSION.test(s.id) && !seen.has(s.id)) {
-          seen.add(s.id);
-          want.push({ id: s.id, title: typeof s.title === 'string' && s.title.trim() ? s.title.trim().slice(0, 120) : s.id });
-        }
+    setTimeout(() => deleteArchived(asked).catch((e) => log.appendLine('deleting archived conversations: ' + (e && e.message))), 0);
+  };
+  const deleteArchived = async (asked) => {
+    const seen = new Set(), want = [];
+    for (const s of Array.isArray(asked) ? asked : []) {
+      if (s && typeof s.id === 'string' && deleteSession.SESSION.test(s.id) && !seen.has(s.id)) {
+        seen.add(s.id);
+        want.push({ id: s.id, title: typeof s.title === 'string' && s.title.trim() ? s.title.trim().slice(0, 120) : s.id });
       }
-      if (!want.length || !enabled() || removed()) return;
-      let shown = [];
-      try { shown = typeof globalThis.__cceSessionsShown === 'function' ? globalThis.__cceSessionsShown() : []; } catch (_) { /* none known */ }
-      const busy = [], go = [];
-      for (const w of want) {
-        if (shown.includes(w.id) || deleteSession.running(w.id)) { busy.push(w); continue; }
-        const found = deleteSession.find(w.id, {
-          planDir: planDir(),
-          extra: installs(webview).map((d) => path.join(d, 'webview', webview.EFFORT_PREFIX + w.id + '.css')),
-        });
-        if (found.length) go.push({ ...w, found });
-      }
-      if (!go.length) {
-        vscode.window.showInformationMessage(busy.length
-          ? `Not deleted: ${busy.map((b) => `"${b.title}"`).join(', ')} ${busy.length === 1 ? 'is' : 'are'} open or running.`
-          : 'Nothing of that conversation is left on disk.');
-        return;
-      }
-      const lines = go.map((g) => `"${g.title}": ${deleteSession.describe(g.found)}`);
-      if (busy.length) lines.push('', `Left alone, open or running: ${busy.map((b) => `"${b.title}"`).join(', ')}`);
-      lines.push('', 'This cannot be undone.');
-      const pick = await vscode.window.showWarningMessage(
-        go.length === 1 ? `Delete "${go[0].title}" from disk?` : `Delete ${go.length} conversations from disk?`,
-        { modal: true, detail: lines.join('\n') }, 'Delete');
-      if (pick !== 'Delete') return;
-      const failed = [];
-      for (const g of go) {
-        failed.push(...deleteSession.remove(g.found));
-        try { sessionPins.setPinned(pinsFile(), g.id, false); } catch (_) { /* not pinned */ }
-        log.appendLine(`Deleted "${g.title}" (${g.id}): ${deleteSession.describe(g.found)}`);
-      }
-      try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }
-      if (failed.length) {
-        log.appendLine('Could not delete:\n  ' + failed.join('\n  '));
-        vscode.window.showWarningMessage(`${failed.length} file${failed.length === 1 ? '' : 's'} could not be deleted; the output "Work Plan for Claude Code" lists them.`);
-      }
-    })().catch((e) => log.appendLine('deleting archived conversations: ' + (e && e.message)));
+    }
+    if (!want.length || !enabled() || removed()) return;
+    /* Which conversations are open is what keeps one in use from being deleted, so not knowing is a refusal, not an
+       empty list. */
+    let shown;
+    try { shown = typeof globalThis.__cceSessionsShown === 'function' ? globalThis.__cceSessionsShown() : null; } catch (_) { shown = null; }
+    if (!Array.isArray(shown)) {
+      vscode.window.showWarningMessage('Not deleted: this window could not tell which conversations are open, so none was deleted.');
+      return;
+    }
+    const running = deleteSession.runningSessions();
+    const busy = want.filter((w) => shown.includes(w.id) || running.has(w.id));
+    const free = want.filter((w) => !busy.includes(w));
+    const found = deleteSession.findAll(free.map((w) => w.id), {
+      planDir: planDir(),
+      extra: (id) => installs(webview, true).map((d) => path.join(d, 'webview', webview.EFFORT_PREFIX + id + '.css')),
+    });
+    const go = free.filter((w) => found.get(w.id).length).map((w) => ({ ...w, found: found.get(w.id) }));
+    if (!go.length) {
+      vscode.window.showInformationMessage(busy.length
+        ? `Not deleted: ${busy.map((b) => `"${b.title}"`).join(', ')} ${busy.length === 1 ? 'is' : 'are'} open or running.`
+        : 'Nothing of that conversation is left on disk.');
+      return;
+    }
+    const lines = go.map((g) => `"${g.title}": ${deleteSession.describe(g.found)}`);
+    if (busy.length) lines.push('', `Left alone, open or running: ${busy.map((b) => `"${b.title}"`).join(', ')}`);
+    lines.push('', 'This cannot be undone.');
+    const pick = await vscode.window.showWarningMessage(
+      go.length === 1 ? `Delete "${go[0].title}" from disk?` : `Delete ${go.length} conversations from disk?`,
+      { modal: true, detail: lines.join('\n') }, 'Delete');
+    if (pick !== 'Delete') return;
+    const failed = [];
+    for (const g of go) {
+      failed.push(...deleteSession.remove(g.found));
+      try { sessionPins.setPinned(pinsFile(), g.id, false); } catch (_) { /* not pinned */ }
+      log.appendLine(`Deleted "${g.title}" (${g.id}): ${deleteSession.describe(g.found)}`);
+    }
+    try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }
+    if (failed.length) {
+      log.appendLine('Could not delete:\n  ' + failed.join('\n  '));
+      vscode.window.showWarningMessage(`${failed.length} file${failed.length === 1 ? '' : 's'} could not be deleted; the output "Work Plan for Claude Code" lists them.`);
+    }
   };
   context.subscriptions.push({ dispose: () => {
     if (globalThis.__cceDeleteHook) delete globalThis.__cceDeleteHook;
@@ -945,11 +898,7 @@ function start(context, renamed) {
     } catch (_) { /* the list stays as it was */ }
   };
   globalThis.__cceRecentClosed = () => recentClosed.pageData(recentList, enabled() && !removed() ? cfg().get(RECENT_SETTING, 10) : 0);
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration(RECENT_SETTING) || e.affectsConfiguration(SETTING)) {
-      try { if (typeof globalThis.__cceSendSessionStates === 'function') globalThis.__cceSendSessionStates(); } catch (_) { /* next update */ }
-    }
-  }), { dispose: () => {
+  context.subscriptions.push({ dispose: () => {
     if (globalThis.__cceClosedHook) delete globalThis.__cceClosedHook;
     if (globalThis.__cceRecentClosed) delete globalThis.__cceRecentClosed;
     if (globalThis.__cceSendSessionStates) delete globalThis.__cceSendSessionStates;
@@ -982,15 +931,15 @@ function start(context, renamed) {
     const undone = state.registered === true && pluginInstall.registrationGone();
     const registered = state.registered === true && !undone;
     /* The registration points at the copy in this extension's global storage, and the editor deletes that folder along
-       with an uninstalled extension - so the registration can outlive the files it names. */
-    const staged = fs.existsSync(path.join(to, pluginInstall.PLUGIN));
+       with an uninstalled extension - so the registration can outlive the files it names. Compared by its contents, not
+       by its being there: a copy cut short, or one another window was replacing, is there and is not this plugin. */
+    const staged = pluginInstall.digest(to) === stamp;
     if (!retry && registered && state.stamp === stamp && staged) return;
     if (undone) log.appendLine('work plan plugin: registering again - Claude Code lists neither it nor its marketplace, which is what uninstalling this extension leaves');
     // A registered plugin on a new version of this extension needs its files refreshed, not registering again: the
     // path stays where it is, and re-running the install is what would undo a deliberate uninstall.
     const refreshOnly = !retry && registered;
-    const dirs = [];
-    for (const adapter of ADAPTERS) for (const d of installs(adapter)) dirs.push(d);
+    const dirs = claudeFolders();
     const claudeBin = pluginInstall.findClaude(dirs);
     if (!claudeBin && !refreshOnly) {
       const problem = { step: 'finding Claude Code\'s own command line', said: 'Looked for ' + pluginInstall.BINARY + ' in ' + (dirs.length || 'no') + ' install(s) of Claude Code.' };
@@ -1027,8 +976,24 @@ function start(context, renamed) {
   } catch (e) {
     log.appendLine('work plan watcher not available: ' + e.message);
   }
-  const planPoll = setInterval(refreshPlans, REFRESH_MS);
-  context.subscriptions.push({ dispose: () => clearInterval(planPoll) });
+  /*
+   * One timer for what is looked at again every half minute: the plan, and - while the additions are on and this window
+   * runs the installed build - the conversation's transcript, the live stylesheet and the log. A task file is written by
+   * another process, so nothing would otherwise notice it change and the panel would keep showing the reading from
+   * startup; only the live settings are rewritten, never the bundles, and the page's revision moves only when their
+   * content differs, so a quiet machine costs a few small reads and nothing else. While the additions are off the
+   * transcript is not watched either, rather than the watch staying open until a reload.
+   */
+  const tick = setInterval(() => {
+    refreshPlans();
+    if (removed() || !enabled() || uninstalling() || replaced()) { unwatchEffort(); return; }
+    scanBackground();
+    scanEffort();
+    watchEffort();
+    writeLiveNow();
+    sampleLatency();
+  }, REFRESH_MS);
+  context.subscriptions.push({ dispose: () => clearInterval(tick) });
   /*
    * Reaching the file is an action of its own rather than what a row does when clicked: a row is a task, and opening a
    * file of JSON is not what clicking one looks like it will do. The title bar reaches the file for the conversation
@@ -1058,25 +1023,37 @@ function start(context, renamed) {
       vscode.window.showInformationMessage(row.title, { modal: true, detail: head.concat(['', body]).join('\n') });
     }),
     registerCommand('openWorkPlanFile', async (element) => {
-      let file = element && element.plan && element.plan.file;
+      const file = (element && element.plan && element.plan.file) || (workplan.shown() && workplan.shown().file);
       if (!file) {
-        const plans = workplan.plans;
-        if (!plans.length) {
-          vscode.window.showInformationMessage('Work Plan for Claude Code: no conversation on this machine is keeping a work plan.');
-          return;
-        }
-        if (plans.length === 1) file = plans[0].file;
-        else {
-          const pick = await vscode.window.showQuickPick(
-            plans.map((p) => ({ label: p.label, description: p.session, file: p.file })),
-            { title: 'Which work plan?' });
-          if (!pick) return;
-          file = pick.file;
-        }
+        vscode.window.showInformationMessage('Work Plan for Claude Code: the conversation in front of you is not keeping a work plan.');
+        return;
       }
       await vscode.window.showTextDocument(vscode.Uri.file(file));
     }),
   );
+
+  /*
+   * The one listener for settings. The copy of the settings kept for the timers is dropped first, so what follows reads
+   * the new values. A setting that only changes what the panel shows reaches it through the live stylesheet, and that is
+   * all that is written for it: checking the patched bundles reads ten megabytes for something that cannot change them.
+   */
+  const LIVE_SETTINGS = [SETTING, COLOR_SETTING, EDGE_SETTING, PINS_SETTING, PIN_MARGIN_SETTING]
+    .concat(webview.SWITCHES.map((k) => PREFIX + 'show.' + k));
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+    settings = null;
+    if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();
+    if (e.affectsConfiguration(LATENCY_ON_SETTING)) loadWatchOff();
+    /* A wider margin moves pinned files forward on the next pass, so that pass is not left waiting half an hour. */
+    if (e.affectsConfiguration(PIN_MARGIN_SETTING) && !keepSoon) keepSoon = setTimeout(() => { keepSoon = 0; keepPinned(); }, 5000);
+    if (e.affectsConfiguration(RECENT_SETTING) || e.affectsConfiguration(SETTING)) {
+      try { if (typeof globalThis.__cceSendSessionStates === 'function') globalThis.__cceSendSessionStates(); } catch (_) { /* next update */ }
+    }
+    if (!LIVE_SETTINGS.some((k) => e.affectsConfiguration(k))) return;
+    const c = cfg().get(COLOR_SETTING, '');
+    if (c && !safeColor(c)) vscode.window.showWarningMessage(`Work Plan for Claude Code: "${c}" is not a CSS color (use e.g. #90EE90, lightgreen or rgb(144,238,144)); your message color is left unchanged.`);
+    /* A switch has to reach the panel the moment it is flipped, which is what writing the stylesheet does. */
+    writeLiveNow();
+  }));
 
   return sync();
 }
@@ -1091,7 +1068,10 @@ function start(context, renamed) {
  */
 function deactivate() {
   if (!selfPath || !removal.beingUninstalled(selfPath, ID)) return;
-  try { removal.restoreAll(removal.roots(path.dirname(selfPath))); } catch (_) { /* the editor's own hook runs later */ }
+  /* Only the Claude Code installs in this editor's extensions folder. Another editor on this machine can have this
+     extension installed and running, and restoring its folder would take the patch out from under it; the uninstall
+     hook, which runs when this folder is deleted, is what looks in every editor's folder. */
+  try { removal.restoreAll([path.dirname(selfPath)]); } catch (_) { /* the editor's own hook runs later */ }
   try { removal.finishLater(selfPath); } catch (_) { /* likewise */ }
 }
 

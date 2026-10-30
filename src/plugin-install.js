@@ -92,11 +92,6 @@ function run(bin, args) {
 }
 
 /*
- * The staged copy is replaced rather than written over, so a version that dropped a file does not leave it behind to be
- * loaded. The cost is a moment where the registered path does not exist; a session starting inside that moment sees no
- * plugin and picks it up at the next one.
- */
-/*
  * A digest of the plugin tree - every file's path and its bytes.
  *
  * This is what decides whether the staged copy is out of date, in place of this extension's version string. A version
@@ -120,13 +115,26 @@ function digest(dir) {
   return h.digest('hex').slice(0, 16);
 }
 
+/*
+ * The staged copy is replaced rather than written over, so a version that dropped a file does not leave it behind to be
+ * loaded. The cost is a moment where the registered path does not exist; a session starting inside that moment sees no
+ * plugin and picks it up at the next one.
+ *
+ * The copy is made in a folder of this process's own: every window stages into the same place, and with one shared name
+ * two of them empty each other's copy halfway. A window whose copy cannot be put in place because another window has
+ * just put in the same plugin has nothing left to do.
+ */
 function stage(from, to) {
-  const next = to + '.new';
-  fs.rmSync(next, { recursive: true, force: true });
+  const next = `${to}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.new`;
   fs.mkdirSync(path.dirname(to), { recursive: true });
-  fs.cpSync(from, next, { recursive: true });
-  fs.rmSync(to, { recursive: true, force: true });
-  fs.renameSync(next, to);
+  try {
+    fs.cpSync(from, next, { recursive: true });
+    fs.rmSync(to, { recursive: true, force: true });
+    fs.renameSync(next, to);
+  } catch (e) {
+    fs.rmSync(next, { recursive: true, force: true });
+    if (digest(to) !== digest(from)) throw e;
+  }
 }
 
 /**
@@ -203,14 +211,15 @@ function removeSync(claudeBin, stamp) {
 }
 
 /**
- * Tell Claude Code to stop loading the plugin, which is what stops its skill description entering every session.
+ * Tell Claude Code to stop loading the plugin, which is what stops its skill description entering every session. `dirs`
+ * are the Claude Code installs, whose binary is what is told.
  *
  * `disable` rather than `uninstall`: uninstalling takes the plugin's data directory with it, and that is where every
  * conversation's plan lives. Disabling is a line in Claude Code's own settings and is undone by enabling again, so the
  * plans stay where they are and come back with it.
  */
-async function disable() {
-  const claudeBin = findClaude();
+async function disable(dirs) {
+  const claudeBin = findClaude(dirs);
   if (!claudeBin) return { ok: false, said: 'the claude binary is not where this extension can see it' };
   const r = await run(claudeBin, ['plugin', 'disable', REF]);
   if (r.ok) return { ok: true, said: 'told Claude Code to stop loading ' + REF };
@@ -223,6 +232,6 @@ async function disable() {
 
 
 module.exports = {
-  install, disable, removeSync, rescuePlans, findClaude, digest, registrationGone, MARKETPLACE, PLUGIN, REF, BINARY,
+  install, disable, removeSync, rescuePlans, findClaude, digest, stage, registrationGone, MARKETPLACE, PLUGIN, REF, BINARY,
   DATA_DIR,
 };

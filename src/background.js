@@ -16,23 +16,20 @@
  * windows looking at different conversations still write the same bytes; building it from what one window had scanned
  * would differ between windows, and the stylesheet is one file they all write - which is how settings once flickered.
  *
- * Reading is incremental. A transcript only grows, so the file records how far it was read and each pass reads what was
- * added since; the first pass over a large conversation reads all of it once. Only whole lines are consumed, because the
- * last one may still be being written.
+ * Reading is incremental (src/claude-files.js). The file records how far the transcript was read, for every conversation
+ * looked at and not only one that started something, so that a window starting up reads on from there rather than from
+ * the first byte; the first pass over a large conversation reads all of it once.
  *
  * A detached session is never opened from here. The panel launches Claude on whatever conversation it opens, so opening
  * one that a daemon is still writing would put a second process on it.
  */
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const { claudeDir, planDir, SESSION, transcriptOf, readLines, oneAtATime, writeAtomic } = require('./claude-files');
 
-const CLAUDE = path.join(os.homedir(), '.claude');
-const JOBS = path.join(CLAUDE, 'jobs');
-const PROJECTS = path.join(CLAUDE, 'projects');
+const jobsDir = () => path.join(claudeDir(), 'jobs');
 const SUFFIX = '.background';
 const LINK_FILE = /^[0-9a-f][0-9a-f-]{7,}\.background$/i;
-const SESSION = /^[0-9a-f][0-9a-f-]{7,}$/i;
 const SHORT_ID = /^[0-9a-f]{8}$/;
 /* The CLI's own words, middle dot and all, at the start of a line. When the output went to a terminal the id is wrapped
    in colour codes. */
@@ -47,7 +44,7 @@ const ID_IN_HINT = new RegExp('^(?:\\x1b\\[[0-9;]*m)*[ \\t]*claude (?:attach|log
   + HINTS.join('|') + ')', 'gm');
 /* The flag that starts one, found in the command a tool result answers. */
 const BG_FLAG = Buffer.from('--bg', 'utf8');
-const CHUNK = 8 << 20;
+const NEEDLES = [BG_FLAG, MARK, ...HINT_NEEDLES];
 /* The stylesheet carries all of this to every panel on every change, so the caps are about its size, not about how
    many sessions anyone starts. */
 const MAX_SESSIONS = 10;
@@ -56,8 +53,6 @@ const MAX_ENTRIES = 40;
 /* How far a scan may get ahead of what is on disk before the position is written down. It is only a starting point for
    the next window or the next start, so it does not have to be exact - only not so stale that a restart reads it all. */
 const PERSIST_EVERY = 1 << 20;
-
-function planDir() { return require('./workplan').planDir(); }
 
 const textOf = (b) => (typeof b.content === 'string' ? b.content
   : Array.isArray(b.content) ? b.content.map((c) => (c && typeof c.text === 'string' ? c.text : '')).join('') : '');
@@ -100,128 +95,122 @@ function readLine(line, ran, jobs, seen) {
   }
 }
 
-/* Session ids are unique across every project on a machine, so the transcript is found by name, once. */
-const where = new Map();
-function transcriptOf(session, projects = PROJECTS) {
-  const known = where.get(session);
-  if (known && fs.existsSync(known)) return known;
-  let dirs;
-  try { dirs = fs.readdirSync(projects, { withFileTypes: true }); } catch (_) { return ''; }
-  for (const d of dirs) {
-    if (!d.isDirectory()) continue;
-    const file = path.join(projects, d.name, session + '.jsonl');
-    if (fs.existsSync(file)) { where.set(session, file); return file; }
-  }
-  return '';
-}
-
+/*
+ * What a link file says: the sessions found, how far the transcript was read, and when the newest of those sessions was
+ * launched. `exists` says whether there was a file at all.
+ *
+ * Each file is kept as last read, by its modification time and size, so a pass reads only the ones that changed - and
+ * a pass over a conversation whose transcript has not grown reads nothing at all. Callers do not change what they get.
+ */
+const links = new Map();
 function readLink(file) {
-  try {
-    const d = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const ids = Array.isArray(d.ids) ? d.ids.filter((x) => typeof x === 'string' && SHORT_ID.test(x)) : [];
-    const scannedTo = typeof d.scannedTo === 'number' && d.scannedTo >= 0 ? d.scannedTo : 0;
-    return { ids, scannedTo };
-  } catch (_) {
-    return { ids: [], scannedTo: 0 };
+  let st;
+  try { st = fs.statSync(file); } catch (e) {
+    links.delete(file);
+    return { ids: [], scannedTo: 0, launched: 0, exists: !(e && e.code === 'ENOENT') };
   }
+  const was = links.get(file);
+  if (was && was.mtimeMs === st.mtimeMs && was.size === st.size) return was.link;
+  let d = null;
+  try { d = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { /* caught mid-write, or not ours */ }
+  const ids = d && Array.isArray(d.ids) ? d.ids.filter((x) => typeof x === 'string' && SHORT_ID.test(x)) : [];
+  const scannedTo = d && typeof d.scannedTo === 'number' && d.scannedTo >= 0 ? d.scannedTo : 0;
+  const launched = d && typeof d.launched === 'number' && isFinite(d.launched) ? d.launched : 0;
+  const link = { ids, scannedTo, launched, exists: true };
+  links.set(file, { mtimeMs: st.mtimeMs, size: st.size, link });
+  return link;
 }
 
-/* Written whole and renamed into place, so another window never reads half of it. */
+/* What was written is kept as read, so the next pass does not read back the file it wrote itself. */
 function writeLink(file, link) {
-  const tmp = file + '.' + process.pid + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(link) + '\n');
-  fs.renameSync(tmp, file);
+  writeAtomic(file, JSON.stringify(link) + '\n');
+  try {
+    const st = fs.statSync(file);
+    links.set(file, { mtimeMs: st.mtimeMs, size: st.size,
+      link: { ids: link.ids.slice(), scannedTo: link.scannedTo, launched: link.launched || 0, exists: true } });
+  } catch (_) { /* read again next time */ }
+}
+
+/* When the newest of these sessions was launched, by their own records, so that every window reading them arrives at the
+   same time; 0 when none says. */
+function launchOf(ids, jobs) {
+  let newest = 0;
+  for (const id of ids) {
+    try {
+      const t = Date.parse(JSON.parse(fs.readFileSync(path.join(jobs, id, 'state.json'), 'utf8')).createdAt);
+      if (isFinite(t) && t > newest) newest = t;
+    } catch (_) { /* no record, or one being written */ }
+  }
+  return newest;
+}
+
+/**
+ * Read what one conversation's transcript has added since last time. Resolves to how many sessions were new.
+ *
+ * One pass per conversation at a time (src/claude-files.js): a request made while one runs gets the pass after it, which
+ * reads what was appended meanwhile.
+ */
+function scan(session, opts = {}) {
+  if (!SESSION.test(String(session || ''))) return Promise.resolve({ added: 0, scannedTo: 0 });
+  return scanQueued(session, opts);
 }
 
 /* What this host has found per conversation, kept so that a write which lost a race with another window's write puts
    back what the other one did not know about, the next time this host writes. */
 const known = new Map();
 const commands = new Map();
-const busy = new Map();
-/* How far this host has read each transcript. The file beside the plan carries the position across windows and
-   restarts, but it is written only for a conversation that started something - so without this, a conversation that
-   never did was read from its first byte on every pass, which on a transcript of a few hundred megabytes is most of a
-   second every half minute. */
+/* How far this host has read each transcript, ahead of the file, which is written only every PERSIST_EVERY bytes. */
 const readTo = new Map();
 
-/**
- * Read what one conversation's transcript has added since last time. Resolves to how many sessions were new.
- *
- * Only one pass per conversation runs at a time; a second request while one is under way gets the same promise.
- */
-function scan(session, opts = {}) {
-  if (!SESSION.test(String(session || ''))) return Promise.resolve({ added: 0, scannedTo: 0 });
-  if (busy.has(session)) return busy.get(session);
-  const run = scanOnce(session, opts).finally(() => busy.delete(session));
-  busy.set(session, run);
-  return run;
+/* The lines that hold one of the needles are parsed, in file order, so that a call is seen before the result that
+   answers it. */
+function readChunk(data, ran, jobs, seen) {
+  const last = data.length - 1;
+  const starts = new Set();
+  for (const needle of NEEDLES) {
+    let at = 0;
+    while ((at = data.indexOf(needle, at)) !== -1 && at < last) {
+      starts.add(data.lastIndexOf(0x0a, at) + 1);
+      at = data.indexOf(0x0a, at) + 1;
+    }
+  }
+  for (const ls of [...starts].sort((a, b) => a - b)) {
+    readLine(data.subarray(ls, data.indexOf(0x0a, ls)).toString('utf8'), ran, jobs, seen);
+  }
 }
 
 async function scanOnce(session, opts) {
   const dir = opts.dir || planDir();
-  const jobs = opts.jobs || JOBS;
-  const transcript = opts.transcript || transcriptOf(session, opts.projects || PROJECTS);
+  const jobs = opts.jobs || jobsDir();
+  const transcript = opts.transcript || transcriptOf(session, opts.projects);
   if (!transcript) return { added: 0, scannedTo: 0 };
   const file = path.join(dir, session + SUFFIX);
   const link = readLink(file);
-  let size;
-  try { size = (await fs.promises.stat(transcript)).size; } catch (_) { return { added: 0, scannedTo: 0 }; }
-  // A position past the end means the transcript was replaced rather than appended to, so it is read again in full.
-  const start = Math.max(link.scannedTo, readTo.get(session) || 0);
-  const from = start <= size ? start : 0;
   const seen = new Set(link.ids);
   for (const id of known.get(session) || []) seen.add(id);
   if (!commands.has(session)) commands.set(session, new Set());
   const ran = commands.get(session);
-  let consumed = from;
-  if (from < size) {
-    const fh = await fs.promises.open(transcript, 'r');
-    try {
-      const buf = Buffer.alloc(Math.min(CHUNK, size - from));
-      let pos = from, carry = Buffer.alloc(0);
-      while (pos < size) {
-        const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, size - pos), pos);
-        if (!bytesRead) break;
-        const start = pos - carry.length;
-        pos += bytesRead;
-        const data = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : buf.subarray(0, bytesRead);
-        const last = data.lastIndexOf(0x0a);
-        if (last === -1) { carry = Buffer.from(data); continue; }
-        // Only the lines that hold one of the needles are parsed, in file order, so that a call is seen before the
-        // result that answers it.
-        const starts = new Set();
-        for (const needle of [BG_FLAG, MARK, ...HINT_NEEDLES]) {
-          let at = 0;
-          while ((at = data.indexOf(needle, at)) !== -1 && at < last) {
-            starts.add(data.lastIndexOf(0x0a, at) + 1);
-            at = data.indexOf(0x0a, at) + 1;
-          }
-        }
-        for (const ls of [...starts].sort((a, b) => a - b)) {
-          readLine(data.subarray(ls, data.indexOf(0x0a, ls)).toString('utf8'), ran, jobs, seen);
-        }
-        consumed = start + last + 1;
-        carry = Buffer.from(data.subarray(last + 1));
-      }
-    } finally {
-      await fh.close();
-    }
-  }
+  // A position past the end means the transcript was replaced rather than appended to, so it is read again in full.
+  const reader = { pos: Math.max(link.scannedTo, readTo.get(session) || 0), take: (data) => readChunk(data, ran, jobs, seen) };
+  if (!(await readLines(transcript, reader))) return { added: 0, scannedTo: 0 };
+  const consumed = reader.pos;
   const ids = [...seen];
   known.set(session, ids);
   readTo.set(session, consumed);
-  const added = ids.filter((id) => !link.ids.includes(id)).length;
-  /* No file is made for a conversation that started nothing: one per conversation looked at would be clutter, and the
-     price of not having one is a single read of its transcript when a window next starts. */
-  const exists = fs.existsSync(file);
-  if (ids.length && (added || !exists || consumed - link.scannedTo >= PERSIST_EVERY)) {
+  const fresh = ids.filter((id) => !link.ids.includes(id));
+  /* Written for a conversation that started nothing too: it is what carries how far its transcript was read to the next
+     window and the next start, which would otherwise read it from the first byte. collect() leaves such a file out. The
+     launch time goes with the ids, for the order of the list. */
+  if (fresh.length || !link.exists || consumed - link.scannedTo >= PERSIST_EVERY) {
+    const launched = Math.max(link.launched, launchOf(link.launched ? fresh : ids, jobs));
     try {
       fs.mkdirSync(dir, { recursive: true });
-      writeLink(file, { ids, scannedTo: consumed });
+      writeLink(file, Object.assign({ ids, scannedTo: consumed }, launched ? { launched } : {}));
     } catch (_) { /* the next pass writes it */ }
   }
-  return { added, scannedTo: consumed };
+  return { added: fresh.length, scannedTo: consumed };
 }
+const scanQueued = oneAtATime(scanOnce);
 
 /* A state file is rewritten by the daemon while it runs, so a read can land on half of one. Then the last whole reading
    stands in for it rather than the session disappearing from the list for a refresh. */
@@ -236,7 +225,7 @@ const when = (v) => {
   return isFinite(t) ? t : null;
 };
 
-function readState(id, jobs = JOBS) {
+function readState(id, jobs = jobsDir()) {
   let d;
   try {
     d = JSON.parse(fs.readFileSync(path.join(jobs, id, 'state.json'), 'utf8'));
@@ -263,26 +252,39 @@ function readState(id, jobs = JOBS) {
   return entry;
 }
 
+/* When a link file's conversation last launched a session, for the order of the list. A file written before that time
+   was recorded is ordered by its sessions' own records, worked out once per version of the file. */
+function launchedFor(file, link, jobs) {
+  if (link.launched) return link.launched;
+  const entry = links.get(file);
+  if (!entry) return launchOf(link.ids, jobs);
+  if (entry.order === undefined) entry.order = launchOf(link.ids, jobs);
+  return entry.order;
+}
+
 /**
  * Every recorded session, trimmed to what the panel shows, for the stylesheet.
  *
- * Ordered by the link files' own modification times, which every window reads the same - so the order, and through the
- * caps the membership, do not depend on which window is asking.
+ * Ordered by when each conversation last launched one, newest first, which every window reads the same - so the order,
+ * and through the caps the membership, do not depend on which window is asking. Not by the files' modification times:
+ * a file is rewritten as its transcript is read, which says nothing about its sessions, and every rewrite would reorder
+ * the list and with it the stylesheet every panel reloads.
  */
 function collect(opts = {}) {
   const dir = opts.dir || planDir();
-  const jobs = opts.jobs || JOBS;
+  const jobs = opts.jobs || jobsDir();
   let names;
   try { names = fs.readdirSync(dir).filter((n) => LINK_FILE.test(n)); } catch (_) { return []; }
   const files = [];
   for (const n of names) {
-    try { files.push({ n, t: fs.statSync(path.join(dir, n)).mtimeMs }); } catch (_) { /* gone meanwhile */ }
+    const file = path.join(dir, n), link = readLink(file);
+    if (link.ids.length) files.push({ n, t: launchedFor(file, link, jobs), ids: link.ids });
   }
   files.sort((a, b) => b.t - a.t || (a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
   const out = [];
-  for (const { n } of files.slice(0, MAX_SESSIONS)) {
+  for (const { n, ids } of files.slice(0, MAX_SESSIONS)) {
     const session = n.slice(0, -SUFFIX.length);
-    for (const id of readLink(path.join(dir, n)).ids.slice(-MAX_PER_SESSION)) {
+    for (const id of ids.slice(-MAX_PER_SESSION)) {
       const entry = readState(id, jobs);
       if (entry) out.push(Object.assign({ session }, entry));
       if (out.length >= MAX_ENTRIES) return out;
@@ -292,6 +294,6 @@ function collect(opts = {}) {
 }
 
 module.exports = {
-  scan, collect, readState, transcriptOf,
-  SUFFIX, LINK_FILE, MAX_SESSIONS, MAX_PER_SESSION, MAX_ENTRIES,
+  scan, collect, readState,
+  SUFFIX, LINK_FILE, MAX_SESSIONS, MAX_PER_SESSION, MAX_ENTRIES, PERSIST_EVERY,
 };

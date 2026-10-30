@@ -16,27 +16,24 @@
  * and the page walks its replies in order anyway, so a run start is all it needs. A reply after the last one read is
  * one this side has not seen yet, and the page leaves it blank rather than carrying the previous run forward over it.
  *
- * Each transcript - the conversation's own, and one per sub-agent - is read incrementally, and how far is kept beside
- * the plan, so a restart carries on where it stopped. A row is read without parsing it: in a reply's row the top-level
- * type, uuid and effort come after the message, and nothing nested follows them, so the end of the line answers it. A
- * line of any other shape that mentions a reply is parsed whole, which is what keeps a reply quoted inside some other
- * row from being taken for one.
+ * Each transcript - the conversation's own, and one per sub-agent - is read incrementally (src/claude-files.js), and how
+ * far is kept beside the plan, so a restart carries on where it stopped. A row is read without parsing it: in a reply's
+ * row the top-level type, uuid and effort come after the message, and nothing nested follows them, so the end of the
+ * line answers it. A line of any other shape that mentions a reply is parsed whole, which is what keeps a reply quoted
+ * inside some other row from being taken for one.
  */
 const fs = require('fs');
 const path = require('path');
+const { planDir, SESSION, transcriptOf, readLines, oneAtATime, writeAtomic } = require('./claude-files');
 
 const SUFFIX = '.effort';
 const STATE_FILE = /^[0-9a-f][0-9a-f-]{7,}\.effort$/i;
-const SESSION = /^[0-9a-f][0-9a-f-]{7,}$/i;
-const CHUNK = 8 << 20;
 const REPLY = '"type":"assistant"';
 const TAIL = '"type":"assistant","uuid":"';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const WORD = /^[a-z]+$/;
 /* The conversation's own transcript, keyed apart from the sub-agents' file names; the empty name sorts first. */
 const MAIN = '';
-
-function planDir() { return require('./workplan').planDir(); }
 
 const word = (v) => (typeof v === 'string' && WORD.test(v) ? v : '');
 
@@ -80,29 +77,18 @@ function readRow(data, s, e, sidechains) {
   return readLine(data.toString('utf8', s, e), sidechains);
 }
 
-/* Reads what one transcript has added since `st.pos`, moving its runs and its last reply along. Only whole lines are
-   consumed, since the last one may still be being written. */
+/* Reads what one transcript has added since `st.pos`, moving its runs and its last reply along. A file shorter than where
+   reading stopped was replaced rather than appended to, so it is read again in full. Resolves to whether the runs or
+   the last reply moved. */
 async function readFile(file, st, sidechains) {
-  let size;
-  try { size = (await fs.promises.stat(file)).size; } catch (_) { return false; }
-  // A file shorter than where reading stopped was replaced rather than appended to, so it is read again in full.
-  if (size < st.pos) Object.assign(st, { pos: 0, runs: [], last: '', eff: '' });
-  if (size === st.pos) return false;
   const before = JSON.stringify([st.runs, st.last]);
-  const fh = await fs.promises.open(file, 'r');
-  try {
-    const buf = Buffer.alloc(Math.min(CHUNK, size - st.pos));
-    let pos = st.pos, carry = Buffer.alloc(0);
-    while (pos < size) {
-      const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, size - pos), pos);
-      if (!bytesRead) break;
-      const start = pos - carry.length;
-      pos += bytesRead;
-      const data = carry.length ? Buffer.concat([carry, buf.subarray(0, bytesRead)]) : buf.subarray(0, bytesRead);
-      const end = data.lastIndexOf(0x0a);
-      if (end === -1) { carry = Buffer.from(data); continue; }
-      /* Only the lines that mention a reply are decoded at all, and of those only the end. Almost every byte of a
-         transcript is content, and turning all of it into strings was most of what a first pass cost. */
+  const reader = {
+    pos: st.pos,
+    reset: () => Object.assign(st, { runs: [], last: '', eff: '' }),
+    /* Only the lines that mention a reply are decoded at all, and of those only the end. Almost every byte of a
+       transcript is content, and turning all of it into strings was most of what a first pass cost. */
+    take: (data) => {
+      const end = data.length - 1;
       for (let from = 0, at; (at = data.indexOf(REPLY_BYTES, from)) !== -1 && at < end;) {
         const s = data.lastIndexOf(0x0a, at) + 1;
         const e = data.indexOf(0x0a, at);
@@ -112,12 +98,10 @@ async function readFile(file, st, sidechains) {
         st.last = r.uuid;
         if (r.effort && r.effort !== st.eff) { st.runs.push([r.uuid, r.effort]); st.eff = r.effort; }
       }
-      st.pos = start + end + 1;
-      carry = Buffer.from(data.subarray(end + 1));
-    }
-  } finally {
-    await fh.close();
-  }
+    },
+  };
+  if (!(await readLines(file, reader))) return false;
+  st.pos = reader.pos;
   return JSON.stringify([st.runs, st.last]) !== before;
 }
 
@@ -130,11 +114,8 @@ function readState(file) {
   }
 }
 
-/* Written whole and renamed into place, so another window never reads half of it. */
 function writeState(file, state) {
-  const tmp = file + '.' + process.pid + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(state) + '\n');
-  fs.renameSync(tmp, file);
+  writeAtomic(file, JSON.stringify(state) + '\n');
 }
 
 const hex = (uuid) => uuid.replace(/-/g, '');
@@ -158,11 +139,11 @@ function css(state) {
 
 /* What this host has read per conversation, so a pass does not re-read the state file it wrote itself. */
 const known = new Map();
-const busy = new Map();
 
 /**
  * Read what one conversation's transcripts have added since last time. Resolves to { changed, css }, `css` empty for a
- * conversation with no transcript. Only one pass per conversation runs at a time.
+ * conversation with no transcript. One pass per conversation at a time (src/claude-files.js): a request made while one
+ * runs gets the pass after it, which reads what was appended meanwhile and reads the sub-agents if any request asked to.
  *
  * `subagents: false` leaves the sub-agents' transcripts out of this pass, for a pass started by a change to the
  * conversation's own: a conversation can hold hundreds of them, and looking at each costs more than reading what the
@@ -170,28 +151,29 @@ const busy = new Map();
  */
 function scan(session, opts = {}) {
   if (!SESSION.test(String(session || ''))) return Promise.resolve({ changed: false, css: '' });
-  if (busy.has(session)) return busy.get(session);
-  const run = scanOnce(session, opts).finally(() => busy.delete(session));
-  busy.set(session, run);
-  return run;
+  return scanQueued(session, opts);
 }
 
 async function scanOnce(session, opts) {
   const dir = opts.dir || planDir();
-  const transcript = opts.transcript || require('./background').transcriptOf(session, opts.projects);
+  const transcript = opts.transcript || transcriptOf(session, opts.projects);
   if (!transcript) return { changed: false, css: '' };
   const file = path.join(dir, session + SUFFIX);
   const state = known.get(session) || readState(file);
   known.set(session, state);
+  const fileState = (name) => state.files[name] || (state.files[name] = { pos: 0, runs: [], last: '', eff: '' });
+  /* The conversation's own transcript is asked for before anything is awaited, so that a scan of the same transcript
+     for the agent map, started at the same moment, shares its pass. */
+  const main = readFile(transcript, fileState(MAIN), false);
+  main.catch(() => { /* reported where it is awaited below */ });
   const sub = path.join(transcript.replace(/\.jsonl$/, ''), 'subagents');
   let subs = [];
   if (opts.subagents !== false) {
     try { subs = (await fs.promises.readdir(sub)).filter((n) => n.endsWith('.jsonl')).sort(); } catch (_) { /* none */ }
   }
-  let changed = false;
-  for (const [name, f, sidechains] of [[MAIN, transcript, false]].concat(subs.map((n) => [n, path.join(sub, n), true]))) {
-    const st = state.files[name] || (state.files[name] = { pos: 0, runs: [], last: '', eff: '' });
-    if (await readFile(f, st, sidechains)) changed = true;
+  let changed = await main;
+  for (const n of subs) {
+    if (await readFile(path.join(sub, n), fileState(n), true)) changed = true;
   }
   if (changed) {
     try {
@@ -201,5 +183,7 @@ async function scanOnce(session, opts) {
   }
   return { changed, css: css(state) };
 }
+/* A request that reads the sub-agents and one that does not make, together, a pass that reads them. */
+const scanQueued = oneAtATime(scanOnce, (a, b) => Object.assign({}, a, b, { subagents: a.subagents !== false || b.subagents !== false }));
 
 module.exports = { scan, css, readLine, SUFFIX, STATE_FILE };
