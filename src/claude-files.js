@@ -4,17 +4,16 @@
 
 'use strict';
 /*
- * Where Claude Code keeps what this extension reads beside it, and how a file that only grows is read.
+ * Claude Code's paths, and incremental reads of append-only files.
  *
- * Several parts of the extension need the same few answers: where Claude Code's own directory is, what a session id
- * looks like, which project folder holds a conversation's transcript, which conversations still have one. Each is
- * answered here once. Written out in each part they drift apart - one honouring CLAUDE_CONFIG_DIR and another not, one
- * walk skipping a folder it cannot read where another refuses to go on - and nothing reports it.
+ * Several parts of the extension need the same lookups: Claude Code's directory, the session id format, the project
+ * folder holding a conversation's transcript, and which conversations still have one. They live here so that separate
+ * copies cannot drift apart unnoticed, with one honouring CLAUDE_CONFIG_DIR and another not, or one walk skipping an
+ * unreadable folder where another stops.
  *
- * A transcript is read incrementally. It only grows, so each reader keeps how far it got and each pass reads what was
- * added since; only whole lines are handed over, because the last one may still be being written. Readers of the same
- * file that ask at the same moment share one pass, so two of them catching up on a transcript of several hundred
- * megabytes read it once rather than once each.
+ * Transcripts are append-only, so each reader keeps its offset and a pass reads only what was added since, in whole
+ * lines (the last line may be mid-write). Readers of the same file that ask at the same moment share one pass, so a
+ * transcript of several hundred megabytes is read only once.
  */
 const crypto = require('crypto');
 const fs = require('fs');
@@ -27,7 +26,7 @@ const claudeDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(),
 const projectsDir = () => path.join(claudeDir(), 'projects');
 
 /* Where every plugin keeps its own data, and the name of the companion plugin's. The two are kept apart because a file
-   watcher needs a base that already exists, and the plugin's is created when the plugin is installed - which may be
+   watcher needs a base that already exists, and the plugin's is created when the plugin is installed, which may be
    after this extension has started. */
 const DATA_ROOT = path.join(os.homedir(), '.claude', 'plugins', 'data');
 const PLAN_DIR = require('./plugin-install').DATA_DIR;
@@ -55,10 +54,10 @@ function projectFolders(projects = projectsDir()) {
 }
 
 /*
- * Where each conversation's transcript was found, and when a search last found none. A session id is unique across every
- * project on a machine, so a transcript found once is known. One not found - a conversation whose first message is not
- * written yet - is looked for again only after MISS_MS: a search stats a file in every project folder, and the
- * conversation in front of the reader is asked about by several callers within the same moment and every half minute.
+ * Transcript locations by session id, and the time of the last search that found none. Session ids are unique across
+ * projects, so a location once found stays valid. A miss (a conversation whose first message is not written yet) is
+ * searched for again only after MISS_MS: a search stats a file in every project folder, and the current conversation is
+ * looked up by several callers at once and again every half minute.
  */
 const MISS_MS = 10000;
 const found = new Map();
@@ -84,9 +83,8 @@ function transcriptOf(session, projects = projectsDir(), now = Date.now()) {
 /**
  * Every session id that still has a transcript, or null when that could not be established.
  *
- * Null rather than an incomplete set, because the two mean opposite things to a caller deciding what is abandoned: a
- * project folder that cannot be listed would make every conversation in it look gone, and its plans would be deleted. A
- * machine really holding no transcripts is refused the same way, since it holds nothing to lose.
+ * Null rather than a partial set: an unlistable project folder would make all its conversations look gone, and their
+ * plans would be deleted. No transcripts at all also gives null; on such a machine skipping the cleanup loses nothing.
  *
  * Only the one level is read. Deeper down are the transcripts of sub-agents, which are not conversations.
  */
@@ -107,12 +105,12 @@ const CHUNK = 8 << 20;
 const batches = new Map();
 
 /**
- * Hand `reader` the whole lines `file` holds past `reader.pos`, moving `reader.pos` past the last of them. Resolves to
- * false when the file cannot be read.
+ * Feed `reader` the complete lines of `file` after `reader.pos` and advance `reader.pos`. Resolves to false if the file
+ * cannot be read.
  *
  * `reader.take(data, at)` is given a buffer of whole lines that starts at file offset `at`, in file order, and may be
  * called several times; the buffer is reused once it returns. A file shorter than `reader.pos` was replaced rather than
- * appended to, so the reader is read again from the start, after `reader.reset()` if it has one.
+ * appended to, so it is read again from the start, after `reader.reset()` if the reader has one.
  */
 function readLines(file, reader) {
   let batch = batches.get(file);
@@ -167,9 +165,9 @@ async function pass(file, readers) {
 /**
  * `run(key, opts)`, one at a time per key, with no request lost.
  *
- * A request made while a pass runs is not handed that pass's result: the pass read the file before the request was made,
- * and with someone else's options. It joins one more pass that starts when the current one ends, and every request made
- * meanwhile shares it, their options folded together by `merge`.
+ * A request made during a pass waits for the next one, because the running pass read the file before the request and
+ * with another caller's options. All requests queued meanwhile share that next pass, with their options combined by
+ * `merge`.
  */
 function oneAtATime(run, merge = (a, b) => Object.assign({}, a, b)) {
   const running = new Map();
@@ -195,9 +193,9 @@ function oneAtATime(run, merge = (a, b) => Object.assign({}, a, b)) {
 }
 
 /*
- * Written whole beside the file and renamed over it, so a reader in another window or another process sees the old
- * contents or the new ones. The temporary name is this process's own, with a random part, since several windows write
- * these same files; a copy that could not be put in place is removed.
+ * Write to a temporary file beside the target and rename it over, so readers in other windows or processes see either
+ * the old or the new contents. The temporary name includes the pid and a random part because several windows write the
+ * same files.
  */
 function writeAtomic(file, text) {
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;

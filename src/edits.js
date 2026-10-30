@@ -28,10 +28,10 @@ function shapesOf(edit) {
 }
 
 /*
- * The one shape this source matches exactly once, and where, or an error saying what each shape did.
+ * Find the one shape that matches `src` exactly once.
  *
- * A pattern has to carry the g flag: without it a match returns the first match and its groups rather than every match,
- * so the count is the number of groups and says nothing about how many places fit.
+ * Patterns must have the g flag: without it a match returns only the first match and its groups, so the count would be
+ * the number of groups, not of matching places.
  */
 function pickShape(src, edit) {
   const shapes = shapesOf(edit);
@@ -51,11 +51,10 @@ function pickShape(src, edit) {
 }
 
 /*
- * Apply every edit or none. Returns { out, chosen } or { error }; `chosen` records which shape each edit used.
+ * All edits or none; `chosen` says which shape each edit used.
  *
- * The bundle is scanned once per shape, to count. The replacement is then made where that count found the match, with a
- * sticky copy of the pattern that can match only there - the same replacement a global replace would make, without a
- * second pass over several megabytes on the editor's extension host.
+ * The replacement uses a sticky copy of the pattern at the offset the counting scan found, so the bundle (several
+ * megabytes, on the editor's extension host) is not scanned a second time.
  */
 function applyEdits(src, edits) {
   let out = src;

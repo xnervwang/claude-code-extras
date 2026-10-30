@@ -18,20 +18,18 @@ CHANGING_TOOLS = ("Write", "Edit", "NotebookEdit")
 # uncertain cases are resolved towards silence: a command this misses makes a reminder miss a turn, while a command it
 # wrongly catches puts the reminder back on the turns it was just taken off.
 #
-# These are tried on the command as the shell reads it (see shell_words): text in quotes and in here-documents is an
-# argument or a script, not a command, and `awk '$3 > 5'`, `grep 'p->next'` and `grep 'rm '` all read as writes while it
-# was left in. The redirection branch is the delicate one even so, because `>` is a redirect in a shell and a comparison
-# everywhere else: it has to stand where a shell starts a word, may carry a descriptor (`2> err.log`), and is not one
-# when it points at another descriptor (`2>&1`), at /dev/, or at a number, which is a comparison in arithmetic.
+# Matched after shell_words, which turns each quoted string into one word and drops here-document bodies; on the raw
+# text `awk '$3 > 5'`, `grep 'p->next'` and `grep 'rm '` would count as writes. A redirect must start a shell word and
+# may have a descriptor (`2> err.log`); it does not count when it targets another descriptor (`2>&1`), /dev/, or a
+# number, which is an arithmetic comparison.
 CHANGING_SHELL = re.compile(
     r"\bgit\s+(commit|add|push|mv|rm|apply|checkout|reset|revert|tag|stash)\b"
     r"|\b(tee|mkdir|rmdir|touch|mv|cp|rm|chmod|chown|ln|truncate|install)\s"
     r"|\bsed\s+-i"
     r"|(?:^|(?<=[\s|;&]))\d?>>?\s*(?![\d&=(-]|/dev/)[^\s|;&]"
 )
-# A file opened for writing, in a script passed inline or through a here-document, so it is tried on the whole command.
-# Only the mode says it writes: open(path) and open(path, "rb") read, and a file name that happens to begin with a w or
-# an a says nothing.
+# A file opened for writing by an inline or here-document script, so this runs on the whole command. Only the mode
+# argument counts: open(path) and open(path, "rb") are reads, whatever the file name.
 WRITING_OPEN = re.compile(
     r"\bopen\(\s*(?:[^,()'\"]|'[^']*'|\"[^\"]*\"|\([^()]*\))+,\s*(?:mode\s*=\s*)?['\"][^'\"]*[wax]"
     r"|\bopen\([^)]*\bmode\s*=\s*['\"][^'\"]*[wax]"
@@ -44,7 +42,7 @@ QUOTED = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 def shell_words(command):
     """`command` with each here-document's body left out and each quoted string made a single word.
 
-    The word stands in for the string rather than nothing, so `> "out file"` is still a redirect with a target.
+    The placeholder word keeps `> "out file"` a redirect with a target.
     """
     out, pos = [], 0
     while True:

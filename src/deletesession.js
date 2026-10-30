@@ -17,14 +17,13 @@
  *   debug/<id>.txt                   its debug log
  *   todos/<id>-*.json                its todo lists, from Claude Code versions that kept them
  *
- * and this extension's own files for it: the work plan, its side files and the lock a writer of the plan takes, and the
- * stylesheet the panel reads its effort marks from. A background session started with `claude --bg` is a conversation
- * of its own and is not touched.
+ * and this extension's own files for it: the work plan, its side files and lock directory, and its efforts stylesheet.
+ * A background session started with `claude --bg` is a conversation of its own and is not touched.
  *
- * Every path is built from the ID, which must have the session ID's form, so nothing outside these places can be named;
- * and a session folder that is a symbolic link is removed as a link, never listed through. A conversation still running
- * somewhere is refused: the caller says which are open in this window, and Claude Code's register of running sessions
- * says which are running anywhere on this machine.
+ * Paths are built only from IDs that match the session-id format, so nothing outside these locations can be targeted,
+ * and a session folder that is a symlink is unlinked, not followed. Running conversations are refused: the caller
+ * passes those open in this window, and Claude Code's session registry (sessions/*.json) lists those running anywhere
+ * on the machine.
  */
 const fs = require('fs');
 const path = require('path');
@@ -49,9 +48,8 @@ function measure(p) {
 }
 
 /*
- * What deleting each conversation would remove: per ID, each path that exists, what it is, and its size. The project
- * folders are walked once however many conversations are asked about. `planDir` is the work plan's folder, `extra(id)`
- * further files of this extension's for a conversation.
+ * The paths a delete would remove, per ID, with their kind and size. One walk of the project folders covers all the
+ * IDs. `extra(id)` lists this extension's other files for a conversation.
  */
 function findAll(ids, { root = claudeDir(), planDir, extra = () => [] } = {}) {
   const want = [...new Set((Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && SESSION.test(id)))];
@@ -66,8 +64,8 @@ function findAll(ids, { root = claudeDir(), planDir, extra = () => [] } = {}) {
       const dir = path.join(project, id);
       let st;
       try { st = fs.lstatSync(dir); } catch (_) { continue; }
-      /* Not a folder of its own - a link, most likely: it goes as itself. Listing what it points at would delete
-         whatever is there, which can be anywhere. */
+      /* Not a directory (most likely a symlink): delete the entry itself. Listing its target would delete whatever is
+         there, which could be anywhere. */
       if (!st.isDirectory()) { add(id, dir, 'session data'); continue; }
       for (const name of list(dir)) {
         const kind = name === 'subagents' ? 'sub-agent' : name === 'tool-results' ? 'tool output' : 'session data';
@@ -91,13 +89,13 @@ function findAll(ids, { root = claudeDir(), planDir, extra = () => [] } = {}) {
   return out;
 }
 
-/** What deleting one conversation would remove; `extra` lists further files of this extension's for it. */
+/** findAll() for a single conversation. */
 function find(id, opts = {}) {
   const extra = Array.isArray(opts.extra) ? opts.extra : [];
   return findAll([id], Object.assign({}, opts, { extra: () => extra })).get(id) || [];
 }
 
-/** The conversations Claude Code's register of running sessions has a live process for, read once. */
+/** Session ids in Claude Code's session registry (sessions/*.json) whose process is alive now. */
 function runningSessions(root = claudeDir(), alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }) {
   const out = new Set();
   for (const name of list(path.join(root, 'sessions'))) {

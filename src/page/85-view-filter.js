@@ -43,8 +43,7 @@
     if (VIEW === 'main') return owner === 'main';
     return owner === VIEW;
   };
-  // The owner is recorded with the filter off as well: a reply is let alone once settled only when its owner is on it
-  // (99-sweep.js), so without it every reply would be worked out again on every sweep.
+  // Set even with the filter off: 99-sweep.js skips settled replies only when they carry an owner.
   var applyOwner = function(el, owner){
     if (el.getAttribute(OWNER_ATTR) !== owner) el.setAttribute(OWNER_ATTR, owner);
     if (isOff('footerViewFilter')) return;

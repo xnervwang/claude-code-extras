@@ -108,11 +108,9 @@
    * The hold yields to the person at once: a wheel, a touch or a key means they are scrolling now, and pulling the view
    * back from under them would be the same defect seen from the other side.
    */
-  // Put the view somewhere and keep it there until it stays: `go` moves it, `there` says it has arrived, `alive` says the
-  // thing it is aiming at still exists. Shared by the message arrows and the top and bottom buttons, which face the same
-  // panel effects pulling the view away from where it was sent.
-  // One hold at a time: a second jump started before the first has settled stops it, rather than leaving two pulling the
-  // view to different places.
+  // Scroll to a target and hold it there until it settles, because panel effects pull the view away after a jump
+  // (message arrows, top and bottom buttons). `go` scrolls, `there` reports arrival, `alive` whether the target still
+  // exists. A new jump cancels a hold that has not settled.
   var holdStop = null;
   var holdScroll = function(target, go, there, alive){
     if (holdStop) holdStop();
@@ -139,8 +137,8 @@
     }, SETTLE_MS);
     target.addEventListener('wheel', stop, { passive: true });
     target.addEventListener('touchstart', stop, { passive: true });
-    /* A key heard from the next turn on. A hold the , or . key starts begins while that keydown is still on its way up
-       to the window, and a listener added to the window now would hear it there and stop the hold at once. */
+    /* Add the window keydown listener on the next tick. A hold started by the , or . key begins while that keydown is
+       still bubbling up to the window, and a listener added now would receive it and stop the hold immediately. */
     arm = setTimeout(function(){ arm = 0; window.addEventListener('keydown', stop); }, 0);
   };
   var landOn = function(el){

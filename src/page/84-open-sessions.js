@@ -16,10 +16,9 @@
   // conversation and leaves the list below where it was: the list would otherwise scroll to the conversation and select
   // it, which moves the long list under someone who is not looking at it.
   /*
-   * The two sections this script puts in the session list - OPEN SESSIONS here and RECENTLY CLOSED (84-recent-closed.js)
-   * - share one shell: the list's own section header and chevron, a count, and a body that collapsing hides. Each names
-   * its key: OPEN SESSIONS stores whether it is collapsed and starts expanded, RECENTLY CLOSED stores whether it is
-   * expanded and starts collapsed, and storage that cannot be read gives the starting state.
+   * Shared section markup for OPEN SESSIONS (here) and RECENTLY CLOSED (84-recent-closed.js), built like the list's own
+   * sections. Each section has its own storage key: OPEN SESSIONS stores whether it is collapsed and starts expanded,
+   * RECENTLY CLOSED stores whether it is expanded and starts collapsed; unreadable storage means the starting state.
    */
   var OPEN_SECTION = { attr: 'data-cce-open-sessions', key: 'cce.openSessionsCollapsed', storesExpanded: false,
     label: 'Open sessions', title: 'open sessions' };
@@ -54,11 +53,10 @@
   };
 
   /*
-   * The conversations the list knows, by id, remote ones left out - indexed once for each array the list holds, since
-   * it replaces the array whenever one comes or goes and both sections look conversations up on every render. An item
-   * can be given its id after it joined the array (a new conversation learns it from the command-line side), so a lookup
-   * that misses, or finds an item that no longer carries the id, indexes again - at most once per lookup function, which
-   * is made once per section drawn.
+   * Index of the list's local conversations by id, built once per array: the list replaces the array when a
+   * conversation is added or removed, and both sections look conversations up on every render. An item can get its id
+   * after joining the array (a new conversation gets it from the CLI side), so a miss or a stale hit rebuilds the
+   * index, at most once per section render.
    */
   var indexedList = null, sessionIndex = {};
   var indexSessions = function(src, again){
@@ -123,8 +121,7 @@
     props[s.attr] = '1';
     return W('div', props);
   };
-  /* What a click on a row in either section does: open the conversation as the list's own row would, and tell the list
-     to keep its place. */
+  /* Click handler shared by both sections: opens the conversation as a native row does and keeps the list in place. */
   var openFrom = function(src){
     return function(row){
       openFollowSkip = row.id;

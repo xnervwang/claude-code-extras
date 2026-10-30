@@ -6,14 +6,12 @@
 /*
  * Conversations pinned in the session list, kept from Claude Code's transcript cleanup.
  *
- * The cleanup deletes a transcript whose file has not been modified for cleanupPeriodDays (30 by default), and the tool
- * outputs stored beside it under <session>/tool-results by the same test, file by file. The modification time is the
- * whole test: nothing in a transcript or beside it exempts one, short of being a Claude Desktop session. So a pinned
- * conversation's files are given a later modification time before they reach that age: a file older than the cutoff
- * plus a margin is set to a day past that. Close to as old as it can be while still kept, because the session list
- * orders by the same time and shows it as when the conversation was last active; the day is what lets the passes after
- * it - every half hour, in every window - leave it alone. Set to exactly the floor, every pass would find it half an hour
- * behind and move it again, rewriting the record of it and with that the stylesheet every panel reloads.
+ * Claude Code's cleanup deletes a transcript not modified for cleanupPeriodDays (30 by default), and each tool output
+ * under <session>/tool-results by the same test; only Claude Desktop sessions are exempt. So a pinned conversation's
+ * files get a later modification time before they reach that age: a file older than the cutoff plus a margin is set to
+ * a day past it. The time is kept as old as possible because the session list sorts by it and shows it as the last
+ * activity; the extra day keeps later passes, which run every half hour in every window, from moving it again. Each
+ * move rewrites the pin record, which also rewrites the stylesheet every panel reloads.
  *
  * The pins are kept in one file in this extension's global storage, on the machine that holds the transcripts, and every
  * window reads and writes that same file. Each write reads the file again just before it and replaces it whole, so two
@@ -34,15 +32,15 @@ const DEFAULT_DAYS = 30;
    window has to have been open at least once in that time. Half the retention when that is shorter, so a short retention
    still leaves room and a long margin never puts a file's time at or past now. */
 const MARGIN_DAYS = 14;
-/* How far past the floor a moved file is set: a day, or a quarter of the retention when that is shorter, so the file is
-   still well clear of now. */
+/* Offset past the floor for a moved file: a day, or a quarter of the retention when that is shorter, so the file stays
+   well clear of now. */
 const STEP_MS = DAY;
 /*
- * A file newer by more than this than both the time recorded for it and the time a pass would give it now was written to,
- * and its own time is the true one again. Any pass in any window gives a time within minutes of this one's, so an hour
- * tells the two apart. Compared with the recorded time alone, another window's pass - made between this one reading the
- * record and looking at the file - would read as a write and the real time be thrown away; compared with the time a pass
- * would give alone, so would every moved file once a shorter margin or a longer retention moves that time back.
+ * A file whose modification time is more than this past both its recorded time and the time a pass would set now has
+ * been written to, so its own time is real again. Passes in any window set times within minutes of each other, so an
+ * hour separates the two. Comparing with only the recorded time, a pass another window made between this one reading
+ * the record and checking the file would look like a write and lose the real time; comparing with only the pass time
+ * would do the same to every moved file once a shorter margin or a longer retention moves that time back.
  */
 const WRITTEN_MS = 60 * 60 * 1000;
 const FILE = 'session-pins.json';
@@ -113,9 +111,9 @@ function setPinned(file, id, on) {
 }
 
 /**
- * Gives each pinned conversation's transcript, and each tool output stored for it, a later modification time once it
- * is older than the cutoff plus the margin, and works out what the record of real times should become. A file past that
- * floor is left alone, so a pass soon after another touches nothing and changes nothing in the pins file.
+ * Move pinned conversations' transcripts and tool outputs older than the cutoff plus the margin to a later modification
+ * time, and compute the updated record of real times. Newer files are left alone, so back-to-back passes change
+ * nothing.
  *
  * Touches nothing in the pins file: the caller folds `updates` and `gone` into what the file holds by then. `gone` is
  * only filled when every project folder could be read and at least one transcript was found in them, so a folder that

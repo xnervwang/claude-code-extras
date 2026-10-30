@@ -236,9 +236,8 @@ function status(claudeExtensionPath) {
   return 'clean';
 }
 
-/* The temporary name is this process's own: every window patches the same file, and two of them sharing one name
-   truncate each other's half-written copy and then find it gone when they rename it. A copy that could not be put in
-   place is removed, since nothing else would ever reuse its name. */
+/* Per-process temporary name with a random part: every window patches the same file, and two windows sharing one
+   temporary name truncate each other's half-written copy and then find it gone at the rename. */
 function writeAtomic(file, text) {
   const tmp = `${file}${TMP_SUFFIX}.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
   try {
@@ -251,8 +250,8 @@ function writeAtomic(file, text) {
 }
 
 /*
- * Apply (or upgrade) the host patch. Returns { changed, liveChanged, current, message }: `current` says the file already
- * carries this patch, so that a caller does not have to tell that apart from a failure by the words of the message.
+ * Apply (or upgrade) the host patch. Returns { changed, liveChanged, current, message }; `current` means the file
+ * already carries this patch, which is not a failure.
  */
 function apply(claudeExtensionPath) {
   const file = hostFile(claudeExtensionPath);

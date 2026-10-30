@@ -74,16 +74,14 @@
     });
   };
   /*
-   * Whether the meter is kept on screen. The two edits in src/webview.js that keep it there and move its switch points
-   * ask this from the meter's own render; with the switch off they leave the meter to Claude Code's rule, which hides it
-   * while more than half the window is free and picks its three states at its own points, and its arc is not trimmed.
-   * Anything going wrong answers no, which is that same rule. The meter asks again only when it draws again, so a switch
-   * turned off reaches it with its next change.
+   * Whether the meter is kept on screen. The two meter patches in src/webview.js (see EDITS there) call this from the
+   * meter's render; false, including on error, leaves Claude Code's own behaviour: hidden while more than half the
+   * window is free, its own state thresholds, no arc trim. A switch change shows at the meter's next render.
    */
   window.__cceMeterKept = function(){
     try { return !isOff('contextMeter'); } catch (e) { return false; }
   };
-  /* The button this script last trimmed or outlined, so that switching the meter off takes both away again. */
+  /* The button this script last trimmed or outlined; both are undone when the meter is switched off. */
   var meterMarked = null;
   var unmarkMeter = function(btn){
     var arcs = btn.querySelectorAll('svg path');

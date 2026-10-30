@@ -58,8 +58,8 @@
       el.addEventListener('mousedown', rowHoverEnd, { once: true });
     } catch (e) { /* no hover text */ }
   };
-  /* The pin at the front of a row (83-session-pins.js) has hover text of its own in the same box. While the pointer is on
-     the pin the row's text waits; back on the row, it comes up after the usual delay, as it would have on entering. */
+  /* The row pin (83-session-pins.js) uses the same tooltip box, so the row's tooltip is suppressed while the pointer is
+     on the pin and reappears after the usual delay. */
   var rowHoverHold = function(){
     if (rowHoverTimer) { clearTimeout(rowHoverTimer); rowHoverTimer = 0; }
     rowHoverEl = null;

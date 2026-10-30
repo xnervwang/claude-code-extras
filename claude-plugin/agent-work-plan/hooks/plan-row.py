@@ -17,10 +17,9 @@ this was written on, 643 went through the shell, mostly as a script composed for
 first, which is the step that gets skipped or invented. A cost like that is a reason to save every change for one write
 at the end of the turn, and `doing` is the one state that cannot wait that long.
 
-Which row, and which state, is decided by whoever runs it; nothing here judges what the work is. The file is read
-immediately before it is written, so a correction the user made by hand a moment ago is kept rather than reverted, and
-the plan's lock is held from that read to the write (see plan_lock), so a change made at the same moment by another run
-or by the extension is not written over.
+The caller picks the row and the state. The file is read just before the write and plan_lock is held from that read
+through the write, so neither a manual edit made a moment earlier nor a concurrent change by another run or the
+extension is lost.
 """
 import argparse
 import json

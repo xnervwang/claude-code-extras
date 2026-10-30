@@ -11,9 +11,8 @@
   // The extension host reads the task files and hands them over through the live stylesheet, base64 in a custom
   // property, because a prompt is full of quotes and newlines that a stylesheet would not carry as-is.
   //
-  // Read and decoded once per stylesheet, like isOn and isOff (05-page-setup.js, which clears this with theirs): the
-  // agent map and the footer ask during every render, and each read of the computed style makes the page work its styles
-  // out.
+  // Cached per stylesheet and cleared with the isOn/isOff cache (05-page-setup.js), since the agent map and the footer
+  // read these on every render and getComputedStyle forces a style recalculation.
   var propCache = {};
   var readProp = function(name){
     if (Object.prototype.hasOwnProperty.call(propCache, name)) return propCache[name];

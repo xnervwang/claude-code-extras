@@ -22,17 +22,18 @@ tripwire a fast climb steps over: a single batch of tool results has moved a ses
 before the line make a net - a fast climb trips the earlier one, a slow one reaches the later one and gets a fresher
 update - and the third sits after the line for a compaction that arrives late.
 
-Each mark asks once. A measured context below a mark that has asked is how a compaction is recognised: the marks reset,
-and the next climb asks again. A mark that asked and was not answered - the plan not written since, with a row `doing` -
-is said once more at the end of a turn, because the whole point is that the plan is current before the client compacts.
-Only once: a Stop hook's output keeps the turn from ending, so saying it at every Stop would put another model call on a
-nearly full context after each one, up to the eight in a row the client allows before it overrides the hook.
+Each mark fires once. A compaction is detected when the measured context drops below a mark that has already fired: the
+marks then reset and fire again on the next climb. If a mark fired and the plan has not been written since while a row
+is `doing`, the reminder is repeated once at the end of the turn, because the point is to have the plan current before
+the client compacts. It is repeated only once because a Stop hook's output keeps the turn from ending: repeating it at
+every Stop would add another model call on a nearly full context each time, up to the eight in a row the client allows
+before it overrides the hook.
 
-How full the context is comes from the newest model call's usage, plus the tool results written after it, which no call
-has been sent yet. Those are counted by what the results say, at four bytes a token; the transcript line they sit on also
-carries the client's own copy of each and JSON's escaping, about four times as much again. When the newest call is
-further back than the hook reads - tool results alone have filled that far, the fastest climb there is - the last context
-it measured, kept in the state file, stands in for the one it cannot see.
+Context size is the newest model call's usage plus the tool results written after it, which no call has carried yet.
+Those are counted by what the results say, at four bytes a token; the transcript line they sit on also carries the
+client's own copy of each and JSON's escaping, about four times as much again. When the newest call is further back than
+the hook reads, the last context it measured, kept in the state file, stands in for the one it cannot see. That happens
+only when tool results alone fill that much of the transcript, the fastest the context can grow.
 
 This does not try to trigger the compaction. A hook can post nothing into a session's input channel, and /compact only
 behaves as a command when it arrives through that one; the client's own scheduler can, but it is off in the panel
@@ -87,14 +88,13 @@ RESERVE = 13_000
 # proved, since a 1M session spends its first 200,000 tokens there too.
 STANDARD_WINDOW_CEILING = 200_000
 
-# How far the model identity is looked for. It is only looked for in the one band where it changes the outcome - between
-# the first standard-window mark and STANDARD_WINDOW_CEILING - and these bound what that costs. The identity attachment
-# lands in a session's first rows, and a session that switched models writes another where it switched, which can be
-# megabytes from the end; a switch further back than the tail reached leaves the window undecided, and an undecided
-# window gets the standard marks too. That costs one early request, which is cheap: the request is a command per row.
-# What was decided is kept in the state file and used again while nothing that decides it - an identity or a cost row -
-# has been written since and the transcript has grown by less than ATTACHMENT_TAIL, so a session in that band does not
-# read four megabytes after every batch to reach the same answer.
+# Bounds for finding the model identity, which is looked for only between the first standard-window mark and
+# STANDARD_WINDOW_CEILING, the one band where it changes the outcome. The identity attachment is in a session's first
+# rows, and a session that switched models writes another where it switched, possibly megabytes from the end; if the
+# switch is beyond the tail read, the window is undecided and gets the standard marks too, at the cost of one early
+# request. The decision is cached in the state file and reused as long as no identity attachment or cost row has been
+# written since and the transcript has grown by less than ATTACHMENT_TAIL, so a session in that band does not reread
+# four megabytes after every batch.
 ATTACHMENT_HEAD = 1024 * 1024
 ATTACHMENT_TAIL = 3 * 1024 * 1024
 COST_STATE_MAX = 1024 * 1024
@@ -143,7 +143,8 @@ def text_bytes(value):
 
 
 def result_bytes(line):
-    """Bytes of what the tool results on one transcript line say, leaving out the copy kept beside them for the client."""
+    """Byte length of the tool_result content on one transcript line; the client's own copy elsewhere on the row is not
+    counted."""
     try:
         row = json.loads(line)
     except ValueError:
@@ -192,8 +193,8 @@ def decide_variant(bare, candidates):
 
     A candidate can carry a Bedrock cross-region prefix (global.anthropic.claude-opus-4-8[1m]) while the bare name never
     does. Model names contain no dot, so keeping what follows the last one normalises the prefixed form. Both variants
-    turn up when the session moved between them, and in the cost rows, which add up the whole session, even when it did not:
-    which one is current is then not something these can say.
+    turn up when the session moved between them, and in the cost rows (which cover the whole session) even when it did
+    not; then these cannot tell which is current.
     """
     matching = {c.rsplit(".", 1)[-1] for c in candidates}
     one_m, standard = bare + "[1m]" in matching, bare in matching
@@ -201,7 +202,7 @@ def decide_variant(bare, candidates):
 
 
 def attachment_model(line):
-    """The modelId a model-identity attachment on this line carries, or None for any other line."""
+    """modelId from a model-identity attachment on this line, or None if the line is not one."""
     if '"marketingName"' not in line and '"type":"model"' not in line:
         return None
     try:
@@ -259,7 +260,7 @@ def on_1m_window(tail, bare=None):
 
 
 def evidence_since(tail, offset):
-    """Whether anything on_1m_window reads - a model-identity attachment or a cost row - has been written since the
+    """Whether anything on_1m_window reads (a model-identity attachment or a cost row) has been written since the
     transcript was `offset` bytes long."""
     return any(attachment_model(line) or '"modelUsage"' in line for line in tail.lines(tail.size - offset + 1))
 
@@ -268,8 +269,7 @@ VERDICTS = {True: "1M", False: "standard", None: "unknown"}
 
 
 def window_of(tail, state):
-    """on_1m_window, or what it said last time while that still stands: the same model, nothing it reads written since,
-    and less than ATTACHMENT_TAIL written since, so whatever decided it is still within reach."""
+    """on_1m_window, or its cached answer while that is still valid (the conditions are at ATTACHMENT_HEAD)."""
     bare = latest_bare_model(tail)
     if not bare:
         return None
@@ -292,8 +292,9 @@ def marks_in(text, key):
 
 
 def read_state(path):
-    """What the marks have done so far, the last context measured, and the window as last decided. Anything unreadable is
-    the empty state: the worst that costs is one extra request, while guessing at damaged input could suppress one."""
+    """The hook's saved state: which marks have fired, the last measured context, and the last window decision. An
+    unreadable file counts as empty state; at worst that repeats one request, whereas guessing from damaged input could
+    suppress one."""
     state = {"fired": set(), "asked_at": None, "nagged": set(), "context": None, "window": None}
     try:
         with open(path, encoding="utf-8") as fh:
@@ -343,7 +344,7 @@ def write_state(path, state, seen):
 
 
 def has_doing(plan):
-    """Whether any row of the plan is `doing`: what the reminder at the end of a turn asks to have described."""
+    """Whether any row of the plan is `doing`; the end-of-turn reminder asks for those rows to be described."""
     try:
         with open(plan, encoding="utf-8") as fh:
             body = json.load(fh)
@@ -387,7 +388,8 @@ def message(mark, ctx, plan, urgent):
 
 
 def nag(mark, ctx, plan, urgent):
-    """Split the way message() is: only a mark that can belong to a 1M window alone may say a compaction is near."""
+    """The end-of-turn repeat, worded like message(): only a mark exclusive to 1M windows (`urgent`) says a compaction
+    is near."""
     return ("The context is %s tokens, past the %s mark, and the work plan has not been written since that mark was "
             "reached. " % (format(ctx, ","), format(mark, ","))
             + ("An automatic compaction is a turn or two away, and what the `doing` rows do not say is left to a lossy "
@@ -434,8 +436,8 @@ def main():
         return 0
     ctx_next = ctx + pending
 
-    # The window is judged by what was measured alone: the estimate of what is pending is a guess, and a guess past
-    # 200,000 would take the standard marks away from a standard session.
+    # The window size is judged from the measured context only. The pending estimate is a guess, and one above 200,000
+    # would drop the standard marks from a standard session.
     standard, one_m = marks_for()
     if ctx > STANDARD_WINDOW_CEILING:
         window_1m, label = True, "1M-by-size"
@@ -465,8 +467,8 @@ def main():
         state["fired"] |= set(due)
         quiet = relaying()
         if quiet:
-            # Used up without asking, and kept from the end of the turn too: leaving the relay must not make a mark
-            # long passed speak.
+            # When relaying, the marks are used up without asking and also counted as already repeated, so a mark passed
+            # long ago does not fire once the relay ends.
             state["nagged"] |= set(due)
         else:
             state["asked_at"] = time.time()
