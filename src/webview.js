@@ -20,8 +20,9 @@
  *                      conversation whose files were given a later time, the time it was really last active.
  *   session pin        A pin at the start of every row of the session list (src/sessionpins.js says what
  *                      pinning does).
- *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and drop the guard
- *                      that hides the meter while more than half the window is still free.
+ *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and let go of the
+ *                      guard that hides the meter while more than half the window is still free - both only while the
+ *                      page says the meter is kept.
  *   agent map          Three: a section for this session's scheduled prompts, the footer button opening for a
  *                      schedule even with no agent, and a label that then does not read "0 agents".
  *
@@ -55,7 +56,7 @@ const path = require('path');
 const vm = require('vm');
 const crypto = require('crypto');
 
-const { applyEdits } = require('./edits');
+const { applyEdits, shapesOf } = require('./edits');
 
 const VERSION = 32;
 
@@ -243,11 +244,14 @@ function liveCss(opts = {}) {
   if (opts.userEdge === false) css += ':root{--cce-edge:0;}\n';
   /* One property per addition switched off, on the same principle: absent means on, so the stylesheet says only what
      differs from the defaults, and a build that predates a switch treats it as on rather than off. Written in the order
-     of SWITCHES rather than the caller's, since several windows write this file and must produce the same bytes. */
-  if (on && off.length) css += ':root{' + off.map((k) => `--cce-off-${k}:1;`).join('') + '}\n';
-  if (on) css += scheduleProperty(opts.tasks);
-  if (on && !off.includes('backgroundSessions')) css += backgroundProperty(opts.background);
-  /* Not behind the switch for the other additions: turning those off must not quietly stop keeping what is pinned. */
+     of SWITCHES rather than the caller's, since several windows write this file and must produce the same bytes.
+
+     None of what follows is behind `on`, which switches the marks alone: the additions switched off one at a time stay
+     off while it is off, the agent map keeps its scheduled prompts and background sessions, and what is pinned is
+     still kept. */
+  if (off.length) css += ':root{' + off.map((k) => `--cce-off-${k}:1;`).join('') + '}\n';
+  css += scheduleProperty(opts.tasks);
+  if (!off.includes('backgroundSessions')) css += backgroundProperty(opts.background);
   css += pinsProperty(opts.pins);
   return css;
 }
@@ -296,6 +300,10 @@ function buildBody() {
 }
 
 const SCRIPT_BODY = buildBody();
+
+/* What the two meter edits ask the page from the meter's render: whether the meter is kept on screen (70-meter.js). A
+   page without the function gets Claude Code's own meter. */
+const METER_KEPT = '(typeof window.__cceMeterKept==="function"&&window.__cceMeterKept())';
 
 const EDITS = [
   {
@@ -458,17 +466,21 @@ const EDITS = [
     // The three artwork states cover half, three quarters and almost all of the circle, but the component picks
     // them at 62.5% and 87% - so between 50% and 62.5% used it draws a half arc that cannot express the figure,
     // and the reading stalls. Choosing each state at the limit of what its arc can show removes both stalls; the
-    // in-page script then trims the chosen arc to the exact figure.
+    // in-page script then trims the chosen arc to the exact figure. With the meter's switch off the page answers no
+    // (70-meter.js) and the component's own points stand.
     name: 'context meter state thresholds',
-    re: /if\(([\w$]+)<[\d.]+\)return 50;if\(\1<[\d.]+\)return 75;return 99/g,
-    to: (m, pct) => `if(${pct}<=50)return 50;if(${pct}<=75)return 75;return 99`,
+    re: /if\(([\w$]+)<([\d.]+)\)return 50;if\(\1<([\d.]+)\)return 75;return 99/g,
+    to: (m, pct, half, most) =>
+      `if(${METER_KEPT}?${pct}<=50:${pct}<${half})return 50;if(${METER_KEPT}?${pct}<=75:${pct}<${most})return 75;return 99`,
   },
   {
-    // The meter hides itself while more than half the window is free. Only that clause goes; the one that
-    // suppresses it before a real window size has arrived stays, since the figure is meaningless without one.
+    // The meter hides itself while more than half the window is free. Only that clause gives way, and only while the
+    // page says the meter is kept; the one that suppresses it before a real window size has arrived stays, since the
+    // figure is meaningless without one.
     name: 'context meter always visible',
-    re: /if\(([\w$]+)===null\)\{if\(([\w$]+)===0\)return null;if\(([\w$]+)>=\d+\)return null\}/g,
-    to: (m, override, window) => `if(${override}===null){if(${window}===0)return null}`,
+    re: /if\(([\w$]+)===null\)\{if\(([\w$]+)===0\)return null;if\(([\w$]+)>=(\d+)\)return null\}/g,
+    to: (m, override, window, free, limit) =>
+      `if(${override}===null){if(${window}===0)return null;if(!${METER_KEPT}&&${free}>=${limit})return null}`,
   },
   {
     /*
@@ -521,14 +533,18 @@ const EDITS = [
   },
 ];
 
-/** Pure transform. Returns { out, chosen } or { error }. Never partially applies. */
+/* Every shape of every edit goes in: an edit with several shapes has no pattern or replacement of its own, so hashing
+   only those would leave a change to one of its shapes looking current. */
 const MARK = MARK_PREFIX + 'v' + VERSION + '-' + crypto.createHash('sha256')
-  .update(SCRIPT_BODY).update('\n').update(EDITS.map((e) => [e.name, String(e.re), String(e.to)].join('\0')).join('\n'))
+  .update(SCRIPT_BODY).update('\n')
+  .update(EDITS.map((e) => [e.name, ...shapesOf(e).map((s) => [String(s.re), String(s.to), s.note || ''].join('\0'))]
+    .join('\0')).join('\n'))
   .digest('hex').slice(0, 12) + ' */';
 
 const SCRIPT = ['', MARK, SCRIPT_BODY, ''].join('\n');
 
 
+/** Pure transform. Returns { out, chosen } or { error }. Never partially applies. */
 function patchSource(src) {
   if (src.includes(ANY_MARK)) return { error: 'already patched' };
   const r = applyEdits(src, EDITS);
@@ -576,16 +592,31 @@ function status(claudeExtensionPath) {
  * What remains: that same 03:05 log has VS Code auto-updating extensions, Claude Code among them, at the time - which
  * replaces a whole extension directory the panel serves from - and neither test restart did. That is the open lead.
  */
+/*
+ * The temporary file is named for this process and this write, because every window writes these files: with one
+ * shared name, a second window's write replaced the first one's temporary file and its rename then moved it, so the
+ * first window's rename failed with ENOENT. A rename that fails for any other reason is tried once more from scratch.
+ */
 function writeAtomic(file, text) {
-  const tmp = file + '.claude-code-extras-webview.tmp';
-  fs.writeFileSync(tmp, text);
-  fs.renameSync(tmp, file);
+  for (let attempt = 0; ; attempt++) {
+    const tmp = `${file}.claude-code-extras-webview.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+    try {
+      fs.writeFileSync(tmp, text);
+      fs.renameSync(tmp, file);
+      return;
+    } catch (err) {
+      try { fs.unlinkSync(tmp); } catch (_) { /* never written, or already moved */ }
+      if (attempt >= 1) throw err;
+    }
+  }
 }
 
 /*
  * The revision image carries two counters: its width for the live stylesheet, its height for the efforts. They are
- * written by different code at different times, so each writer keeps the other's number - and one image means the page
- * learns of both from the single request it already makes every few seconds.
+ * written by different code at different times and from different windows, so each writer moves only its own number
+ * and keeps the other one as the file holds it at that moment - read immediately before the write, since a number read
+ * any earlier can already have been moved by another window, and writing it back would undo that move. One image means
+ * the page learns of both from the single request it already makes every few seconds.
  */
 function readRev(rev) {
   let text = '';
@@ -593,7 +624,11 @@ function readRev(rev) {
   const num = (re) => Number((text.match(re) || [])[1]) || 0;
   return { w: num(/width="(\d+)"/), h: num(/height="(\d+)"/) };
 }
-function writeRev(rev, w, h) {
+/** Move one of the two counters, `w` or `h`, keeping the other as it stands. */
+function bumpRev(rev, which) {
+  const r = readRev(rev);
+  const next = (n) => (n % 60000) + 1;
+  const w = which === 'w' ? next(r.w) : r.w || 1, h = which === 'h' ? next(r.h) : r.h || 1;
   writeAtomic(rev, `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"></svg>`);
 }
 
@@ -629,10 +664,9 @@ function writeLive(claudeExtensionPath, opts = {}) {
   const there = (VERSION_LINE.exec(current || '') || [])[1];
   if (there && OURS && older(OURS, there)
       && installedHere(path.dirname(claudeExtensionPath), there) !== false) return false;
-  const r = readRev(rev);
   writeAtomic(css, next);
   // The width carries the revision: the page polls this image and reloads the stylesheet when it changes.
-  writeRev(rev, (r.w % 60000) + 1, r.h || 1);
+  bumpRev(rev, 'w');
   return true;
 }
 
@@ -646,9 +680,7 @@ function writeEffort(claudeExtensionPath, session, text) {
   try { current = fs.readFileSync(file, 'utf8'); } catch (_) {}
   if (current === text) return false;
   writeAtomic(file, text);
-  const { rev } = liveFiles(claudeExtensionPath);
-  const r = readRev(rev);
-  writeRev(rev, r.w || 1, (r.h % 60000) + 1);
+  bumpRev(liveFiles(claudeExtensionPath).rev, 'h');
   return true;
 }
 

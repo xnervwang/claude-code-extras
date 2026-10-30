@@ -89,7 +89,7 @@
   // Same anchor as the other footer controls: the send button's previous sibling is the permission-mode selector, and
   // React may replace that row, so this is re-checked on the timer rather than wired once.
   var ensureFocusControl = function(){
-    if (isOff('footerPlainView')) return;
+    if (isOff('footerPlainView')) { FOCUSBTN = dropControl(FOCUSBTN); return; }
     var ctx = panelContext();
     if (!ctx) return;
     if (FOCUSBTN && FOCUSBTN.isConnected) { paintFocus(!!ctx.focusViewEnabled); return; }

@@ -136,6 +136,11 @@ else bad(`the injected script calls ${undeclared.length} name(s) it never declar
 if (webview.SCRIPT.includes('!out.message; f = f.return')) ok('hot loop keeps its early exit');
 else bad('hot loop lost its early exit — the fiber walk will run to full depth on every element');
 
+/* The injected script runs in every panel, so a diagnostic written for one investigation stays in all of them for as long
+   as nobody removes it - and the word that says it may go is the one way the next reader learns that it may. */
+if (!/TEMPORARY/.test(webview.SCRIPT)) ok('the injected script carries nothing marked temporary');
+else bad('the injected script carries code marked TEMPORARY, which belongs to an investigation that should be over');
+
 /* What the page writes on every sweep or every tick has to be skipped when it would not change. Writing text is a
    mutation, the page's own observer answers a mutation with a sweep, and the sweep reaches these writes again - so one
    unconditional write keeps the page sweeping four times a second with nothing happening on it. Measured with the real
@@ -154,7 +159,7 @@ else bad('hot loop lost its early exit — the fiber walk will run to full depth
      on a long conversation. */
   const toc = page('45-toc.js');
   const sync = toc.slice(toc.indexOf('var syncMap = function'));
-  const settled = sync.indexOf('if (sig === SIG) return;'), compared = sync.indexOf('compareDocumentPosition');
+  const settled = sync.indexOf('if (sig === SIG && sameEntries(nodes, texts, whens)) return;'), compared = sync.indexOf('compareDocumentPosition');
   if (settled > 0 && compared > settled && sync.includes('while (lo < hi)')) {
     ok('compaction rules are placed only when the contents list is rebuilt, by halving');
   } else bad('compaction rules are placed before the signature check, or by walking every prompt');
@@ -228,6 +233,43 @@ console.log('\nwhat the page costs, in a browser');
       const older = harness.run(browser, { turns: 10, focusCtx: false });
       if (!older.error && older.viewButton && !older.focusButton) ok('a Claude Code build without Focus view gets no button');
       else bad('without Focus view in the panel: ' + (older.error || `the button was ${older.focusButton ? 'shown' : 'missing, and so was the view button'}`));
+      /* One panel moves between conversations in place - New and Resume in the sidebar do it - and what the page reads
+         off the session has to move with it. */
+      const moved = harness.run(browser, { turns: 30, switchSession: true });
+      if (!moved.error && /ctx 10%/.test(moved.labelBeforeSwitch) && /ctx 50%/.test(moved.labelAfterSwitch)
+          && /Session11111111-2222-4333-8444-555555555555/.test(moved.infoAfterSwitch)) {
+        ok('after the panel moves to another conversation, the newest reply\'s figures and the info box are that conversation\'s');
+      } else bad('after the panel moved to another conversation: ' + (moved.error || JSON.stringify(
+        { before: moved.labelBeforeSwitch, after: moved.labelAfterSwitch, info: moved.infoAfterSwitch })));
+      /* Switched off from the start, the view filter costs nothing: the owner is recorded whether or not the filter is
+         on, so the replies behind the newest still settle, and there is no button. */
+      const noFilter = harness.run(browser, { turns: SHORT, offSwitches: ['footerViewFilter'] });
+      if (!noFilter.error && noFilter.msgs === 300 && noFilter.full <= 64 && !noFilter.viewButton) {
+        ok(`with the view filter off, ${noFilter.full} of ${noFilter.msgs} replies are worked out each sweep and there is no button`);
+      } else bad('with the view filter off: ' + (noFilter.error || `${noFilter.full} of ${noFilter.msgs} replies worked out, button ${noFilter.viewButton}`));
+      /* Switched off while the page is open, the way the extension does it - the live stylesheet changes and the revision
+         probe notices: what each addition put on the page goes, rather than only not being made again. */
+      const offLive = harness.run(browser, { turns: SHORT, pickView: true,
+        flip: ['footerViewFilter', 'footerInfo', 'footerMute', 'footerPlainView'] });
+      if (!offLive.error && offLive.picked && offLive.hiddenInView > 0 && offLive.controlsBeforeFlip.length === 4
+          && offLive.hiddenAfterFlip === 0 && !offLive.controlsAfterFlip.length) {
+        ok(`switched off while open, a sub-agent view shows again the ${offLive.hiddenInView} messages it hid, and the info, mute, Focus view and view buttons go`);
+      } else bad('switching the footer additions off while open: ' + (offLive.error || JSON.stringify({ picked: offLive.picked,
+        hidden: [offLive.hiddenInView, offLive.hiddenAfterFlip], controls: [offLive.controlsBeforeFlip, offLive.controlsAfterFlip] })));
+      /* A mark is worked out once and kept, so a switch that changes what a mark holds has to reach the marks already made:
+         every message and reply, not only the newest and the last sixty. */
+      const marksLive = harness.run(browser, { turns: SHORT, subagentTurn: 5, flip: ['timestamps', 'subAgentTags'] });
+      const tb = marksLive.timesBeforeFlip || {}, ta = marksLive.timesAfterFlip || {};
+      if (!marksLive.error && tb.text === tb.replies && tb.prompt === tb.prompts && marksLive.tagsBeforeFlip > 0
+          && ta.text === 0 && ta.first === 0 && ta.prompt === 0 && ta.firstFigures === ta.replies && marksLive.tagsAfterFlip === 0) {
+        ok(`the time and the sub-agent tags switched off while open leave all ${ta.replies} replies and ${ta.prompts} messages, figures kept`);
+      } else bad('switching the time and the sub-agent tags off while open: ' + (marksLive.error || JSON.stringify(
+        { before: tb, after: ta, tags: [marksLive.tagsBeforeFlip, marksLive.tagsAfterFlip] })));
+      const tocLive = harness.run(browser, { turns: SHORT, flip: ['toc'] });
+      if (!tocLive.error && tocLive.railBeforeFlip && tocLive.keyMovedBeforeFlip && !tocLive.railAfterFlip && !tocLive.keyMovedAfterFlip) {
+        ok('the contents list switched off while open takes its rail away, and the , and . keys stop stepping');
+      } else bad('switching the contents list off while open: ' + (tocLive.error || JSON.stringify({ rail: [tocLive.railBeforeFlip,
+        tocLive.railAfterFlip], key: [tocLive.keyMovedBeforeFlip, tocLive.keyMovedAfterFlip] })));
       /* A write the page answers with a sweep that makes the write again keeps an idle page sweeping four times a second.
          Such a page never holds still long enough to count as settled, and changes things while idle. */
       const restless = runs.filter(([, r]) => !(r.settledAfter < harness.DEFAULTS.settleCapMs && r.idleSweeps === 0
@@ -270,6 +312,25 @@ console.log('\nwhat the page costs, in a browser');
       }
       /* A reply growing is what drives sweeps in use. Ordering two messages costs the browser a walk along every message
          between them, so a sweep that compares at all costs in proportion to the conversation squared. */
+      /* The text observer stays on the scroller it found while the messages are still in it: looking for it again reads
+         the style of every ancestor, which forces a style pass in the middle of a sweep's writes. */
+      const styled = runs.filter(([, r]) => r.growGcs !== 0);
+      if (!styled.length) ok('while a reply grows, a sweep reads no computed style');
+      else bad('while a reply grew, sweeps read the computed style: ' + styled.map(([what, r]) => `${what}: ${r.growGcs} reads in ${r.growSweeps} sweeps`).join('; '));
+      /* One observer for children added and taken away, on the whole document; the one on the message list watches text
+         alone, or each such change inside the list would be handed over twice. */
+      const watchers = runs.filter(([, r]) => !((r.observed || []).filter((o) => o.childList).length === 1
+        && (r.observed || []).some((o) => o.characterData && !o.childList)));
+      if (!watchers.length) ok('one observer watches for children coming and going, and the message list\'s watches text alone');
+      else bad('what the page\'s observers watch: ' + watchers.map(([what, r]) => `${what}: ${JSON.stringify(r.observed)}`).join('; '));
+      /* The tool clock counts the seconds on the working line in Focus view. Its own text changing starts no sweep, and its
+         two forms are written and then measured together: one layout for each change of its text, not one per form. */
+      const clocked = harness.run(browser, { turns: 20, focus: true, busyClock: true });
+      if (!clocked.error && /^Bash \d+s$/.test(clocked.clockText) && clocked.idleSweeps === 0 && clocked.clockWrites > 0
+          && clocked.clockLayouts * 2 <= clocked.clockWrites) {
+        ok(`the tool clock counting seconds starts no sweep, and lays the page out once per change (${clocked.clockLayouts} for ${clocked.clockWrites} text writes)`);
+      } else bad('the tool clock while it counts: ' + (clocked.error || JSON.stringify({ text: clocked.clockText, sweeps: clocked.idleSweeps,
+        writes: clocked.clockWrites, layouts: clocked.clockLayouts })));
       const busy = runs.filter(([, r]) => !(r.growSweeps >= 4 && r.growCdp === 0 && r.growText === 0));
       if (!busy.length) ok('while a reply grows, a sweep compares no positions and writes no text');
       else bad('while a reply grew: ' + busy.map(([what, r]) =>
@@ -282,6 +343,20 @@ console.log('\nwhat the page costs, in a browser');
         ok(`four times the conversation: ${(long.fiber / short.fiber).toFixed(1)}x the walking, the same queries, at most 64 replies worked out`);
       } else bad(`four times the conversation: walking ${short.fiber} -> ${long.fiber}, queries per sweep ${perSweep(short)} -> `
         + `${perSweep(long)}, replies worked out ${short.full} -> ${long.full}`);
+      /* Each of your messages is walked up to its message and has its time formatted once: past the newest, a sweep reads
+         what was kept for it, so neither grows with how many messages there are. Formatting is counted in dates made. */
+      const datesPer = (r) => r.growDates / Math.max(1, r.growSweeps);
+      if (long.fiber <= short.fiber * 1.1 && datesPer(long) <= datesPer(short) * 1.1) {
+        ok(`your messages are walked and timed once each: four times as many leave ${long.fiber} steps and ${datesPer(long)} dates a sweep`);
+      } else bad(`with four times as many messages, the steps up React trees went ${short.fiber} -> ${long.fiber} and the dates `
+        + `made per sweep ${datesPer(short)} -> ${datesPer(long)}`);
+      /* In a sub-agent's view the contents list is that agent's tool calls, those of its replies far behind the newest
+         included. */
+      const early = harness.run(browser, { turns: SHORT, subagentTurn: 5, pickView: true });
+      if (!early.error && early.picked && early.railInView && early.tocInView.length === 1 && /Bash ls$/.test(early.tocInView[0])) {
+        ok('in the view of a sub-agent whose reply is far behind the newest, the contents list holds its tool call');
+      } else bad('the contents list in the view of an early sub-agent: ' + (early.error || JSON.stringify(
+        { picked: early.picked, rail: early.railInView, rows: (early.tocInView || []).slice(0, 3) })));
       /* A new prompt rebuilds the contents list, and placing each compaction rule may take one halving of the prompts. */
       const bound = (r) => r.compactions * (Math.ceil(Math.log2(r.prompts + 1)) + 1);
       if (short.rebuildCdp > 0 && short.rebuildCdp <= bound(short) && long.rebuildCdp <= bound(long)) {
@@ -701,6 +776,7 @@ console.log('\nthe top and bottom buttons');
     getComputedStyle: (el) => ({ overflowY: el === scroller ? 'auto' : 'visible' }),
     setInterval: (f) => { ticks.push(f); return ticks.length; },
     clearInterval: () => {},
+    setTimeout: () => 0, clearTimeout: () => {},
   };
   new vm.Script(`(function(){${fragment}\n;PROMPT_EL.push(message); out.jumpEdge = jumpEdge;})()`, { filename: '45-toc.js' })
     .runInNewContext(box);
@@ -714,6 +790,33 @@ console.log('\nthe top and bottom buttons');
   box.out.jumpEdge(false);
   if (scroller.scrollTop === 0) ok('to the top lands at the very start');
   else bad(`to the top left the view at ${scroller.scrollTop}`);
+
+  /* One hold at a time, and a hold begun by a key outlives that key. The , and . keys start a hold from a keydown
+     listener on the document, and the same keydown reaches the window after it - where a listener added during that
+     dispatch is called too. */
+  {
+    const live = new Set(), soon = new Map(), heard = [];
+    let iv = 0, to = 0;
+    const env = Object.assign({}, box, { out: {},
+      window: { scrollY: 0, innerHeight: 0, removeEventListener: (t, f) => { const i = heard.indexOf(f); if (i >= 0) heard.splice(i, 1); },
+        addEventListener: (t, f) => { if (t === 'keydown') heard.push(f); } },
+      setInterval: () => { live.add(++iv); return iv; }, clearInterval: (id) => { live.delete(id); },
+      setTimeout: (f) => { soon.set(++to, f); return to; }, clearTimeout: (id) => { soon.delete(id); } });
+    new vm.Script(`(function(){${fragment}\n;PROMPT_EL.push(message); out.jumpEdge = jumpEdge;})()`, { filename: '45-toc.js' })
+      .runInNewContext(env);
+    const nextTurn = () => { const due = [...soon.values()]; soon.clear(); due.forEach((f) => f()); };
+    const key = (k) => heard.slice().forEach((f) => f({ key: k }));
+    env.out.jumpEdge(true); env.out.jumpEdge(false);
+    const one = live.size;
+    nextTurn(); key('x');
+    const stoppedByKey = live.size === 0;
+    env.out.jumpEdge(true);
+    key('.');
+    const outlived = live.size;
+    if (one === 1 && stoppedByKey && outlived === 1) {
+      ok('a second jump stops the first one\'s hold, a key pressed afterwards stops a hold, and the key that began one does not');
+    } else bad(`holds: ${one} running after two jumps, stopped by a later key ${stoppedByKey}, ${outlived} left after the key that began it`);
+  }
 }
 
 console.log('\nthe model pill comparison');
@@ -782,7 +885,7 @@ console.log('\nthe model pill comparison');
 console.log('\na reopened conversation');
 {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', f), 'utf8');
-  const box = { out: {}, sessionRef: null, isOn: () => true, isOff: () => false };
+  const box = { out: {}, window: {}, sessionRef: null, isOn: () => true, isOff: () => false };
   new vm.Script(`(function(){${read('70-meter.js')}\n${read('75-turn-stats.js')}\n;` +
     'out.fillWindow = fillWindow; out.statAt = statAt;})()', { filename: 'reopened' }).runInNewContext(box);
   const session = (usage, pick) => ({
@@ -859,6 +962,103 @@ console.log('\na reopened conversation');
   const kept = box.out.statAt(first, false);
   if (/ctx 96%/.test(kept)) ok('a reply that was once the newest keeps its own figures afterwards');
   else bad(`a reply that was once the newest later showed "${kept}"`);
+  // ...each of them shown by its switch as it is now: the share switched off afterwards leaves that reply too.
+  box.isOff = (k) => k === 'contextShare';
+  const keptShareOff = box.out.statAt(first, false);
+  box.isOff = () => false;
+  if (!/ctx/.test(keptShareOff) && /cost \$3\.20/.test(keptShareOff)) ok(`and a switch turned off later reaches those figures too (${keptShareOff})`);
+  else bad(`with the context share switched off later, that reply showed "${keptShareOff}"`);
+}
+
+/* The usage meter's switch reaches the two edits that keep the meter on screen: with it off, the meter is Claude Code's
+   own again - hidden while more than half the window is free, its states at its own points - and the trim and outline
+   this script put on it come off. */
+console.log('\nthe usage meter, kept on screen or left to Claude Code');
+{
+  const { applyEdits } = require('../src/edits');
+  const pick = (name) => webview.EDITS.find((e) => e.name === name);
+  const code = 'function Yy5($){if($<62.5)return 50;if($<87)return 75;return 99}var AI1=null;'
+    + 'function vy0({usedTokens:$,contextWindow:J}){let Y=J>0?Math.min($/J*100,100):0,Q=AI1!==null?AI1:Y,z=100-Q;'
+    + 'if(AI1===null){if(J===0)return null;if(z>=50)return null}return"meter"}';
+  const r = applyEdits(code, [pick('context meter state thresholds'), pick('context meter always visible')]);
+  if (r.error) bad('the meter edits did not apply to the meter\'s shape: ' + r.error);
+  else {
+    const meter = (kept) => {
+      const env = { window: {} };
+      if (kept !== undefined) env.window.__cceMeterKept = () => kept;
+      vm.createContext(env);
+      vm.runInContext(r.out, env);
+      return JSON.stringify([env.Yy5(55), env.Yy5(80), env.vy0({ usedTokens: 10, contextWindow: 100 }), env.vy0({ usedTokens: 60, contextWindow: 100 })]);
+    };
+    const got = [meter(true), meter(false), meter(undefined)];
+    const want = [JSON.stringify([75, 99, 'meter', 'meter']), JSON.stringify([50, 75, null, 'meter']), JSON.stringify([50, 75, null, 'meter'])];
+    if (JSON.stringify(got) === JSON.stringify(want)) {
+      ok('kept, the meter shows at 10% used with its states at their own extents; not kept, or with no page to ask, it is Claude Code\'s own');
+    } else bad(`the meter kept, not kept and with no page to ask gave ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+  }
+  let off = false;
+  const arc = { style: {}, getTotalLength: () => 100 };
+  const btn = { style: {}, getAttribute: () => '90% of context used', querySelector: () => arc, querySelectorAll: () => [arc] };
+  const env = { window: {}, isOff: (k) => off && k === 'contextMeter', isOn: () => true, fiber: () => null,
+    document: { querySelector: () => btn }, sessionRef: null };
+  vm.createContext(env);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '70-meter.js'), 'utf8'), env);
+  const kept = () => (typeof env.window.__cceMeterKept === 'function' ? env.window.__cceMeterKept() : 'not asked');
+  vm.runInContext('markCtxLow()', env);
+  const drawn = [arc.style.strokeDasharray, btn.style.outline, kept()];
+  off = true;
+  vm.runInContext('markCtxLow()', env);
+  const left = [arc.style.strokeDasharray, btn.style.outline, kept()];
+  if (drawn[0] && drawn[1] && drawn[2] === true && !left[0] && !left[1] && left[2] === false) {
+    ok('switched off, the page says the meter is not kept and takes off the trim and outline it drew');
+  } else bad(`the meter on and then off: ${JSON.stringify(drawn)} -> ${JSON.stringify(left)}`);
+}
+
+/* The breakdown behind the usage meter says it is loading only while an answer is on its way: only an answer takes the
+   note away again, so one put up with nothing to wait for stays for as long as the pointer does. */
+console.log('\nthe context breakdown on the usage meter');
+{
+  const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '55-context-detail.js'), 'utf8');
+  const made = [], timers = [];
+  const el = () => {
+    const e = { style: {}, children: [], textContent: '', isConnected: true, parentElement: null,
+      appendChild(c) { this.children.push(c); c.parentElement = this; return c; },
+      addEventListener(t, f) { (this.on = this.on || {})[t] = f; },
+      getBoundingClientRect: () => ({ top: 500, bottom: 520, left: 280, right: 300 }) };
+    made.push(e);
+    return e;
+  };
+  const btn = el();
+  btn.parentElement = { children: [btn] };
+  const env = { out: {}, sessionRef: null, WeakSet, Date, window: { innerHeight: 800, innerWidth: 400 },
+    setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout: () => {},
+    document: { querySelector: () => btn, createElement: el, body: { appendChild() {} } } };
+  new vm.Script(`(function(){${fragment}\n;out.wire = wireCtxButton;`
+    + 'out.keep = function(u, k){ ctxCache = u; ctxKey = k; ctxAt = Date.now(); };})()', { filename: '55-context-detail.js' })
+    .runInNewContext(env);
+  env.out.wire();
+  const run = () => { const due = timers.splice(0); due.forEach((f) => f()); };
+  const hover = () => { btn.on.mouseenter(); run(); };
+  const leave = () => { btn.on.mouseleave(); run(); };
+  const loading = () => made.some((e) => e.id === 'cce-ctx-note' && e.style.display === 'block' && e.textContent === 'Loading breakdown...');
+  const usage = { totalTokens: 5 };
+  const usageFigures = { categories: [], totalTokens: 5, rawMaxTokens: 100, percentage: 5, model: 'opus' };
+
+  env.sessionRef = { usageData: { value: usage } };
+  hover();
+  const unaskable = loading();
+  leave();
+  env.sessionRef = { usageData: { value: usage }, getContextUsage: () => new Promise(() => {}) };
+  env.out.keep(usageFigures, '5');
+  hover();
+  const inHand = loading();
+  leave();
+  env.out.keep(null, '');
+  hover();
+  const onItsWay = loading();
+  if (!unaskable && !inHand && onItsWay) {
+    ok('no loading note with no way to ask or with the breakdown already in hand, and one while it is being asked for');
+  } else bad(`the loading note: with no way to ask ${unaskable}, with the breakdown in hand ${inHand}, while asking ${onItsWay}`);
 }
 
 /* ── the effort each reply was sent with ──
@@ -888,6 +1088,28 @@ console.log('\nreply efforts');
     stub.out.read();
     if (sweeps === 2) ok('a table that comes back unchanged starts no sweep, and a changed one does');
     else bad(`three reads, the middle one unchanged, scheduled ${sweeps} sweeps`);
+  }
+  {
+    /* One load at a time: the one still loading when the next revision arrives is dropped, so a load nobody answers
+       does not hold a service-worker permit for good, and an older one answering late cannot replace a newer one. */
+    const links = [];
+    const headStub = { appendChild(n) { n.parentNode = headStub; links.push(n); },
+      removeChild(n) { n.parentNode = null; links.splice(links.indexOf(n), 1); } };
+    const stub = { out: {}, base: 'https://x/webview/', EFFORT_PREFIX: webview.EFFORT_PREFIX, head: headStub,
+      sigValue: () => 'dddddddd-2222-4333-8444-555555555555', forget() {}, schedule() {}, ASSIST: 'x', OWNER_ATTR: 'o', SETTLED_ATTR: 's',
+      getComputedStyle: () => ({ getPropertyValue: () => '' }),
+      document: { createElement: () => ({ style: {}, isConnected: true }), body: { appendChild() {} }, querySelectorAll: () => [] } };
+    new vm.Script(`(function(){${fragment}\n;out.load = loadEfforts; out.shown = function(){ return effortLink; };})()`,
+      { filename: '76-effort.js' }).runInNewContext(stub);
+    stub.out.load(1);
+    const first = links[0];
+    stub.out.load(2);
+    const second = links[links.length - 1];
+    second.onload();
+    if (typeof first.onload === 'function') first.onload();
+    if (links.length === 1 && links[0] === second && stub.out.shown() === second && first.parentNode === null) {
+      ok('a load still out when the next revision arrives is dropped, and cannot replace the newer one by answering late');
+    } else bad(`after two loads, the first answering last: ${links.length} link(s) in the head, the newer one shown: ${stub.out.shown() === second}`);
   }
   const state = {};
   const walk = [['main', 1], ['sub', 11], ['main', 2], ['main', 3], ['sub', 12], ['main', 4], ['sub', 13], ['main', 5]]
@@ -1150,6 +1372,19 @@ console.log('\nscheduled prompts');
     if (api.__cceSchedule(h) !== null) bad("another session's task leaked into this panel");
     else ok("another session's task is not shown here");
 
+  }
+  /* Read once per stylesheet: the agent map asks on every render, and each read of the computed style makes the page work
+     its styles out. Each way a stylesheet arrives clears what was read (05-page-setup.js). */
+  {
+    let reads = 0;
+    const sb = Object.assign({}, sandbox, { window: {},
+      getComputedStyle: () => { reads++; return { getPropertyValue: () => `"${packed}"` }; } });
+    new vm.Script(`(function(){${fragment}})()`, { filename: '82-scheduled-tasks.js' }).runInNewContext(sb);
+    for (let i = 0; i < 5; i++) sb.window.__cceSchedule(h);
+    const setup = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '05-page-setup.js'), 'utf8');
+    const cleared = (setup.match(/pinsCache = null; propCache = \{\};/g) || []).length;
+    if (reads === 2 && cleared === 2) ok('five renders of the agent map read each of its two properties once, and a stylesheet arriving clears them');
+    else bad(`five renders read the computed style ${reads} times; the two ways a stylesheet arrives clear the reads ${cleared} time(s)`);
   }
 
   /* How each schedule reads, taken off the rendered row rather than from the function, which lives inside the closure.
@@ -1868,6 +2103,69 @@ console.log('\none live stylesheet, several windows');
       + ` (in script: ${edge}, defaults on: ${onByDefault}, absent when on: ${notInSheet}, off when asked: ${offWhenAsked})`);
   }
 
+  /* Two windows writing at once. One writes the stylesheet while another writes a conversation's efforts in between its
+     write and its move of the revision image; each moves only its own number, so neither puts back the other's number
+     from before that move. */
+  {
+    const inst = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-rev-race-'));
+    const wv = path.join(inst, 'webview');
+    fs.mkdirSync(wv);
+    const revOf = () => {
+      const t = fs.readFileSync(path.join(wv, 'claude-code-extras.rev.svg'), 'utf8');
+      return [Number(/width="(\d+)"/.exec(t)[1]), Number(/height="(\d+)"/.exec(t)[1])];
+    };
+    const sid = 'eeeeeeee-2222-4333-8444-555555555555';
+    const effort = path.join(wv, webview.EFFORT_PREFIX + sid + '.css');
+    const realWrite = fs.writeFileSync, realRename = fs.renameSync;
+    /* Runs `other` once, the moment the first temporary file for `file` has been written. */
+    const meanwhile = (file, other) => {
+      let done = false;
+      fs.writeFileSync = function (f, ...rest) {
+        const out = realWrite.call(fs, f, ...rest);
+        if (!done && String(f).startsWith(file + '.')) { done = true; other(); }
+        return out;
+      };
+      return () => done;
+    };
+    try {
+      webview.writeLive(inst, { enabled: true });
+      const before = revOf();
+      const raced = meanwhile(path.join(wv, 'claude-code-extras.css'), () => webview.writeEffort(inst, sid, 'first'));
+      webview.writeLive(inst, { enabled: true, userColor: '#90EE90' });
+      fs.writeFileSync = realWrite;
+      const after = revOf();
+      if (raced() && after[0] === before[0] + 1 && after[1] === before[1] + 1) {
+        ok('an efforts write landing during a stylesheet write keeps its move of the revision image, and the stylesheet keeps its own');
+      } else bad(`revisions went ${JSON.stringify(before)} -> ${JSON.stringify(after)} with an efforts write in between (raced ${raced()})`);
+
+      /* Two windows replacing the same file at the same moment: each has a temporary file of its own, so both renames
+         go through, rather than the second window's rename moving the first one's file and the first one failing. */
+      let threw = null;
+      const nested = meanwhile(effort, () => webview.writeEffort(inst, sid, 'second'));
+      try { webview.writeEffort(inst, sid, 'third'); } catch (e) { threw = e.message; }
+      fs.writeFileSync = realWrite;
+      const leftover = () => fs.readdirSync(wv).filter((n) => n.endsWith('.tmp'));
+      if (nested() && !threw && fs.readFileSync(effort, 'utf8') === 'third' && !leftover().length) {
+        ok('two windows writing one file at the same moment both succeed, and no temporary file is left behind');
+      } else bad(`two writes at once: threw ${threw}, the file holds ${JSON.stringify(fs.readFileSync(effort, 'utf8'))}, left ${JSON.stringify(leftover())}`);
+
+      let refused = 0;
+      fs.renameSync = function (from, to) {
+        if (to === effort && !refused) { refused++; const e = new Error('EBUSY: resource busy'); e.code = 'EBUSY'; throw e; }
+        return realRename.call(fs, from, to);
+      };
+      let failed = null;
+      try { webview.writeEffort(inst, sid, 'fourth'); } catch (e) { failed = e.message; }
+      fs.renameSync = realRename;
+      if (refused === 1 && !failed && fs.readFileSync(effort, 'utf8') === 'fourth' && !leftover().length) {
+        ok('a rename refused once is tried again, and the write still lands');
+      } else bad(`with one rename refused: ${failed || 'no error'}, the file holds ${JSON.stringify(fs.readFileSync(effort, 'utf8'))}, left ${JSON.stringify(leftover())}`);
+    } finally {
+      fs.writeFileSync = realWrite; fs.renameSync = realRename;
+      fs.rmSync(inst, { recursive: true, force: true });
+    }
+  }
+
   fs.rmSync(root, { recursive: true, force: true });
 }
 
@@ -2322,7 +2620,7 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`summarise gave ${JSON.stringify(rows)}`);
     fs.rmSync(root, { recursive: true, force: true });
   }
-  /* The host-busy watcher is temporary and spread over three files, so each place that carries it has to say so. A
+  /* The host-busy watcher is temporary and spread over two files, so each place that carries it has to say so. A
      diagnostic whose own code no longer admits to being one is a diagnostic nobody will ever remove: the comment is the
      only thing that licenses deleting it, and by the time anyone wonders, the investigation it belongs to will be months
      past. Checked rather than trusted because the three are easy to edit apart. */
@@ -2330,7 +2628,6 @@ console.log('\nthe waiting, paired out of the official log');
     const marked = [
       ['src/openlatency.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
       ['extension.js', 'TEMPORARY, FOR ONE INVESTIGATION'],
-      ['src/page/99-sweep.js', 'TEMPORARY, part of one investigation'],
       ['src/openlatency.js', 'TEMPORARY, part of the investigation at writeAtomic'],
       ['extension.js', 'TEMPORARY, part of that same investigation'],
     ];
@@ -2630,6 +2927,14 @@ console.log('\none switch per addition, wired at both ends');
   if (noStamps.includes('::before') && noStamps.includes('--cce-off-timestamps:1')) {
     ok('switching the time off leaves the rule that also draws the duration and figures');
   } else bad('turning off timestamps dropped the rule the other three need');
+
+  /* The main switch takes the marks away and nothing else: an addition switched off on its own stays off while the
+     marks are off, and the agent map keeps the scheduled prompts and background sessions it lists. */
+  const marksOff = webview.liveCss({ enabled: false, off: ['cost', 'toc'], tasks: [{ id: 't1' }], background: [{ id: 'b1' }] });
+  if (marksOff.includes('--cce-off-cost:1;--cce-off-toc:1;') && /--cce-schedule:"/.test(marksOff)
+      && /--cce-background:"/.test(marksOff) && !marksOff.includes('::before') && marksOff.includes('--cce-on:0')) {
+    ok('with the marks off, the switches, the scheduled prompts and the background sessions are still written');
+  } else bad(`with the marks off the stylesheet was ${JSON.stringify(marksOff)}`);
 }
 
 /* ── 14. switched off, the work plan costs nothing and keeps nothing ──
@@ -4336,7 +4641,7 @@ console.log('\nconversations pinned in the session list');
     env.isOff = (k) => (k === 'sessionDates' ? !env.sessionDates : false);
     vm.createContext(env);
     vm.runInContext('var pinsCache = null;' + frag('15-format.js') + frag('82-scheduled-tasks.js') + frag('83-session-pins.js')
-      + ';this.reset = function(){ pinsCache = null; };', env);
+      + ';this.reset = function(){ pinsCache = null; propCache = {}; };', env);
     const h = (type, props, key) => ({ type, props, key });
     const rowOf = (id, onDisk = true) => ({ sessionId: { value: id }, transcriptOnDisk: onDisk });
     const draw = (id, onDisk) => env.window.__ccePin(h, rowOf(id, onDisk));
@@ -4650,7 +4955,7 @@ console.log('\nopen sessions on the session list');
   if (JSON.stringify(got) === JSON.stringify(want)) {
     ok('the open conversations, newest first: one just started counts as now, the sidebar one is marked, a remote one and one the list knows nothing of are left out');
   } else bad(`the rows were ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
-  const header = walk(tree, (n) => n.props && n.props['data-cce-open-count'])[0];
+  const header = walk(tree, (n) => n.props && n.props['data-cce-section-count'])[0];
   if (header && text(header) === '4' && walk(tree, (n) => n.props && n.props.className === 'sl').some((n) => text(n) === 'Open sessions')) {
     ok('the header is the list\'s own section header, labelled Open sessions, with the count');
   } else bad('the header was not the list\'s section header with a count of 4');
@@ -4895,6 +5200,33 @@ console.log('\nhover text on the session list rows');
   env.offKey = '';
   if (afterLeave === 0 && timers.length === 0 && off.length === 0) ok('leaving the row before the delay shows nothing, and the switch off shows nothing');
   else bad(`after leaving ${afterLeave} box(es) were shown; with the switch off ${JSON.stringify(off)}`);
+  /* The pin at the front of a row shows its own hover text in the same box: while the pointer is on the pin the row's
+     text waits, and back on the row it comes up again. */
+  {
+    const PIN = '0ccccccc-2222-4333-8444-555555555555';
+    let current = null, tn = 0;
+    const due = new Map();
+    const penv = { window: {}, isOff: () => false, pinsCache: null, readProp: () => [[], {}, 14],
+      showLabel: (target, text) => { current = typeof text === 'string' ? text : target.getAttribute('aria-label'); },
+      hideLabel: () => { current = null; },
+      setTimeout: (f) => { due.set(++tn, f); return tn; }, clearTimeout: (t) => { due.delete(t); },
+      head: { appendChild() {} }, document: { createElement: () => ({ setAttribute() {} }) } };
+    vm.createContext(penv);
+    vm.runInContext(['83-session-pins.js', '84-row-hover.js'].map((f) => fs.readFileSync(path.join(__dirname, '..', 'src', 'page', f), 'utf8')).join('\n'), penv);
+    const fire = () => { const now = [...due.values()]; due.clear(); now.forEach((f) => f()); };
+    const pin = penv.window.__ccePin((type, props, key) => ({ type, props, key }), { sessionId: { value: PIN }, transcriptOnDisk: true });
+    const pinEl = { getAttribute: (k) => (k === 'aria-label' ? pin.props['aria-label'] : null) };
+    penv.window.__cceRowHover({ sessionId: { value: PIN } }, { isConnected: true, addEventListener() {} }, true);
+    pin.props.onMouseEnter({ currentTarget: pinEl });
+    fire();
+    const onPin = current;
+    pin.props.onMouseLeave();
+    fire();
+    const backOnRow = current;
+    if (/^Pin this conversation/.test(onPin || '') && backOnRow === 'Group: Ungrouped\nSession ID: ' + PIN) {
+      ok('on the pin its own hover text stays, the row\'s waiting, and back on the row the row\'s text comes up');
+    } else bad(`hover text on the pin was ${JSON.stringify(onPin)}, and back on the row ${JSON.stringify(backOnRow)}`);
+  }
   const { applyEdits } = require('../src/edits');
   const e = webview.EDITS.find((x) => x.name === 'session row hover');
   const row = 'var Xh5=u0(function({session:J,id:Z,isActive:X},E){let g=1;return w("button",{ref:E,id:Z,className:`${b5.sessionItem} ${X?b5.active:""}`,onMouseMove:W})});';
@@ -5302,6 +5634,39 @@ console.log('\nrecently closed sessions');
       && /recentClosed\.pageData\(recentList, enabled\(\) && !removed\(\) \? cfg\(\)\.get\(RECENT_SETTING, 10\) : 0\)/.test(extSrc)) {
     ok('the closed list is kept per workspace, and the setting, 10 by default, says how many to show');
   } else bad('the closed list is not wired as expected');
+
+  /* One index of the list's conversations for both sections, kept while the list holds the same array: drawing them again
+     reads no conversation beyond the ones asked for. One that is given its id after it joined the array is still found. */
+  {
+    let reads = 0;
+    const counted = (sid) => {
+      const it = { summary: sig('t'), lastModifiedTime: sig(Date.now()), isRemote: sig(false) };
+      Object.defineProperty(it, 'sessionId', { get() { reads++; return sid; } });
+      return it;
+    };
+    const many = [], LATE = '0aaaaaaa-1111-4000-8000-000000000000', lateId = sig('');
+    for (let n = 0; n < 200; n++) many.push(counted(sig(`${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`)));
+    many.push(counted(lateId));
+    const src = env.window.__cceSessionList;
+    src.sessions.sessions = sig(many);
+    src.comms.openSessionIds = sig([id(1), id(2)]);
+    src.comms.sidebarSessionIds = sig([]);
+    const both = () => [env.window.__cceOpenSessions(ui), draw({ max: 3, ids: [id(5), id(6), id(7)] }, true)];
+    both();
+    reads = 0;
+    const [openAgain, closedAgain] = both();
+    const again = reads;
+    lateId.value = LATE;
+    src.comms.openSessionIds = sig([LATE]);
+    const late = walk(env.window.__cceOpenSessions(ui), (n) => n.type === env.window.__cceSessionRow);
+    const drewBoth = walk(openAgain, (n) => n.type === env.window.__cceSessionRow).length === 2
+      && walk(closedAgain, (n) => n.type === env.window.__cceSessionRow).length === 3;
+    // Five conversations are asked for, each looked at once; a single pass over the list would be 201.
+    if (drewBoth && again <= 20 && late.length === 1 && late[0].props.id === 'cce-open-' + LATE) {
+      ok(`drawn again over 201 conversations, the two sections read an id ${again} times for the five they show, and one given its id later is still found`);
+    } else bad(`drawn again over 201 conversations the two sections read a conversation's id ${again} times (drew both: ${drewBoth}); `
+      + `the one given its id later was drawn ${late.length} time(s)`);
+  }
 }
 
 console.log('\nthe patch markers follow the code');
@@ -5323,6 +5688,9 @@ console.log('\nthe patch markers follow the code');
   const cases = [
     ['src/host.js', 'host.js', require('../src/host').MARK, (src) => src.replace('?"cce-pin-to-sidebar":', '?"cce-pin-to-sidebar-x":')],
     ['src/webview.js', 'webview.js', require('../src/webview').MARK, (src) => src.replace('cceWhere:cceW})}`', 'cceWhere:cceW,x:1})}`')],
+    // An edit with several shapes has no pattern or replacement of its own; one of its shapes changing counts all the same.
+    ['src/webview.js, one shape of an edit with several', 'webview.js', require('../src/webview').MARK,
+      (src) => src.replace('${row}.setToolResult(${item},${opts});', '${row}.setToolResult(${item},${opts}) ;')],
   ];
   for (const [label, file, now, edit] of cases) {
     const other = reload(file, edit);

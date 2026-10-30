@@ -15,13 +15,21 @@
   // date span, rename and archive - and can be the one place a person works from. Clicking one switches to that
   // conversation and leaves the list below where it was: the list would otherwise scroll to the conversation and select
   // it, which moves the long list under someone who is not looking at it.
-  var OPEN_COLLAPSED_KEY = 'cce.openSessionsCollapsed';
-  var OPEN_CSS = '[data-cce-open-sessions][data-cce-collapsed="1"] [data-cce-open-body]{display:none}'
-    + '[data-cce-open-count]{margin-left:auto;padding:0 6px;border-radius:9px;font-size:.85em;line-height:16px;'
+  /*
+   * The two sections this script puts in the session list - OPEN SESSIONS here and RECENTLY CLOSED (84-recent-closed.js)
+   * - share one shell: the list's own section header and chevron, a count, and a body that collapsing hides. Each names
+   * its key: OPEN SESSIONS stores whether it is collapsed and starts expanded, RECENTLY CLOSED stores whether it is
+   * expanded and starts collapsed, and storage that cannot be read gives the starting state.
+   */
+  var OPEN_SECTION = { attr: 'data-cce-open-sessions', key: 'cce.openSessionsCollapsed', storesExpanded: false,
+    label: 'Open sessions', title: 'open sessions' };
+  var SECTION_CSS = '[data-cce-section][data-cce-collapsed="1"] [data-cce-section-body]{display:none}'
+    + '[data-cce-section-count]{margin-left:auto;padding:0 6px;border-radius:9px;font-size:.85em;line-height:16px;'
     + 'background:var(--vscode-badge-background,rgba(128,128,128,.35));color:var(--vscode-badge-foreground,inherit)}';
-  var openStyle = null;
-  var openCollapsed = function(){
-    try { return localStorage.getItem(OPEN_COLLAPSED_KEY) === '1'; } catch (e) { return false; }
+  var sectionStyle = null;
+  var sectionCollapsed = function(s){
+    try { var v = localStorage.getItem(s.key); return s.storesExpanded ? v !== '1' : v === '1'; }
+    catch (e) { return s.storesExpanded; }
   };
   // The list's own short form, so a row here reads the same as the same conversation's row below.
   var openAge = function(ms){
@@ -46,17 +54,91 @@
   };
 
   /*
+   * The conversations the list knows, by id, remote ones left out - indexed once for each array the list holds, since
+   * it replaces the array whenever one comes or goes and both sections look conversations up on every render. An item
+   * can be given its id after it joined the array (a new conversation learns it from the command-line side), so a lookup
+   * that misses, or finds an item that no longer carries the id, indexes again - at most once per lookup function, which
+   * is made once per section drawn.
+   */
+  var indexedList = null, sessionIndex = {};
+  var indexSessions = function(src, again){
+    var raw = src.sessions && src.sessions.sessions && src.sessions.sessions.value;
+    if (!again && raw && raw === indexedList) return sessionIndex;
+    var items = asList(raw), byId = {};
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i], sid = it && it.sessionId && it.sessionId.value;
+      if (typeof sid === 'string' && !(it.isRemote && it.isRemote.value)) byId[sid] = it;
+    }
+    indexedList = raw; sessionIndex = byId;
+    return byId;
+  };
+  var sessionLookup = function(src){
+    var byId = indexSessions(src), again = false;
+    var holds = function(it, id){ return !!(it && it.sessionId && it.sessionId.value === id); };
+    return function(id){
+      if (holds(byId[id], id)) return byId[id];
+      if (again) return null;
+      again = true;
+      byId = indexSessions(src, true);
+      return holds(byId[id], id) ? byId[id] : null;
+    };
+  };
+  var toggleSection = function(e, s){
+    try {
+      var root = e.currentTarget.closest('[data-cce-section]');
+      if (!root) return;
+      var collapsed = root.getAttribute('data-cce-collapsed') !== '1';
+      try { localStorage.setItem(s.key, collapsed !== s.storesExpanded ? '1' : '0'); } catch (err) { /* kept for this page only */ }
+      // Attributes only, on elements of our own: the next render of the list computes the same from the stored value.
+      root.setAttribute('data-cce-collapsed', collapsed ? '1' : '0');
+      e.currentTarget.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      var chev = e.currentTarget.querySelector('[data-cce-section-chevron]'), on = chev && chev.getAttribute('data-cce-section-chevron');
+      if (chev && on && chev.firstElementChild) chev.firstElementChild.classList.toggle(on, !collapsed);
+    } catch (err) { /* the section stays as it was */ }
+  };
+  /* One section, drawn with the list's own factories and classes around the rows it is given. */
+  var drawSection = function(ui, s, count, body){
+    if (!sectionStyle) {
+      sectionStyle = document.createElement('style');
+      sectionStyle.setAttribute('data-cce-sections-style', '1');
+      sectionStyle.textContent = SECTION_CSS;
+      head.appendChild(sectionStyle);
+    }
+    var F = ui.jsx, W = ui.jsxs, c = ui.cls || {}, l = window.__cceListCls || {};
+    var collapsed = sectionCollapsed(s);
+    var props = { 'data-cce-section': '1', 'data-cce-collapsed': collapsed ? '1' : '0', children: [
+      F('div', { className: c.sectionHeader || '', children: W('button', {
+        className: c.sectionToggle || '', onClick: function(e){ toggleSection(e, s); }, 'aria-expanded': collapsed ? 'false' : 'true',
+        title: (collapsed ? 'Expand ' : 'Collapse ') + s.title,
+        children: [
+          ui.Chevron ? F('span', { 'data-cce-section-chevron': c.sectionChevronExpanded || '', style: { display: 'inline-flex' },
+            children: F(ui.Chevron, { className: (c.sectionChevron || '') + (collapsed ? '' : ' ' + (c.sectionChevronExpanded || '')) }),
+          }) : null,
+          F('span', { className: c.sectionLabel || '', children: s.label }),
+          F('span', { 'data-cce-section-count': '1', children: String(count) }),
+        ],
+      }) }),
+      F('div', { 'data-cce-section-body': '1', className: l.sessionsList || '', children: body }),
+    ] };
+    props[s.attr] = '1';
+    return W('div', props);
+  };
+  /* What a click on a row in either section does: open the conversation as the list's own row would, and tell the list
+     to keep its place. */
+  var openFrom = function(src){
+    return function(row){
+      openFollowSkip = row.id;
+      try { src.context.openInEditor(row.id, void 0, { openState: row.state || 'none', isRemote: false }); } catch (e) { /* nothing opens */ }
+    };
+  };
+
+  /*
    * This window's open conversations, most recently active first. The tab ones are the list's own openSessionIds and the
    * sidebar one its sidebarSessionIds, while the sidebar is shown; a conversation in both is listed once, as a tab. One
    * with no row in the list yet - just started, nothing on disk - counts as active now, which is what it is.
    */
   var openSessionsNow = function(src){
-    var comms = src.comms, items = asList(src.sessions && src.sessions.sessions && src.sessions.sessions.value);
-    var byId = {};
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i], sid = it && it.sessionId && it.sessionId.value;
-      if (typeof sid === 'string' && !(it.isRemote && it.isRemote.value)) byId[sid] = it;
-    }
+    var comms = src.comms, find = sessionLookup(src);
     var states = {}, st = asList(comms.sessionStates && comms.sessionStates.value);
     for (var j = 0; j < st.length; j++) if (st[j] && typeof st[j].sessionId === 'string') states[st[j].sessionId] = st[j];
     var unread = {}, un = asList(comms.unreadSessionKeys && comms.unreadSessionKeys.value);
@@ -66,7 +148,7 @@
       for (var n = 0; n < ids.length; n++) {
         var id = ids[n];
         if (typeof id !== 'string' || seen[id]) continue;
-        var item = byId[id], info = states[id];
+        var item = find(id), info = states[id];
         if (!item && !info) continue;
         seen[id] = true;
         var last = item && item.lastModifiedTime ? item.lastModifiedTime.value : void 0;
@@ -83,20 +165,6 @@
     if (window.__cceSidebarShown !== false) add(asList(comms.sidebarSessionIds && comms.sidebarSessionIds.value), 'sidebar');
     out.sort(function(a, b){ return b.last - a.last; });
     return out;
-  };
-
-  var toggleOpenSessions = function(e){
-    try {
-      var root = e.currentTarget.closest('[data-cce-open-sessions]');
-      if (!root) return;
-      var collapsed = root.getAttribute('data-cce-collapsed') !== '1';
-      try { localStorage.setItem(OPEN_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (err) { /* kept for this page only */ }
-      // Attributes only, on elements of our own: the next render of the list computes the same from the stored value.
-      root.setAttribute('data-cce-collapsed', collapsed ? '1' : '0');
-      e.currentTarget.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      var chev = e.currentTarget.querySelector('[data-cce-open-chevron]'), on = chev && chev.getAttribute('data-cce-open-chevron');
-      if (chev && on && chev.firstElementChild) chev.firstElementChild.classList.toggle(on, !collapsed);
-    } catch (err) { /* the section stays as it was */ }
   };
 
   /* Which row is being renamed, as a signal of the panel's own kind: read during the list's render, it re-renders the
@@ -161,19 +229,9 @@
       if (!ui || typeof ui.jsx !== 'function' || typeof ui.jsxs !== 'function' || !src || !src.comms || !src.context) return null;
       var rows = openSessionsNow(src);
       if (!rows.length) return null;
-      if (!openStyle) {
-        openStyle = document.createElement('style');
-        openStyle.setAttribute('data-cce-open-sessions-style', '1');
-        openStyle.textContent = OPEN_CSS;
-        head.appendChild(openStyle);
-      }
-      var F = ui.jsx, W = ui.jsxs, c = ui.cls || {}, l = window.__cceListCls || {}, Dot = window.__cceStatusDot;
+      var F = ui.jsx, W = ui.jsxs, l = window.__cceListCls || {}, Dot = window.__cceStatusDot;
       var active = src.comms.activeSessionId && src.comms.activeSessionId.value;
-      var collapsed = openCollapsed();
-      var open = function(row){
-        openFollowSkip = row.id;
-        try { src.context.openInEditor(row.id, void 0, { openState: row.state, isRemote: false }); } catch (e) { /* nothing opens */ }
-      };
+      var open = openFrom(src);
       var body = rows.map(function(row){
         var drawn = listRowFor(ui, src, row, 'cce-open-', open);
         if (drawn) return drawn;
@@ -190,22 +248,6 @@
           ],
         }, row.id);
       });
-      return W('div', {
-        'data-cce-open-sessions': '1', 'data-cce-collapsed': collapsed ? '1' : '0',
-        children: [
-          F('div', { className: c.sectionHeader || '', children: W('button', {
-            className: c.sectionToggle || '', onClick: toggleOpenSessions, 'aria-expanded': collapsed ? 'false' : 'true',
-            title: collapsed ? 'Expand open sessions' : 'Collapse open sessions',
-            children: [
-              ui.Chevron ? F('span', { 'data-cce-open-chevron': c.sectionChevronExpanded || '', style: { display: 'inline-flex' },
-                children: F(ui.Chevron, { className: (c.sectionChevron || '') + (collapsed ? '' : ' ' + (c.sectionChevronExpanded || '')) }),
-              }) : null,
-              F('span', { className: c.sectionLabel || '', children: 'Open sessions' }),
-              F('span', { 'data-cce-open-count': '1', children: String(rows.length) }),
-            ],
-          }) }),
-          F('div', { 'data-cce-open-body': '1', className: l.sessionsList || '', children: body }),
-        ],
-      });
+      return drawSection(ui, OPEN_SECTION, rows.length, body);
     } catch (e) { return null; }
   };

@@ -14,26 +14,58 @@
    * the conversation. Weak, so nothing is held after the panel drops the block.
    */
   var PROMPT_OF = new WeakMap();
+  /* A sub-agent's reply's tool calls, as entries of the contents list, kept when the reply is worked out in full so that
+     a settled reply of the agent in view still has its calls listed - the way UUIDS_OF keeps what its efforts need. */
+  var ACTS_OF = new WeakMap();
 
   // A line that begins with what used to follow the time: the tag's or the figures' own leading space goes with it.
   var lead = function(v){ return v ? v.replace(/^\s+/, '') : v; };
 
+  /*
+   * Everything worked out once and kept, worked out again: the rows of your messages, the replies settled with their
+   * owner recorded, and the marks inside those replies - which go back into the set a sweep rebuilds, so that the ones
+   * not given again are taken off at the end of it.
+   */
+  var resetMarks = function(){
+    PROMPT_OF = new WeakMap();
+    var owned = document.querySelectorAll('[' + OWNER_ATTR + ']');
+    for (var i = 0; i < owned.length; i++) { owned[i].removeAttribute(OWNER_ATTR); owned[i].removeAttribute(SETTLED_ATTR); }
+    var held = document.querySelectorAll('[' + ATTR + ']');
+    for (var k = 0; k < held.length; k++) marked.add(held[k]);
+  };
+  /* The switches whose state is part of a mark. Marks are worked out once and kept, so when one of these changes - or
+     the marks as a whole are switched - everything is worked out again on that sweep; otherwise only the newest message
+     and the last LIVE_TAIL replies would follow, and the rest would keep what they showed before. */
+  var MARK_SWITCHES = ['timestamps', 'subAgentTags', 'replyDuration', 'contextShare', 'cost', 'modelName'];
+  var markSig = '';
+  var marksFollowSwitches = function(){
+    var s = isOn() ? '1' : '0';
+    for (var i = 0; i < MARK_SWITCHES.length; i++) s += isOff(MARK_SWITCHES[i]) ? '1' : '0';
+    if (s === markSig) return;
+    if (markSig) resetMarks();
+    markSig = s;
+  };
+
   var stamp = function(){
-    if (!isOn()) { sweep(); return; }
     var tA = clock(), wF = WALK.fiber, wT = WALK.text;
     var bubbles = document.querySelectorAll(USER), groups = new Map();
-    // The footer is the seed of last resort, and the only one a conversation with no messages in it has: the session
-    // object is a prop of the footer toolbar too. Without it an empty conversation has no session at all, which costs
-    // the info button its session id and the chimes their signals until the first message arrives.
-    if (!sessionRef) {
-      var seed = bubbles[0] || document.querySelector(ASSIST) || document.querySelector(SEND);
-      if (seed) sessionRef = findSession(seed);
-    }
+    // The session, looked up on every sweep with one walk up from the first of these that is there (useSession,
+    // 25-session.js), marks on or off: the chimes, the figures and the footer read it too. The footer is the seed of
+    // last resort, and the only one a conversation with no messages in it has: the session object is a prop of the
+    // footer toolbar too. Without it an empty conversation has no session at all, which costs the info button its
+    // session id and the chimes their signals until the first message arrives.
+    var seed = bubbles[0] || document.querySelector(ASSIST) || document.querySelector(SEND);
+    var found = seed ? findSession(seed) : null;
+    if (found && found !== sessionRef) useSession(found);
+    viewFilterOff();
+    marksFollowSwitches();
+    if (!isOn()) { sweep(); return; }
     if (sessionRef) indexTitles(sessionRef);
     for (var i = 0; i < bubbles.length; i++) {
-      var b = bubbles[i], c = ctxOf(b);
-      if (!c.message) continue;
-      var g = groups.get(c.message); if (!g) { g = []; groups.set(c.message, g); }
+      // A row already built for a block carries the block's message, so only the blocks without one are walked up to it.
+      var b = bubbles[i], kept = PROMPT_OF.get(b), msg = kept ? kept.message : ctxOf(b).message;
+      if (!msg) continue;
+      var g = groups.get(msg); if (!g) { g = []; groups.set(msg, g); }
       g.push(b);
     }
     var tB = clock();
@@ -61,8 +93,9 @@
           var line = textOf(b, b === lastBubble);
           // An attachment or an image carries no line, so it gets no row - and a message that is only an attachment
           // keeps its mark through the block below rather than being skipped altogether.
-          // null until made: a mark can rightly be empty, and an empty one must not be made again on every sweep.
-          row = { node: b, top: b, ts: m.timestamp, text: line, mark: null };
+          // null until made: a mark can rightly be empty, and an empty one must not be made again on every sweep. The
+          // message is kept for grouping the blocks, and the time the contents list shows is added by syncMap.
+          row = { node: b, top: b, ts: m.timestamp, text: line, mark: null, message: m, when: null };
           if (!live) PROMPT_OF.set(b, row);
         }
         if (live || row.mark === null) {
@@ -90,9 +123,11 @@
     if (!ordered) promptTs.sort(function(a, b){ return a - b; });
     var tC = clock();
     var msgs = document.querySelectorAll(ASSIST);
-    // Both are already in hand, so aiming the text observer costs one walk up to the scrolling ancestor and a compare.
+    // Both are already in hand, so aiming the text observer costs a containment check while it is still on their scroller.
     aimText(bubbles[0] || msgs[0]);
-    var seen = [], seenSet = {}, shownRows = 0, fullMsgs = 0, settledMsgs = 0, blocks = 0;
+    // A reply behind the newest ones whose owner this sweep records settles on the next one, which is asked for rather
+    // than left to whatever changes the page next: the page may well not change again until a reply grows.
+    var seen = [], seenSet = {}, shownRows = 0, fullMsgs = 0, settledMsgs = 0, blocks = 0, settleNext = false;
     var agentView = (VIEW !== 'all' && VIEW !== 'main'), acts = [];
     // Each owner's effort run, carried through the replies in document order (76-effort.js).
     var effState = {};
@@ -109,6 +144,7 @@
           applyOwner(msgs[j], own0);
           if (own0 !== 'main' && !seenSet[own0]) { seenSet[own0] = 1; seen.push(own0); }
           if (ownerVisible(own0)) shownRows++;
+          if (agentView && own0 === VIEW) { var tools0 = ACTS_OF.get(msgs[j]); if (tools0) acts.push.apply(acts, tools0); }
           if (msgs[j].getAttribute(SETTLED_ATTR) !== '1') {
             var held = msgs[j].querySelectorAll('[' + ATTR + ']');
             for (var q = 0; q < held.length; q++) marked.delete(held[q]);
@@ -119,7 +155,7 @@
         }
       }
       fullMsgs++;
-      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '', figured = false;
+      var rows = msgs[j].children, ownerDone = false, own = 'main', uus = [], effHere = '', figured = false, tools = null;
       blocks += rows.length;
       for (var r = 0; r < rows.length; r++) {
         var row = rows[r], cx = ctxOf(row), v = '';
@@ -141,8 +177,8 @@
         if (annot) {
           var t = cx.block.content && cx.block.content.type;
           v = isOff('timestamps') ? '' : fmt(cx.message.timestamp);
-          if (agentView && own === VIEW && (t === 'tool_use' || t === 'server_tool_use')) {
-            acts.push({ node: row, ts: cx.message.timestamp, text: toolLabel(cx.block.content) });
+          if (own !== 'main' && (t === 'tool_use' || t === 'server_tool_use')) {
+            (tools || (tools = [])).push({ node: row, ts: cx.message.timestamp, text: toolLabel(cx.block.content), when: null });
           }
           if (v && (t === 'tool_use' || t === 'server_tool_use') && typeof cx.block.cceResultAt === 'number') v += '\u2192' + fmt(cx.block.cceResultAt).replace(/^(\d{4}\/)?\d\d\/\d\d /, '');
         }
@@ -163,6 +199,11 @@
         set(row, lead(v));
       }
       if (uus.length) UUIDS_OF.set(msgs[j], uus);
+      if (ownerDone && j < msgs.length - LIVE_TAIL) settleNext = true;
+      if (tools) {
+        ACTS_OF.set(msgs[j], tools);
+        if (agentView && own === VIEW) acts.push.apply(acts, tools);
+      }
     }
     // Compaction blocks belong to the main thread, so a sub-agent view hides them too.
     var cps = document.querySelectorAll(COMPACT);
@@ -188,6 +229,7 @@
              controls: clock() - tF, total: clock() - tA,
              bubbles: bubbles.length, msgs: msgs.length, full: fullMsgs, settled: settledMsgs, blocks: blocks,
              fiber: WALK.fiber - wF, text: WALK.text - wT });
+    if (settleNext) schedule();
   };
   var queued = false, last = 0;
   var sweptElements = 0, firstSweepMs = 0, sweeps = 0, bootAt = 0;
@@ -314,24 +356,46 @@
     for (var k = 0; k < want.length; k++) mode.parentElement.insertBefore(want[k], mode);
   };
 
+  /* The nodes this script adds - labels, lists, menus, boxes, the footer buttons - change their own children all the
+     time, the tool clock once a second, and nothing inside them is a message. */
+  var OWN_NODES = '[data-cce-toolclock],[data-cce-label],[data-cce-info],[data-cce-mute],[data-cce-view],[data-cce-focus-btn],[id^="cce-"]';
+  var ours = function(n){
+    var el = n && (n.nodeType === 1 ? n : n.parentElement);
+    return !!(el && el.closest && el.closest(OWN_NODES));
+  };
+  var oursOnly = function(rec){
+    if (ours(rec.target)) return true;
+    // One of ours put into a node of the panel's, or taken out of one.
+    if (rec.type !== 'childList' || !(rec.addedNodes.length + rec.removedNodes.length)) return false;
+    for (var a = 0; a < rec.addedNodes.length; a++) if (!ours(rec.addedNodes[a])) return false;
+    for (var d = 0; d < rec.removedNodes.length; d++) if (!ours(rec.removedNodes[d])) return false;
+    return true;
+  };
   var onMutations = function(records){
     /* Changes inside the document's head are stylesheets coming and going - this script's own reloads among them - and
        none of them can change a message. A panel that mounts something there changes the body as well, which is what
-       gets swept. Without this, every reload of a stylesheet was a sweep of its own. */
+       gets swept. Without this, every reload of a stylesheet was a sweep of its own. The same goes for our own nodes. */
     for (var r = 0; r < records.length; r++) {
       var t = records[r].target;
-      if (t !== head && !(t && t.parentNode === head)) { schedule(); return; }
+      if (t === head || (t && t.parentNode === head) || oursOnly(records[r])) continue;
+      schedule();
+      return;
     }
   };
 
-  var aimed = null, aimer = null;
+  var aimed = null, aimer = null, aimedAtScroller = false;
   var aimText = function(anyMessage){
     if (!anyMessage) return;
-    var root = scrollerOf(anyMessage) || anyMessage.parentElement;
+    /* Still the scroller the messages are in, so it is not looked for again: finding it reads the style and the size of
+       each ancestor, which forces a style and layout pass in the middle of the sweep's writes. */
+    if (aimedAtScroller && aimed.isConnected && aimed.contains(anyMessage)) return;
+    var sc = scrollerOf(anyMessage), root = sc || anyMessage.parentElement;
+    aimedAtScroller = !!sc;
     if (!root || root === aimed) return;
     if (aimer) aimer.disconnect();
     aimer = new MutationObserver(onMutations);
-    aimer.observe(root, { childList: true, subtree: true, characterData: true });
+    // Text only: the document's observer already reports every child added or taken away, these included.
+    aimer.observe(root, { characterData: true, subtree: true });
     aimed = root;
   };
 
@@ -365,25 +429,6 @@
    * blocks painting. Before this, the mutation observer and an immediate first sweep both ran while the first paint was
    * still pending - work the panel had to get through before it could show anything at all.
    */
-  /*
-   * TEMPORARY, part of one investigation - delete with the host-busy watcher in src/openlatency.js once the panel's slow
-   * first message is understood.
-   *
-   * One line as this script is reached, before anything else, so that a panel that never finishes starting still says
-   * where it got to.
-   *
-   * The report below is the fuller one and is printed after the first sweep - which is no use for a panel that stalls
-   * before then: the console is simply empty, and an empty console cannot be told apart from a script that never ran at
-   * all. This line distinguishes those two, and its number answers the question directly, because this script is appended
-   * AFTER the panel's own code: the time on it is the time the panel's bundle finished evaluating. A panel seen taking 94
-   * seconds to send its first message is then settled one way or the other - a large number here means the delay was over
-   * before anything of ours existed, and a small one means the bundle was ready early and the wait is further in.
-   */
-  try {
-    console.log('[claude-code-extras] script reached at ' + Math.round(T0)
-      + 'ms (panel bundle had finished evaluating by then; this script is appended after it)');
-  } catch (e) {}
-
   reloadCss();
   var booted = false;
   var boot = function(){

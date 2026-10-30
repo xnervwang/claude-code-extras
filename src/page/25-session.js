@@ -10,8 +10,8 @@
     var v = m.parentToolUseId || m.sdkParentToolUseId || m.agentId || m.taskId;
     return typeof v === 'string' ? v : '';
   };
-  // toolUseId -> spawn description. The session is located once and cached, so the hot loop below
-  // keeps its early exit; the index is rebuilt only when the task table object is replaced.
+  // toolUseId -> spawn description. The session is located by its own walk rather than inside the hot loop below, so
+  // that loop keeps its early exit; the index is rebuilt only when the task table object is replaced.
   var sessionRef = null, titles = new Map(), srcMap = null, srcTasks = null, KNOWN = [];
   var findSession = function(el){
     for (var f = fiber(el), i = 0; f && i < 60; f = f.return, i++) {
@@ -19,6 +19,25 @@
       if (pr && typeof pr === 'object' && pr.session && pr.session.agentMapAgents) return pr.session;
     }
     return null;
+  };
+  /*
+   * The conversation the panel is showing. One panel shows one conversation at a time but moves between them - New and
+   * Resume in the sidebar switch it in place - so the sweep looks the session up again every time, and when it is
+   * another one, everything kept about the one before goes: its sub-agents' names, its chime state, its context
+   * breakdown, its efforts, a view of one of its sub-agents, the info box about it, and the marks worked out against it.
+   */
+  var useSession = function(s){
+    var was = sessionRef;
+    sessionRef = s;
+    if (!was) return;
+    titles = new Map(); KNOWN = []; srcMap = srcTasks = null;
+    try { primeIdle(); } catch (e) {}
+    try { forgetCtx(); } catch (e) {}
+    try { resetEfforts(); } catch (e) {}
+    try { leaveView(); } catch (e) {}
+    try { closeInfo(); } catch (e) {}
+    try { resetMarks(); } catch (e) {}
+    bgCountsAt = 0; jumpIdx = -1;
   };
   var harvest = function(m){
     if (!m || typeof m.values !== 'function') return;

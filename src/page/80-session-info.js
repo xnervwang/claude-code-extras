@@ -130,7 +130,7 @@
   };
 
   var ensureInfo = function(){
-    if (isOff('footerInfo')) return;
+    if (isOff('footerInfo')) { INFO = dropControl(INFO); closeInfo(); return; }
     if (INFO && INFO.isConnected) return;
     var send = document.querySelector(SEND);
     if (!send) return;

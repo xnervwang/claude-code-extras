@@ -73,15 +73,36 @@
       maxOutputTokens: u.maxOutputTokens > 0 ? u.maxOutputTokens : Number.MAX_SAFE_INTEGER,
     });
   };
+  /*
+   * Whether the meter is kept on screen. The two edits in src/webview.js that keep it there and move its switch points
+   * ask this from the meter's own render; with the switch off they leave the meter to Claude Code's rule, which hides it
+   * while more than half the window is free and picks its three states at its own points, and its arc is not trimmed.
+   * Anything going wrong answers no, which is that same rule. The meter asks again only when it draws again, so a switch
+   * turned off reaches it with its next change.
+   */
+  window.__cceMeterKept = function(){
+    try { return !isOff('contextMeter'); } catch (e) { return false; }
+  };
+  /* The button this script last trimmed or outlined, so that switching the meter off takes both away again. */
+  var meterMarked = null;
+  var unmarkMeter = function(btn){
+    var arcs = btn.querySelectorAll('svg path');
+    for (var i = 0; i < arcs.length; i++) if (arcs[i].style.strokeDasharray) arcs[i].style.strokeDasharray = '';
+    btn.style.outline = ''; btn.style.outlineOffset = ''; btn.style.borderRadius = '';
+  };
   // Outline the context meter once the remaining share gets thin, ahead of an auto-compact.
   var LOW_AT = 15;
   var markCtxLow = function(){
-    if (isOff('contextMeter')) return;
+    if (isOff('contextMeter')) {
+      if (meterMarked) { try { unmarkMeter(meterMarked); } catch (e) {} meterMarked = null; }
+      return;
+    }
     var btn = document.querySelector('button[class*="usageButtonV2"]');
     if (!btn) return;
     var used = meterUsed(btn);
     if (used === null) return;
     var left = 100 - used;
+    meterMarked = btn;
     try { trimMeter(btn, used); } catch (e) {}
     if (left <= LOW_AT) {
       btn.style.outline = '1px solid var(--vscode-editorWarning-foreground, #cca700)';

@@ -58,7 +58,14 @@ function findBrowser() {
    that ships. */
 const SETUP = String.raw`
   window.requestAnimationFrame = function(cb){ return setTimeout(function(){ cb(performance.now()); }, 16); };
-  var COUNT = { cdp: 0, qsa: 0, text: 0 };
+  var COUNT = { cdp: 0, qsa: 0, text: 0, dates: 0, gcs: 0 };
+  var OBSERVED = [];
+  /* Dates made, which is what formatting a time costs: counted to tell a sweep that formats only what is new from one
+     that formats every message again. */
+  (function(){
+    var RealDate = window.Date;
+    window.Date = class extends RealDate { constructor(...a) { super(...a); COUNT.dates++; } };
+  })();
   /* Every request the revision poll starts, and every one it gives up on. With stallProbe the request is never answered,
      which is what a stalled webview resource looks like to the page; without it the real load goes ahead and only the
      count is taken, which is how the slower rate for a backgrounded window is measured. */
@@ -76,6 +83,11 @@ const SETUP = String.raw`
       var d = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
       Object.defineProperty(img, 'src', { get: function(){ return d.get.call(img); },
         set: function(v){ if (v === '') PROBES.cancelled++; else PROBES.made++; d.set.call(img, v); } });
+      // The revision the probe reads, moved by a flip as the extension moves it when it rewrites the live stylesheet.
+      if (CFG.flip) {
+        var w = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'naturalWidth');
+        Object.defineProperty(img, 'naturalWidth', { get: function(){ return window.__cceTestRev || w.get.call(img); } });
+      }
       return img;
     };
   })();
@@ -91,8 +103,27 @@ const SETUP = String.raw`
     Element.prototype.querySelectorAll = function(s){ COUNT.qsa++; return eq.call(this, s); };
     var tc = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
     Object.defineProperty(Node.prototype, 'textContent', { configurable: true, enumerable: tc.enumerable, get: tc.get,
-      set: function(v){ COUNT.text++; tc.set.call(this, v); } });
+      set: function(v){ COUNT.text++; if (CFG.busyClock) clockWrite(this); tc.set.call(this, v); } });
+    // Every read of the computed style, which makes the browser work the page's styles out.
+    var gcs = window.getComputedStyle;
+    window.getComputedStyle = function(){ COUNT.gcs++; return gcs.apply(window, arguments); };
+    // The options every observer is started with, so a run can say what each one watches.
+    var obs = MutationObserver.prototype.observe;
+    MutationObserver.prototype.observe = function(target, opts){ OBSERVED.push(opts || {}); return obs.call(this, target, opts); };
   })();
+  /* The tool clock's own text writes and the layouts its size reads force: a read after a write lays the page out. */
+  var CLOCK = { writes: 0, layouts: 0, dirty: false };
+  var inClock = function(el){ return !!(el && el.nodeType === 1 && el.closest && el.closest('[data-cce-toolclock]')); };
+  var clockWrite = function(el){ if (inClock(el)) { CLOCK.writes++; CLOCK.dirty = true; } };
+  if (CFG.busyClock) {
+    ['offsetWidth', 'offsetHeight'].forEach(function(k){
+      var d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, k);
+      Object.defineProperty(HTMLElement.prototype, k, { configurable: true, get: function(){
+        if (CLOCK.dirty && inClock(this)) { CLOCK.layouts++; CLOCK.dirty = false; }
+        return d.get.call(this);
+      } });
+    });
+  }
 
   var FIBER = '__reactFiber$ccetest';
   var SUB = 'toolu_sub1';
@@ -101,6 +132,23 @@ const SETUP = String.raw`
     subagentTasks: { value: new Map() },
     sessionId: { value: CFG.efforts && !CFG.efforts.sidAfterMs ? CFG.efforts.sid : '' },
   };
+  // A window and a token count, so the newest reply's figures say whose they are: 10% here, 50% in the conversation a
+  // switch moves to.
+  if (CFG.switchSession) session.usageData = { value: { totalTokens: 100000, contextWindow: 1000000 } };
+  /* A turn at work in Focus view, on a tool call that has not come back: the working line is drawn, and the tool clock
+     at its end counts the seconds. The line is narrow enough that only the clock's short form fits. */
+  if (CFG.busyClock) {
+    session.visiblyBusy = { value: true };
+    session.messages = { value: [
+      { type: 'user', timestamp: Date.now() - 5000, content: [{ content: { type: 'text' } }] },
+      { type: 'assistant', timestamp: Date.now() - 4000, content: [{ content: { type: 'tool_use', name: 'Bash' } }] },
+    ] };
+    var working = document.createElement('div');
+    working.className = 'spinnerRow_s1';
+    working.style.cssText = 'width:300px;height:20px;font-size:11px';
+    working.innerHTML = '<span style="display:inline-block"><span class="visuallyHidden_v1">Claude is working</span>Working</span>';
+    document.body.insertBefore(working, document.body.firstChild);
+  }
   // A panel learns which conversation it shows only once the bundle has asked, which can be after the first probe; the
   // efforts then come with the next one, inside what would otherwise have been the idle spell.
   if (CFG.efforts && CFG.efforts.sidAfterMs) setTimeout(function(){ session.sessionId.value = CFG.efforts.sid; }, CFG.efforts.sidAfterMs);
@@ -181,10 +229,22 @@ const SETUP = String.raw`
     if (i && i % CFG.compactEvery === 0) compaction();
     var ts = t0 + i * 600000;
     user(i, ts);
-    for (var k = 0; k < 3; k++) reply(ts + 1000 * (k + 1), CFG.subagent && i === CFG.turns - 2 && k === 1 ? SUB : '');
+    var agentAt = typeof CFG.subagentTurn === 'number' ? CFG.subagentTurn : CFG.turns - 2;
+    for (var k = 0; k < 3; k++) reply(ts + 1000 * (k + 1), CFG.subagent && i === agentAt && k === 1 ? SUB : '');
   };
   for (var i = 0; i < CFG.turns; i++) turn(i);
   var addTurn = function(){ turn(CFG.turns); };
+  /* The panel moving to another conversation in place, as New and Resume in the sidebar do: another session object,
+     its own messages in place of the old ones, and the footer handed the new session. */
+  var NEXT_SID = '11111111-2222-4333-8444-555555555555';
+  var switchSession = function(){
+    var next = { agentMapAgents: { value: new Map() }, subagentTasks: { value: new Map() }, sessionId: { value: NEXT_SID },
+      usageData: { value: { totalTokens: 500000, contextWindow: 1000000 } } };
+    sessionFiber = { memoizedProps: CFG.focusCtx === false ? { session: next } : { session: next, context: focusCtx }, return: null };
+    document.querySelector('button[type="submit"]')[FIBER].return = sessionFiber;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    for (var n = 0; n < 3; n++) turn(n);
+  };
 `;
 
 /* Runs after it: three phases on the page's own clock, then the readout. Idle first - the page has booted and nothing
@@ -193,7 +253,7 @@ const SETUP = String.raw`
 const PHASES = String.raw`
   var R = { script: !!window.__cceStats };
   var stats = function(){ return window.__cceStats ? window.__cceStats() : null; };
-  var snap = function(){ var s = stats(); return { n: s ? s.n : -1, cdp: COUNT.cdp, qsa: COUNT.qsa, text: COUNT.text }; };
+  var snap = function(){ var s = stats(); return { n: s ? s.n : -1, cdp: COUNT.cdp, qsa: COUNT.qsa, text: COUNT.text, dates: COUNT.dates, gcs: COUNT.gcs }; };
   var finish = function(){ document.getElementById('out').textContent = 'CCE-' + 'RESULT:' + JSON.stringify(R); };
   var later = function(ms, f){
     setTimeout(function(){ try { f(); } catch (e) { R.error = String(e && e.stack || e); finish(); } }, ms);
@@ -257,6 +317,11 @@ const PHASES = String.raw`
       R.idleSweeps = b.n - a.n;
       R.idleChild = mut.child; R.idleAttr = mut.attr; R.idleChars = mut.chars; R.idleText = b.text - a.text;
       R.probesMade = PROBES.made; R.probesCancelled = PROBES.cancelled;
+      // The page's own observers; the harness's, the one that watches attributes, is left out.
+      R.observed = OBSERVED.filter(function(o){ return !o.attributes; });
+      var clock = document.querySelector('[data-cce-toolclock]');
+      R.clockText = clock && clock.style.display === 'block' ? clock.innerText : '';
+      R.clockWrites = CLOCK.writes; R.clockLayouts = CLOCK.layouts;
       /* For each reply, which child carries the figures - the reply's duration is the one figure every reply has. */
       R.figuresAt = [];
       var replyEls = document.querySelectorAll('[data-testid="assistant-message"]');
@@ -303,6 +368,7 @@ const PHASES = String.raw`
     b = snap();
     var s = stats(), last = s && s.last;
     R.growSweeps = b.n - a.n; R.growCdp = b.cdp - a.cdp; R.growQsa = b.qsa - a.qsa; R.growText = b.text - a.text;
+    R.growDates = b.dates - a.dates; R.growGcs = b.gcs - a.gcs;
     R.fiber = last ? last.fiber : -1; R.full = last ? last.full : -1;
     R.msgs = last ? last.msgs : -1; R.bubbles = last ? last.bubbles : -1;
     a = snap();
@@ -314,26 +380,114 @@ const PHASES = String.raw`
     b = snap();
     R.rebuildSweeps = b.n - a.n; R.rebuildCdp = b.cdp - a.cdp;
     R.prompts = CFG.turns + 1; R.compactions = compactions;
-    if (CFG.clickFocus) return clickFocus();
-    finish();
+    next();
   };
+  /* What a run asks for beyond the three phases, one step after another; each calls next() when it is done. */
+  var STEPS = [];
+  var next = function(){ var s = STEPS.shift(); if (s) s(); else finish(); };
   /* The button pressed once: what it asked of the panel, and what it says afterwards. */
   var clickFocus = function(){
     var fb = document.querySelector('[data-cce-focus-btn]');
-    if (!fb) { R.clicked = false; return finish(); }
+    if (!fb) { R.clicked = false; return next(); }
     fb.click();
     later(900, function(){
       R.clicked = true; R.focusCalls = focusCtx.calls.slice(); R.focusAfter = focusCtx.on;
       R.focusLabelAfter = fb.getAttribute('aria-label');
-      finish();
+      next();
     });
   };
+  /* The panel moving to another conversation, and what the page reads off the session afterwards: the newest reply's
+     figures and the info box. */
+  var newestBlock = function(){
+    var rs = document.querySelectorAll('[data-testid="assistant-message"]'), last = rs[rs.length - 1];
+    return last && last.children[CFG.panelStamp ? 1 : 0];
+  };
+  var switched = function(){
+    R.labelBeforeSwitch = labelOf(newestBlock());
+    switchSession();
+    later(1500, function(){
+      R.labelAfterSwitch = labelOf(newestBlock());
+      var info = document.querySelector('[data-cce-info]');
+      if (info) info.click();
+      later(300, function(){
+        var box = document.getElementById('cce-info');
+        R.infoAfterSwitch = box ? box.textContent : '';
+        next();
+      });
+    });
+  };
+  var countHidden = function(){
+    var all = document.querySelectorAll('[data-testid="assistant-message"], [class*="userMessage_"]'), n = 0;
+    for (var i = 0; i < all.length; i++) if (all[i].style.display === 'none') n++;
+    return n;
+  };
+  var railShown = function(){ var r = document.getElementById('cce-toc-rail'); return !!r && r.style.display !== 'none'; };
+  var tocRows = function(){
+    var p = document.getElementById('cce-toc'), l = p && p.children[1];
+    return l ? Array.prototype.map.call(l.children, function(r){ return r.textContent; }) : [];
+  };
+  /* One sub-agent picked in the view filter as a person does it: the button, then the agent's row in its menu. */
+  var pickView = function(){
+    var btn = document.querySelector('[data-cce-view]');
+    if (btn) btn.click();
+    var rows = document.querySelectorAll('#cce-view-menu > div'), row = null;
+    for (var i = 0; i < rows.length; i++) if (rows[i].textContent === 'Survey the hooks') row = rows[i];
+    R.picked = !!row;
+    if (row) row.click();
+    later(600, function(){
+      R.hiddenInView = countHidden(); R.railInView = railShown(); R.tocInView = tocRows();
+      next();
+    });
+  };
+  /* Switches turned off while the page is open, the way the extension does it: the live stylesheet changes and the
+     revision probe sees a new number. Then what is left of each: the times, what the view hid, the contents rail and
+     its keys, and the footer controls. */
+  var controls = function(){
+    return ['info', 'mute', 'focus-btn', 'view'].filter(function(k){ return !!document.querySelector('[data-cce-' + k + ']'); });
+  };
+  /* The key that steps to the next of your messages, pressed with the conversation scrolled to its top. */
+  var pressNext = function(done){
+    var sc = document.getElementById('list');
+    sc.scrollTop = 0;
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '.', bubbles: true }));
+    later(400, function(){ done(sc.scrollTop !== 0); });
+  };
+  var tags = function(){
+    var ls = document.querySelectorAll('[data-cce-ts]'), n = 0;
+    for (var i = 0; i < ls.length; i++) if (ls[i].getAttribute('data-cce-ts').indexOf('#') >= 0) n++;
+    return n;
+  };
+  var flipped = function(){
+    R.railBeforeFlip = railShown(); R.controlsBeforeFlip = controls();
+    readTimes('BeforeFlip'); R.tagsBeforeFlip = tags();
+    pressNext(function(moved){
+      R.keyMovedBeforeFlip = moved;
+      later(1500, function(){
+        document.documentElement.setAttribute('data-cce-test-flip', '');
+        window.__cceTestRev = 2;
+        later(4500, function(){
+          readTimes('AfterFlip'); R.tagsAfterFlip = tags();
+          R.hiddenAfterFlip = countHidden(); R.railAfterFlip = railShown(); R.controlsAfterFlip = controls();
+          pressNext(function(movedAfter){ R.keyMovedAfterFlip = movedAfter; next(); });
+        });
+      });
+    });
+  };
+  if (CFG.clickFocus) STEPS.push(clickFocus);
+  if (CFG.switchSession) STEPS.push(switched);
+  if (CFG.pickView) STEPS.push(pickView);
+  if (CFG.flip) STEPS.push(flipped);
   later(500, function(){ settle(-1, 0, 500); });
 `;
 
+/* The switches a run turns off, as custom properties: from the start in a style of the page's own, or behind an
+   attribute in the live stylesheet that a flip puts on the root. */
+const offRules = (keys) => (keys || []).map((k) => `--cce-off-${k}:1;`).join('');
+
 function page(cfg, script) {
-  // With efforts, the page is pointed at its own folder as the panel's, which is where they are read from.
-  return '<!doctype html><html><head>' + (cfg.efforts ? '<link rel="stylesheet" href="index.css">' : '')
+  // With efforts or a flip, the page is pointed at its own folder as the panel's, which is where they are read from.
+  return '<!doctype html><html><head>' + (cfg.efforts || cfg.flip ? '<link rel="stylesheet" href="index.css">' : '')
+    + (cfg.offSwitches ? '<style>:root{' + offRules(cfg.offSwitches) + '}</style>' : '')
     + '</head><body><pre id="out"></pre>'
     + '<div id="list" style="overflow-y:auto;height:600px"></div>'
     + '<form><div class="inputRow_r1">'
@@ -348,8 +502,9 @@ function page(cfg, script) {
 }
 
 /**
- * One stand-in panel, run to the end. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent, and the phase lengths. Resolves to the
- * page's counts, or { error } saying why there are none.
+ * One stand-in panel, run to the end. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent, subagentTurn,
+ * switchSession, offSwitches (off from the start), pickView, flip (switches turned off later), and the phase lengths.
+ * Resolves to the page's counts, or { error } saying why there are none.
  */
 const DEFAULTS = { turns: 100, compactEvery: 20, focus: true, subagent: true, settleCapMs: 6000, idleMs: 3000, grows: 8 };
 
@@ -366,7 +521,17 @@ function run(browser, cfg, script) {
         `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${full.efforts.height || 7}"></svg>`);
       fs.writeFileSync(path.join(dir, wv.EFFORT_PREFIX + full.efforts.sid + '.css'), full.efforts.css);
     }
-    const budget = full.settleCapMs + full.idleMs + full.grows * 300 + 3000;
+    if (full.flip) {
+      const wv = require('../src/webview');
+      fs.writeFileSync(path.join(dir, 'index.css'), '');
+      if (!full.efforts) {
+        fs.writeFileSync(path.join(dir, 'claude-code-extras.rev.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="7"></svg>');
+      }
+      fs.writeFileSync(path.join(dir, 'claude-code-extras.css'), `:root[data-cce-test-flip]{${offRules(full.flip)}}\n` + wv.liveCss({ enabled: true }));
+    }
+    const steps = (full.clickFocus ? 1000 : 0) + (full.switchSession ? 2000 : 0) + (full.pickView ? 1000 : 0)
+      + (full.flip ? 8500 : 0);
+    const budget = full.settleCapMs + full.idleMs + full.grows * 300 + 3000 + steps;
     /* No --user-data-dir. Headless already starts from a temporary profile of its own, which is what keeps it apart
        from a browser the person is using; naming a directory instead makes it set that up as a lasting profile, and
        that first-run setup held every run here until the process was killed. */

@@ -90,6 +90,13 @@
   var setStyle = function(el, prop, value){
     if (el && el.style[prop] !== value) el.style[prop] = value;
   };
+  /* A control of ours whose switch has been turned off is taken off the page and forgotten: only no longer drawing it
+     again would leave the one already there, still working. Its hover text goes too, since the pointer leaving a
+     control that is no longer there is never reported. */
+  var dropControl = function(el){
+    if (el && el.parentNode) { el.parentNode.removeChild(el); hideLabel(); }
+    return null;
+  };
 
   // ── live settings: stylesheet + revision probe from the panel's own folder ──
   var fallback = null, sheet = null, loadedOnce = false, lastRev = -1;
@@ -160,6 +167,7 @@
     if (loading && loading.href) keep[loading.href] = true;
     if (inFlight && inFlight.src) keep[inFlight.src] = true;
     if (typeof effortLink !== 'undefined' && effortLink && effortLink.href) keep[effortLink.href] = true;
+    if (typeof effortLoading !== 'undefined' && effortLoading && effortLoading.href) keep[effortLoading.href] = true;
     withCaches(function(cache){
       return cache.keys().then(function(requests){
         requests.forEach(function(r){
@@ -192,7 +200,7 @@
         if (sheet.href !== l.href) forget(sheet.href);
         if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
       }
-      sheet = l; loadedOnce = true; onCache = null; offCache = {}; pinsCache = null;
+      sheet = l; loadedOnce = true; onCache = null; offCache = {}; pinsCache = null; propCache = {};
       if (fallback && fallback.parentNode) { fallback.parentNode.removeChild(fallback); fallback = null; }
       try { repaintPins(); } catch (e) { /* the next render of the list draws them anyway */ }
       schedule();
@@ -200,7 +208,7 @@
     l.onerror = function(){
       if (loading === l) loading = null;
       if (l.parentNode) l.parentNode.removeChild(l);
-      useFallback(); onCache = null; offCache = {}; pinsCache = null; schedule();
+      useFallback(); onCache = null; offCache = {}; pinsCache = null; propCache = {}; schedule();
     };
     loading = l;
     head.appendChild(l);

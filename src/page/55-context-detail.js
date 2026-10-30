@@ -8,7 +8,9 @@
   // Context usage detail on hover. The request crosses into the CLI and recomputes per-part token
   // counts, so it is never polled: it fires 400ms after the pointer settles on the meter, and the
   // result is cached until the used-token count changes (once per turn at most).
-  var CTX = null, ctxCache = null, ctxKey = '', ctxAt = 0, ctxOpenTimer = null, ctxHideTimer = null, ctxBusy = false;
+  // ctxBusy is the session a breakdown is being asked for, so a request still out for a conversation the panel has left
+  // does not hold back the one it shows now.
+  var CTX = null, ctxCache = null, ctxKey = '', ctxAt = 0, ctxOpenTimer = null, ctxHideTimer = null, ctxBusy = null;
   var ctxBtn = null, ctxOver = false;
   var CTX_TTL = 20000;  // even with an unchanged token count, the breakdown can shift when CLAUDE.md, skills or memory files change between turns
   var ctxWired = (typeof WeakSet === 'function') ? new WeakSet() : null;
@@ -224,18 +226,29 @@
   };
   // The breakdown crosses into the command-line side and is recomputed there, so it is requested only after the
   // pointer settles. If it cannot be had, nothing of ours appears and the panel's own summary is left standing.
+  var canAskCtx = function(){ return !!sessionRef && typeof sessionRef.getContextUsage === 'function'; };
   var fetchCtx = function(){
-    if (ctxBusy) return;
+    var asked = sessionRef;
+    if (ctxBusy === asked || ctxFresh() || !canAskCtx()) return;
     var key = ctxUsedKey();
-    if (ctxFresh()) return;
-    if (!sessionRef || typeof sessionRef.getContextUsage !== 'function') return;
-    ctxBusy = true;
-    sessionRef.getContextUsage().then(function(res){
-      ctxBusy = false;
+    ctxBusy = asked;
+    asked.getContextUsage().then(function(res){
+      if (ctxBusy === asked) ctxBusy = null;
+      // An answer for a conversation the panel has since left, or one nobody is hovering any more, says nothing.
+      if (sessionRef !== asked || !ctxOver) return;
       if (!res || !res.usage) { noteLine('Breakdown unavailable' + (res && res.error ? ': ' + res.error : '')); return; }
       ctxCache = res.usage; ctxKey = key; ctxAt = Date.now();
       showCtx(res.usage);
-    }, function(){ ctxBusy = false; noteLine('Breakdown request failed'); });
+    }, function(){
+      if (ctxBusy === asked) ctxBusy = null;
+      if (sessionRef === asked && ctxOver) noteLine('Breakdown request failed');
+    });
+  };
+  /* The breakdown shown and kept belongs to the conversation it was asked for. */
+  var forgetCtx = function(){
+    ctxCache = null; ctxKey = ''; ctxAt = 0;
+    if (CTX) CTX.style.display = 'none';
+    noteLine('');
   };
   var wireCtxButton = function(){
     var btn = document.querySelector('button[class*="usageButtonV2"]');
@@ -254,6 +267,10 @@
       ctxOpenTimer = setTimeout(function(){
         ctxOpenTimer = null;
         if (!ctxOver) return;
+        /* Said only while an answer is on its way, since only an answer clears it: one already in hand is shown
+           instead, and with no way to ask there is nothing to wait for. */
+        if (ctxFresh()) { showCtx(ctxCache); return; }
+        if (!(sessionRef && ctxBusy === sessionRef) && !canAskCtx()) return;
         noteLine('Loading breakdown...');
         fetchCtx();
       }, 2000);

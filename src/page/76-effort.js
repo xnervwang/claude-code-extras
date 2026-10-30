@@ -66,15 +66,27 @@
     effortPending = new WeakSet();
     schedule();
   };
+  /* The one still loading when the next is asked for, dropped for the reasons reloadCss gives for the live stylesheet
+     (05-page-setup.js): a load the service worker never answers would hold one of its permits for as long as the panel
+     lives, one more for every revision, and an older load answering late would replace a newer one. */
+  var effortLoading = null;
+  var dropEffortLoad = function(){
+    if (!effortLoading) return;
+    effortLoading.onload = effortLoading.onerror = null;
+    if (effortLoading.parentNode) effortLoading.parentNode.removeChild(effortLoading);
+    effortLoading = null;
+  };
   var loadEfforts = function(rev){
     var sid = sigValue('sessionId');
     if (!base || typeof sid !== 'string' || !/^[0-9a-f-]{36}$/i.test(sid)) return false;
     if (sid !== effortFor) { EFFORT_RUNS = {}; EFFORT_LASTS = {}; effortRaw = null; }
     effortFor = sid;
+    dropEffortLoad();
     var l = document.createElement('link');
     l.rel = 'stylesheet';
     l.href = base + EFFORT_PREFIX + sid + '.css?r=' + rev;
     l.onload = function(){
+      if (effortLoading === l) effortLoading = null;
       if (effortLink && effortLink !== l) {
         // Each revision is another address, kept by the editor's cache until something deletes it (05-page-setup.js).
         if (effortLink.href !== l.href) forget(effortLink.href);
@@ -84,9 +96,24 @@
       readEfforts();
     };
     // No file yet is the ordinary case for a conversation no window has read: nothing is known, so nothing is shown.
-    l.onerror = function(){ if (l.parentNode) l.parentNode.removeChild(l); };
+    l.onerror = function(){
+      if (effortLoading === l) effortLoading = null;
+      if (l.parentNode) l.parentNode.removeChild(l);
+    };
+    effortLoading = l;
     head.appendChild(l);
     return true;
+  };
+  /* The panel moved to another conversation: what was read for the one before goes, its stylesheet included, so the
+     carrier holds nothing of it, and the next probe loads the new one's. */
+  var resetEfforts = function(){
+    dropEffortLoad();
+    if (effortLink) {
+      forget(effortLink.href);
+      if (effortLink.parentNode) effortLink.parentNode.removeChild(effortLink);
+      effortLink = null;
+    }
+    EFFORT_RUNS = {}; EFFORT_LASTS = {}; effortRaw = null; effortFor = ''; effortRev = -1;
   };
   /* Called by the revision probe with the image's height, which the extension moves whenever any conversation's
      efforts change. The panel moving to another conversation counts too: that is another file. */
