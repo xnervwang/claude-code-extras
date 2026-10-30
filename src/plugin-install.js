@@ -116,13 +116,11 @@ function digest(dir) {
 }
 
 /*
- * The staged copy is replaced rather than written over, so a version that dropped a file does not leave it behind to be
- * loaded. The cost is a moment where the registered path does not exist; a session starting inside that moment sees no
- * plugin and picks it up at the next one.
+ * The staged copy is replaced as a whole, so a file removed in a newer version is not left behind. The registered path
+ * is briefly missing during the swap; a session starting then sees no plugin until its next start.
  *
- * The copy is made in a folder of this process's own: every window stages into the same place, and with one shared name
- * two of them empty each other's copy halfway. A window whose copy cannot be put in place because another window has
- * just put in the same plugin has nothing left to do.
+ * The copy is built in a per-process folder because every window stages into the same place. A rename that fails
+ * because another window just installed the same plugin is not an error.
  */
 function stage(from, to) {
   const next = `${to}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.new`;
@@ -211,8 +209,8 @@ function removeSync(claudeBin, stamp) {
 }
 
 /**
- * Tell Claude Code to stop loading the plugin, which is what stops its skill description entering every session. `dirs`
- * are the Claude Code installs, whose binary is what is told.
+ * Run `claude plugin disable` for the plugin, which stops its skill description being added to every session. `dirs`
+ * are the Claude Code installs whose binary runs the command.
  *
  * `disable` rather than `uninstall`: uninstalling takes the plugin's data directory with it, and that is where every
  * conversation's plan lives. Disabling is a line in Claude Code's own settings and is undone by enabling again, so the

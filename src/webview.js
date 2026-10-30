@@ -20,9 +20,9 @@
  *                      conversation whose files were given a later time, the time it was really last active.
  *   session pin        A pin at the start of every row of the session list (src/sessionpins.js says what
  *                      pinning does).
- *   context meter      Two: move the three artwork states' switch points to each arc's own extent, and let go of the
- *                      guard that hides the meter while more than half the window is still free - both only while the
- *                      page says the meter is kept.
+ *   context meter      Two: move the thresholds of the three artwork states to the limit each arc can show, and drop
+ *                      the guard that hides the meter while more than half the window is free. Both apply only
+ *                      while the meter switch is on (70-meter.js).
  *   agent map          Three: a section for this session's scheduled prompts, the footer button opening for a
  *                      schedule even with no agent, and a label that then does not read "0 agents".
  *
@@ -242,13 +242,12 @@ function liveCss(opts = {}) {
   /* The bar itself is in the injected script; this is only the switch that turns it off, written as nothing at all when
      it is on so that a stylesheet carries no trace of a setting left at its default. */
   if (opts.userEdge === false) css += ':root{--cce-edge:0;}\n';
-  /* One property per addition switched off, on the same principle: absent means on, so the stylesheet says only what
-     differs from the defaults, and a build that predates a switch treats it as on rather than off. Written in the order
-     of SWITCHES rather than the caller's, since several windows write this file and must produce the same bytes.
+  /* One property per addition switched off; absent means on, so the stylesheet lists only departures from the defaults
+     and a build that predates a switch treats it as on. Written in SWITCHES order so that every window produces the
+     same bytes.
 
-     None of what follows is behind `on`, which switches the marks alone: the additions switched off one at a time stay
-     off while it is off, the agent map keeps its scheduled prompts and background sessions, and what is pinned is
-     still kept. */
+     `on` switches only the marks; the off flags, the agent map's scheduled prompts and background sessions, and the
+     pins below are written either way. */
   if (off.length) css += ':root{' + off.map((k) => `--cce-off-${k}:1;`).join('') + '}\n';
   css += scheduleProperty(opts.tasks);
   if (!off.includes('backgroundSessions')) css += backgroundProperty(opts.background);
@@ -301,8 +300,8 @@ function buildBody() {
 
 const SCRIPT_BODY = buildBody();
 
-/* What the two meter edits ask the page from the meter's render: whether the meter is kept on screen (70-meter.js). A
-   page without the function gets Claude Code's own meter. */
+/* The check the two meter edits insert into the meter's render: whether the meter is kept on screen (70-meter.js).
+   Without the page's function the meter behaves as in Claude Code. */
 const METER_KEPT = '(typeof window.__cceMeterKept==="function"&&window.__cceMeterKept())';
 
 const EDITS = [
@@ -463,20 +462,20 @@ const EDITS = [
     to: (m, title, jsx, cls, j) => `${title},(typeof window.__ccePin==="function"?window.__ccePin(${jsx},${j}):null)`,
   },
   {
-    // The three artwork states cover half, three quarters and almost all of the circle, but the component picks
-    // them at 62.5% and 87% - so between 50% and 62.5% used it draws a half arc that cannot express the figure,
-    // and the reading stalls. Choosing each state at the limit of what its arc can show removes both stalls; the
-    // in-page script then trims the chosen arc to the exact figure. With the meter's switch off the page answers no
-    // (70-meter.js) and the component's own points stand.
+    // The three artwork states cover half, three quarters and almost all of the circle, but the component picks them at
+    // 62.5% and 87%, so between 50% and 62.5% used it draws a half arc that cannot express the figure, and the reading
+    // stalls. Switching states at the limit each arc can show removes both stalls, and the in-page script trims the
+    // chosen arc to the exact figure. With the meter switch off, __cceMeterKept returns false (70-meter.js) and the
+    // component's own thresholds apply.
     name: 'context meter state thresholds',
     re: /if\(([\w$]+)<([\d.]+)\)return 50;if\(\1<([\d.]+)\)return 75;return 99/g,
     to: (m, pct, half, most) =>
       `if(${METER_KEPT}?${pct}<=50:${pct}<${half})return 50;if(${METER_KEPT}?${pct}<=75:${pct}<${most})return 75;return 99`,
   },
   {
-    // The meter hides itself while more than half the window is free. Only that clause gives way, and only while the
-    // page says the meter is kept; the one that suppresses it before a real window size has arrived stays, since the
-    // figure is meaningless without one.
+    // The meter hides itself while more than half the window is free. Only that check is disabled, and only while the
+    // meter switch is on; the check that hides it until a real window size has arrived stays, since the figure means
+    // nothing without one.
     name: 'context meter always visible',
     re: /if\(([\w$]+)===null\)\{if\(([\w$]+)===0\)return null;if\(([\w$]+)>=(\d+)\)return null\}/g,
     to: (m, override, window, free, limit) =>
@@ -533,8 +532,8 @@ const EDITS = [
   },
 ];
 
-/* Every shape of every edit goes in: an edit with several shapes has no pattern or replacement of its own, so hashing
-   only those would leave a change to one of its shapes looking current. */
+/* Hash every shape of every edit; a multi-shape edit has no top-level pattern or replacement, so a change to one of its
+   shapes would otherwise go unnoticed. */
 const MARK = MARK_PREFIX + 'v' + VERSION + '-' + crypto.createHash('sha256')
   .update(SCRIPT_BODY).update('\n')
   .update(EDITS.map((e) => [e.name, ...shapesOf(e).map((s) => [String(s.re), String(s.to), s.note || ''].join('\0'))]
@@ -593,9 +592,9 @@ function status(claudeExtensionPath) {
  * replaces a whole extension directory the panel serves from - and neither test restart did. That is the open lead.
  */
 /*
- * The temporary file is named for this process and this write, because every window writes these files: with one
- * shared name, a second window's write replaced the first one's temporary file and its rename then moved it, so the
- * first window's rename failed with ENOENT. A rename that fails for any other reason is tried once more from scratch.
+ * The temporary file is named for this process and this write, because every window writes these files: with one shared
+ * name, a second window's write would replace the first one's temporary file and its rename would move it, so the first
+ * window's rename would fail with ENOENT. A rename that fails for any other reason is tried once more from scratch.
  */
 function writeAtomic(file, text) {
   for (let attempt = 0; ; attempt++) {
@@ -612,11 +611,10 @@ function writeAtomic(file, text) {
 }
 
 /*
- * The revision image carries two counters: its width for the live stylesheet, its height for the efforts. They are
- * written by different code at different times and from different windows, so each writer moves only its own number
- * and keeps the other one as the file holds it at that moment - read immediately before the write, since a number read
- * any earlier can already have been moved by another window, and writing it back would undo that move. One image means
- * the page learns of both from the single request it already makes every few seconds.
+ * The revision image carries two counters: width for the live stylesheet, height for the efforts. Different code in
+ * different windows writes them, so each writer updates its own counter and copies the other from the file just before
+ * writing; an earlier read could undo another window's update. One image lets the page see both with the request it
+ * already makes every few seconds.
  */
 function readRev(rev) {
   let text = '';

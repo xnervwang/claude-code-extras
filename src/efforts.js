@@ -16,11 +16,10 @@
  * and the page walks its replies in order anyway, so a run start is all it needs. A reply after the last one read is
  * one this side has not seen yet, and the page leaves it blank rather than carrying the previous run forward over it.
  *
- * Each transcript - the conversation's own, and one per sub-agent - is read incrementally (src/claude-files.js), and how
- * far is kept beside the plan, so a restart carries on where it stopped. A row is read without parsing it: in a reply's
- * row the top-level type, uuid and effort come after the message, and nothing nested follows them, so the end of the
- * line answers it. A line of any other shape that mentions a reply is parsed whole, which is what keeps a reply quoted
- * inside some other row from being taken for one.
+ * The transcripts are read incrementally (src/claude-files.js), with the offsets saved beside the plan so that a
+ * restart resumes. A reply row is classified from the end of its line, where the top-level type, uuid and effort follow
+ * the message; any other line that mentions a reply is parsed in full, so a reply quoted inside another row is not
+ * mistaken for one.
  */
 const fs = require('fs');
 const path = require('path');
@@ -77,9 +76,8 @@ function readRow(data, s, e, sidechains) {
   return readLine(data.toString('utf8', s, e), sidechains);
 }
 
-/* Reads what one transcript has added since `st.pos`, moving its runs and its last reply along. A file shorter than where
-   reading stopped was replaced rather than appended to, so it is read again in full. Resolves to whether the runs or
-   the last reply moved. */
+/* Advance one transcript from `st.pos`, updating its runs and last reply; a file shorter than `st.pos` has been
+   replaced and is read from the start. */
 async function readFile(file, st, sidechains) {
   const before = JSON.stringify([st.runs, st.last]);
   const reader = {
@@ -141,9 +139,9 @@ function css(state) {
 const known = new Map();
 
 /**
- * Read what one conversation's transcripts have added since last time. Resolves to { changed, css }, `css` empty for a
- * conversation with no transcript. One pass per conversation at a time (src/claude-files.js): a request made while one
- * runs gets the pass after it, which reads what was appended meanwhile and reads the sub-agents if any request asked to.
+ * Read what one conversation's transcripts have added since the last call. Resolves to { changed, css }; `css` is empty
+ * without a transcript. One pass runs at a time per conversation (oneAtATime in src/claude-files.js), and a queued pass
+ * includes the sub-agents if any caller asked for them.
  *
  * `subagents: false` leaves the sub-agents' transcripts out of this pass, for a pass started by a change to the
  * conversation's own: a conversation can hold hundreds of them, and looking at each costs more than reading what the
@@ -162,8 +160,8 @@ async function scanOnce(session, opts) {
   const state = known.get(session) || readState(file);
   known.set(session, state);
   const fileState = (name) => state.files[name] || (state.files[name] = { pos: 0, runs: [], last: '', eff: '' });
-  /* The conversation's own transcript is asked for before anything is awaited, so that a scan of the same transcript
-     for the agent map, started at the same moment, shares its pass. */
+  /* Request the conversation's own transcript before the first await, so that an agent-map scan of the same transcript
+     started at the same moment shares the pass. */
   const main = readFile(transcript, fileState(MAIN), false);
   main.catch(() => { /* reported where it is awaited below */ });
   const sub = path.join(transcript.replace(/\.jsonl$/, ''), 'subagents');

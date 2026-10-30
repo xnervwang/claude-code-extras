@@ -14,17 +14,17 @@
    * the conversation. Weak, so nothing is held after the panel drops the block.
    */
   var PROMPT_OF = new WeakMap();
-  /* A sub-agent's reply's tool calls, as entries of the contents list, kept when the reply is worked out in full so that
-     a settled reply of the agent in view still has its calls listed - the way UUIDS_OF keeps what its efforts need. */
+  /* Contents-list entries for a sub-agent reply's tool calls, saved when the reply is fully processed so that a settled
+     reply keeps its calls listed (as UUIDS_OF does for efforts). */
   var ACTS_OF = new WeakMap();
 
   // A line that begins with what used to follow the time: the tag's or the figures' own leading space goes with it.
   var lead = function(v){ return v ? v.replace(/^\s+/, '') : v; };
 
   /*
-   * Everything worked out once and kept, worked out again: the rows of your messages, the replies settled with their
-   * owner recorded, and the marks inside those replies - which go back into the set a sweep rebuilds, so that the ones
-   * not given again are taken off at the end of it.
+   * Clear every cached result so that it is recomputed: the rows for your messages, the owner and settled marks on
+   * replies, and the marks inside those replies. The existing marks go back into `marked`, so any the sweep does not
+   * produce again are removed at its end.
    */
   var resetMarks = function(){
     PROMPT_OF = new WeakMap();
@@ -33,9 +33,9 @@
     var held = document.querySelectorAll('[' + ATTR + ']');
     for (var k = 0; k < held.length; k++) marked.add(held[k]);
   };
-  /* The switches whose state is part of a mark. Marks are worked out once and kept, so when one of these changes - or
-     the marks as a whole are switched - everything is worked out again on that sweep; otherwise only the newest message
-     and the last LIVE_TAIL replies would follow, and the rest would keep what they showed before. */
+  /* Switches that affect a mark's content. Marks are cached, so a change to one of these, or to the marks switch
+     itself, recomputes everything on that sweep; otherwise only the newest message and the last LIVE_TAIL replies would
+     update. */
   var MARK_SWITCHES = ['timestamps', 'subAgentTags', 'replyDuration', 'contextShare', 'cost', 'modelName'];
   var markSig = '';
   var marksFollowSwitches = function(){
@@ -49,11 +49,10 @@
   var stamp = function(){
     var tA = clock(), wF = WALK.fiber, wT = WALK.text;
     var bubbles = document.querySelectorAll(USER), groups = new Map();
-    // The session, looked up on every sweep with one walk up from the first of these that is there (useSession,
-    // 25-session.js), marks on or off: the chimes, the figures and the footer read it too. The footer is the seed of
-    // last resort, and the only one a conversation with no messages in it has: the session object is a prop of the
-    // footer toolbar too. Without it an empty conversation has no session at all, which costs the info button its
-    // session id and the chimes their signals until the first message arrives.
+    // Look the session up on every sweep, marks on or off, with one walk up from the first of these nodes found
+    // (useSession, 25-session.js); the chimes, the figures and the footer use it too. The footer toolbar also has the
+    // session as a prop and is the only seed in an empty conversation; without it the info button and the chimes would
+    // have no session until the first message.
     var seed = bubbles[0] || document.querySelector(ASSIST) || document.querySelector(SEND);
     var found = seed ? findSession(seed) : null;
     if (found && found !== sessionRef) useSession(found);
@@ -91,10 +90,9 @@
         var row = live ? null : PROMPT_OF.get(b);
         if (!row) {
           var line = textOf(b, b === lastBubble);
-          // An attachment or an image carries no line, so it gets no row - and a message that is only an attachment
-          // keeps its mark through the block below rather than being skipped altogether.
-          // null until made: a mark can rightly be empty, and an empty one must not be made again on every sweep. The
-          // message is kept for grouping the blocks, and the time the contents list shows is added by syncMap.
+          // An attachment or image has no text line and gets no row; a message that is only an attachment still gets
+          // its mark from the block below. `null` until built, since an empty mark is valid and must not be rebuilt
+          // every sweep. The message is kept for grouping the blocks; syncMap adds the time shown in the contents list.
           row = { node: b, top: b, ts: m.timestamp, text: line, mark: null, message: m, when: null };
           if (!live) PROMPT_OF.set(b, row);
         }
@@ -123,10 +121,10 @@
     if (!ordered) promptTs.sort(function(a, b){ return a - b; });
     var tC = clock();
     var msgs = document.querySelectorAll(ASSIST);
-    // Both are already in hand, so aiming the text observer costs a containment check while it is still on their scroller.
+    // While the text observer is still on these messages' scroller, aiming it costs only a containment check.
     aimText(bubbles[0] || msgs[0]);
-    // A reply behind the newest ones whose owner this sweep records settles on the next one, which is asked for rather
-    // than left to whatever changes the page next: the page may well not change again until a reply grows.
+    // When this sweep records the owner of an older reply, that reply settles on the next sweep, so the next sweep is
+    // scheduled explicitly: the page may not change again until a reply grows.
     var seen = [], seenSet = {}, shownRows = 0, fullMsgs = 0, settledMsgs = 0, blocks = 0, settleNext = false;
     var agentView = (VIEW !== 'all' && VIEW !== 'main'), acts = [];
     // Each owner's effort run, carried through the replies in document order (76-effort.js).
@@ -356,8 +354,8 @@
     for (var k = 0; k < want.length; k++) mode.parentElement.insertBefore(want[k], mode);
   };
 
-  /* The nodes this script adds - labels, lists, menus, boxes, the footer buttons - change their own children all the
-     time, the tool clock once a second, and nothing inside them is a message. */
+  /* Nodes this script adds (labels, lists, menus, boxes, footer buttons): their children change constantly, the tool
+     clock's every second, and none of them holds a message. */
   var OWN_NODES = '[data-cce-toolclock],[data-cce-label],[data-cce-info],[data-cce-mute],[data-cce-view],[data-cce-focus-btn],[id^="cce-"]';
   var ours = function(n){
     var el = n && (n.nodeType === 1 ? n : n.parentElement);
@@ -386,8 +384,8 @@
   var aimed = null, aimer = null, aimedAtScroller = false;
   var aimText = function(anyMessage){
     if (!anyMessage) return;
-    /* Still the scroller the messages are in, so it is not looked for again: finding it reads the style and the size of
-       each ancestor, which forces a style and layout pass in the middle of the sweep's writes. */
+    /* Reuse the scroller while it still contains the messages: finding it again reads the style and size of every
+       ancestor, which forces a style and layout pass in the middle of the sweep's writes. */
     if (aimedAtScroller && aimed.isConnected && aimed.contains(anyMessage)) return;
     var sc = scrollerOf(anyMessage), root = sc || anyMessage.parentElement;
     aimedAtScroller = !!sc;

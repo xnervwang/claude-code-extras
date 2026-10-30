@@ -17,9 +17,9 @@
  *
  * A session id is unique across every project on a machine, so it is the whole name and no grouping directory is needed.
  *
- * The only read is of one such file - the conversation in front of the reader, named by the host itself. The directory
- * is never read whole for the view: that would put every conversation on the machine into every window at once, at a
- * cost that grows with how many conversations have ever existed.
+ * The view reads only the current conversation's file, named by the session id the host provides. It never reads the
+ * whole directory, which would load every conversation on the machine into every window, at a cost that grows with how
+ * many conversations have ever existed.
  *
  * Nothing here writes those files. The shape below is the whole contract between the two halves:
  *
@@ -41,19 +41,18 @@
  */
 const fs = require('fs');
 const path = require('path');
-/* Where the plan directory is, and which conversations still have a transcript, are answered in src/claude-files.js:
-   the directory's name is derived from the plugin and marketplace names, and the transcripts are Claude Code's. */
+/* The plan directory and the list of live transcripts come from src/claude-files.js; the directory name derives from
+   the plugin and marketplace names. */
 const { DATA_ROOT, PLAN_DIR, planDir, projectsDir, liveSessions } = require('./claude-files');
 
 /*
- * The files kept beside a plan, one each per conversation, named by its session id and one of these suffixes; anything
- * else in the directory belongs to something else and is left alone. Each describes its conversation, so each goes
- * when the conversation does.
+ * Per-conversation files in the plan directory, deleted with their conversation: each is named by session id plus one
+ * of these suffixes, and other files there are left alone.
  *
  *   .json        the plan itself
  *   .offered     the Stop hook offered once to start a plan where none existed; otherwise the only trace of a
  *                conversation that declined would accumulate for ever
- *   .nudged      the same hook reminded the conversation to reconcile its plan, so it does not repeat the same sentence
+ *   .nudged      the Stop hook has reminded the conversation to reconcile its plan, so it does not say it again
  *   .background  which detached sessions the conversation started (src/background.js)
  *   .turn        which turn the conversation is in and how far it has got, left by the injection hook
  *   .watermark   which context marks have asked it to bring the plan up to date before a compaction
@@ -64,9 +63,8 @@ const SIDE_SUFFIXES = ['.json', '.offered', '.nudged', require('./background').S
   require('./efforts').SUFFIX];
 const SIDE_FILE = new RegExp('^[0-9a-f][0-9a-f-]{7,}(?:' + SIDE_SUFFIXES.map((s) => s.replace('.', '\\.')).join('|') + ')$', 'i');
 const PLAN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.json$/i;
-/* The lock a writer of a plan holds while it reads, changes and writes it back: a directory beside the plan, made with
-   mkdir. A writer holds one for milliseconds and one older than LOCK_STALE_MS is taken as abandoned by every writer, so
-   a day is far past any that is still held. */
+/* Plan lock directories (<plan>.lock), made with mkdir around a read-change-write. Writers give up on one older than
+   ten seconds (LOCK_STALE in plan_path.py), so the sweep can remove any older than LOCK_STALE_MS, a day. */
 const LOCK = /\.lock$/i;
 const LOCK_STALE_MS = 24 * 60 * 60 * 1000;
 /* The same list as STATES in the plugin's plan_path.py, in the same order; test/check.js holds them together. */
@@ -164,13 +162,7 @@ function readOne(session) {
   return entry;
 }
 
-/**
- * The plan of one conversation, named by its session, or null when it keeps none.
- *
- * The view shows the conversation in front of the reader, so it reads that one file and no other. Reading the directory
- * instead put every conversation on the machine into every window - the same content in each, none of it the one being
- * looked at - and made the work grow with how many conversations exist.
- */
+/** The plan for one session id, or null if that conversation has none. */
 function readPlan(session) {
   return session ? readOne(session) : null;
 }
@@ -181,8 +173,8 @@ function readPlan(session) {
 const SETTLED_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Delete the plans of conversations that no longer exist. Returns what happened, for the log, and `live`: the
- * conversations that still have a transcript, or null when that could not be established and nothing was deleted.
+ * Delete the plans of conversations that no longer exist. Returns a summary for the log and `live`, the conversations
+ * that still have a transcript, which is null when that is unknown and nothing was deleted.
  *
  * A conversation whose transcript is gone can never be resumed, so its plan is a file nothing can reach: not this view,
  * which reads only the conversation in front of the reader, and not Claude Code. Left alone they only accumulate - at the
@@ -196,8 +188,8 @@ function sweepOrphans(opts = {}) {
   const dir = opts.dir || planDir();
   let names;
   try { names = fs.readdirSync(dir); } catch (_) { names = null; }
-  /* An abandoned lock goes whatever the transcripts say, since it stands in the way of every writer of that plan until
-     each of them has waited it out. rmdir, so a directory that is not an empty lock is never removed. */
+  /* Abandoned locks are removed regardless of the transcripts, since each one delays every writer of that plan until it
+     times out. rmdir only removes an empty directory. */
   for (const name of names || []) {
     if (!LOCK.test(name)) continue;
     const file = path.join(dir, name);

@@ -168,7 +168,7 @@ class WorkPlanProvider {
     this.problem = null;
   }
 
-  /** The plan the view is drawing, or null, which is what the badge has to be counted over. */
+  /** The plan the view is drawing, or null. The badge counts its open rows. */
   shown() {
     return this.plan;
   }

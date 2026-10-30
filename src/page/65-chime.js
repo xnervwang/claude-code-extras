@@ -50,8 +50,7 @@
     return !!(s && s.value === true);
   };
   var wasBusy = false, hadPerm = 0, hadDialog = 0, wasWaiting = false;
-  /* Taken as they stand, without a sound: the panel moving to another conversation is not that conversation finishing a
-     turn or asking for something. */
+  /* No chime here: a conversation switch is not a finished turn or a request for input. */
   var primeIdle = function(){
     hadPerm = sigLen('permissionRequests'); hadDialog = sigLen('userDialogRequests');
     wasWaiting = sigOn('pendingInput'); wasBusy = sigOn('busy');

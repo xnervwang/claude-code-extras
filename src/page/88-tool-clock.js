@@ -115,8 +115,8 @@
     return null;
   };
 
-  // The long form and the short form, each in a span of the label: both are written and then both measured, so a tick
-  // costs one layout however many forms it tries, and only the one that fits is shown.
+  // Both forms go into their own spans and are measured together, so a tick costs one layout; only the one that fits is
+  // shown.
   var clockSpans = null, clockTexts = ['', ''], clockW = [0, 0], clockH = 0, clockQueued = false;
   var hideToolClock = function(){ if (TOOLCLOCK) setStyle(TOOLCLOCK, 'display', 'none'); };
   var inView = function(r){ return !!r && r.width > 0 && r.bottom >= 0 && r.top <= (window.innerHeight || 0); };

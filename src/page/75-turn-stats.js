@@ -24,9 +24,8 @@
     return base(pick) === base(served) ? served + '[1m]' : served;
   };
 
-  // Context share and estimated spend as they stood when a reply settled, kept as the two parts so that each is shown or
-  // left out by its switch as it is now rather than as it was then. Keyed by the message object in a WeakMap, so
-  // entries disappear when the message itself is collected - no growing table.
+  // Each reply's context share and estimated cost, saved when it settles. The two are stored separately so that each
+  // can follow its own switch. A WeakMap keyed by the message object.
   var atMsg = new WeakMap();
   var figuresNow = function(){
     var u = sessionRef && sessionRef.usageData && sessionRef.usageData.value;

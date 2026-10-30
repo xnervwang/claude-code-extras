@@ -90,9 +90,8 @@
   var setStyle = function(el, prop, value){
     if (el && el.style[prop] !== value) el.style[prop] = value;
   };
-  /* A control of ours whose switch has been turned off is taken off the page and forgotten: only no longer drawing it
-     again would leave the one already there, still working. Its hover text goes too, since the pointer leaving a
-     control that is no longer there is never reported. */
+  /* Remove a control whose switch was turned off; not redrawing it would leave the existing one on the page and
+     working. Also hide its hover label, since a removed control gets no pointer-leave event. */
   var dropControl = function(el){
     if (el && el.parentNode) { el.parentNode.removeChild(el); hideLabel(); }
     return null;

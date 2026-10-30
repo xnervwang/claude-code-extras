@@ -142,21 +142,20 @@ def detail_over(value):
     return None
 
 
-"""The end of a transcript, read once per run and shared by every question that run asks of it.
+"""Reading the end of a transcript, once per hook run, shared by every lookup in that run.
 
-A transcript runs to hundreds of megabytes and every answer wanted here is near its end, so a run reads back from the
-end only as far as its questions need. Only the main thread's turns are in that file: a sub-agent keeps a transcript of
-its own, under <session>/subagents/, so nothing read here can be a sub-agent's.
+Transcripts run to hundreds of megabytes and everything needed here is near the end, so a run reads backwards only as
+far as its lookups need. The file holds only the main thread: a sub-agent's transcript is its own, under
+<session>/subagents/.
 """
 TAIL_START = 64 * 1024           # first window tried when reading back
 TAIL_MAX = 1024 * 1024           # give up past this; the answer is not worth more
 
 
 class Tail:
-    """The last bytes of one transcript, read backwards in windows that grow fourfold, and kept once read.
+    """Cached tail of one transcript, read backwards in windows that grow fourfold.
 
-    Each question gives its own limit, and a second question starts from what the first one already read rather than
-    reading it again.
+    Each lookup gives its own limit; bytes already read are reused.
     """
 
     def __init__(self, path):
@@ -166,7 +165,8 @@ class Tail:
         self.data = b""
 
     def _reach(self, limit):
-        """Hold more of the end, up to `limit` bytes of it. False when there is nothing more to read within that."""
+        """Extend the cached tail toward `limit` bytes. False when it already covers that much or the file cannot be
+        read."""
         held = self.size - self.start
         want = min(self.size, limit, max(TAIL_START, held * 4))
         if want <= held:
@@ -183,7 +183,7 @@ class Tail:
         return True
 
     def lines(self, limit=TAIL_MAX):
-        """The lines in the last `limit` bytes, newest first. A line that begins before that is not given at all."""
+        """Yield the lines in the last `limit` bytes, newest first, leaving out a line that starts before that point."""
         floor = max(0, self.size - limit)
         end = self.size
         while True:
@@ -205,7 +205,7 @@ class Tail:
 
 
 def open_tail(path):
-    """The end of the transcript at `path`, or None when there is no file to read."""
+    """Tail of the transcript at `path`, or None if there is no file."""
     if not isinstance(path, str) or not path or not os.path.isfile(path):
         return None
     try:
@@ -217,9 +217,9 @@ def open_tail(path):
 def latest_reply_matches(tail, pattern, reply=None):
     """Whether the newest reply with any text in it matches `pattern`. False for an empty or unusable pattern.
 
-    `reply` is that reply's text when the event hands it over - Stop does, as last_assistant_message - and then nothing is
-    read. Otherwise it is looked for in the transcript, where turns made of tool calls alone are passed over, so a relayed
-    reply followed by a few commands still counts as the latest one.
+    `reply` is that reply's text when the event hands it over (Stop does, as last_assistant_message), and then nothing
+    is read. Otherwise it is looked for in the transcript, where turns made of tool calls alone are passed over, so a
+    relayed reply followed by a few commands still counts as the latest one.
     """
     if not pattern:
         return False
@@ -259,7 +259,8 @@ USAGE_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_t
 
 
 def usage_of(line):
-    """Tokens sent on the model call a transcript line records, or None when it records none."""
+    """Input tokens, cache reads and writes included, of the assistant call on a transcript line, or None if the line
+    has no usage."""
     if '"usage"' not in line:
         return None
     try:
@@ -286,10 +287,10 @@ def current_context(tail):
     return None
 
 
-"""What a plan is called, and what the hooks keep beside it.
+"""Plan file names, and the files the hooks keep beside a plan.
 
-A plan is <session id>.json. The extension's sweep (src/workplan.js) recognises a plan and every file below by the same
-pattern, so a name it would not recognise is a file nobody would ever clean up.
+A plan is <session id>.json. The extension's sweep (src/workplan.js) finds plans and the side files below by these
+names, and a file it does not recognise would never be cleaned up.
 """
 SESSION_ID = r"[0-9A-Fa-f][0-9A-Fa-f-]{7,}"
 SESSION_NAME = re.compile(r"^%s$" % SESSION_ID)
@@ -306,9 +307,9 @@ LOCK_SUFFIX = ".lock"            # appended to the plan's own name, not put in p
 def plan_file(payload, directory=None):
     """This conversation's file, named by its session id - which is unique across every project on a machine.
 
-    So there is no grouping directory and none is derived: the earlier shape reconstructed one from the transcript path,
-    where the project part is a starting directory with every character that is not a letter or a digit replaced, and
-    that substitution cannot be reversed. `directory` is for a caller that has been handed the data directory itself.
+    So there is no grouping directory, and the transcript path cannot give one: the project part there is the starting
+    directory with every character other than a letter or digit replaced, and that substitution cannot be reversed.
+    `directory` is for a caller that has been handed the data directory itself.
     """
     session = str(payload.get("session_id") or "").strip()
     if not SESSION_NAME.match(session):
@@ -322,9 +323,9 @@ def side_file(plan, suffix):
 
 
 def write_atomic(path, text):
-    """Write `text` whole and rename it into place, so a reader never sees half of it. Raises when it could not.
+    """Atomic write: write a temporary file and rename it into place. Raises on failure.
 
-    The temporary file carries the process id, so two processes writing the same file never write into one temporary.
+    The temporary name carries the process id, so two processes writing the same file never collide.
     """
     tmp = "%s.%d.tmp" % (path, os.getpid())
     try:
@@ -350,18 +351,18 @@ def write_quietly(path, text):
 
 """How a plan's rows are walked.
 
-The file is the user's and is edited by hand, so anything can stand where a list of rows belongs. A walk that trusted it
-would raise on every prompt until the file was fixed.
+The file is hand-edited, so anything can appear where a list of rows is expected; a walk that trusted it would raise on
+every prompt until the file was fixed.
 """
 
 
 def listed(value):
-    """`value` when it is a list of rows, else no rows."""
+    """`value` if it is a list, else []."""
     return value if isinstance(value, list) else []
 
 
 def children(node):
-    """A row's children, or none when the row has none or holds something other than a list there."""
+    """A row's `children`, or an empty list when it has none or they are not a list."""
     return listed(node.get("children")) if isinstance(node, dict) else []
 
 
@@ -381,14 +382,12 @@ def row_command(plan):
 
 """The lock around a read, change and write of a plan.
 
-The row command reads the whole file, changes one row and writes all of it back, and the extension does the same when a
-row is changed from the tree. Two of those at once would each write what they read, and the one that wrote first would be
-lost without a word. So each holds <plan file>.lock - a directory, since making one either succeeds or fails, at once,
-on every file system - for the whole span, and the extension takes the same lock by the same rules.
+The row command and the extension (when a row is changed from the tree) both read the whole file, change one row and
+write it all back, so two at once would silently lose the first write. Each holds <plan file>.lock for that whole span,
+by the same rules. The lock is a directory because mkdir is atomic on every file system.
 
-A lock is never allowed to stop work. One older than LOCK_STALE was left by a process that died holding it, and is
-removed. One that stays held past LOCK_WAIT is given up on and the write goes ahead without it: a lost change is the
-lesser harm next to an agent, or a person's edit, that cannot go on.
+A lock older than LOCK_STALE was left by a process that died holding it and is removed. If the lock is still held after
+LOCK_WAIT, the write goes ahead without it: losing a change is less harmful than blocking an agent or a manual edit.
 """
 LOCK_STALE = 10
 LOCK_WAIT = 2.0
@@ -495,12 +494,13 @@ def read_turn(plan):
 
 
 def write_turn(plan, turn):
-    """True when the mark is there."""
+    """Write the turn mark; True on success."""
     return write_quietly(turn_file(plan), json.dumps(turn))
 
 
 def turn_began(plan, payload):
-    """When the turn this event belongs to began, as seconds, from the mark beside `plan`; None without a matching one."""
+    """Start time (epoch seconds) of this event's turn, from the mark beside `plan`; None if the mark is missing or is
+    for another turn."""
     prompt = payload.get("prompt_id")
     turn = read_turn(plan) if isinstance(prompt, str) and prompt else None
     if not turn or turn.get("prompt") != prompt:

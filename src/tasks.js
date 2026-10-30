@@ -91,7 +91,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Returns { dirs, store, changed }; `store` is what to keep, `changed` whether it differs from `stored`.
  *
  * Every window writes the same stylesheet from this, so every window has to arrive at the same list. Each puts its own
- * folders in with today, the days are merged by the latest, and the list is ordered by day and then by path - so two
+ * folders in with today, the days are merged by the latest, and the list is ordered by day and then by path. So two
  * windows with different folders open converge on one list instead of each putting its own first and writing the shared
  * store on every refresh, and past the cap they keep the same directories rather than each its own. A day rather than a
  * time, so the store changes when the set does or a day turns, and not on every refresh.

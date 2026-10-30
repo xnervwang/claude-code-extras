@@ -71,8 +71,8 @@ const HOOK_SETTINGS = {
 };
 
 /*
- * A reading taken at most once per turn of the event loop. A timer or an event asks the same question several times
- * while it is handled, and the answer is read once and read again the next time.
+ * Memoize `read()` for the current turn of the event loop. A timer or event handler asks for the same value several
+ * times while it runs, and it is computed once per turn.
  */
 function perTick(read) {
   let value, have = false;
@@ -193,13 +193,13 @@ function start(context, renamed) {
   const removed = () => context.globalState.get(REMOVED_KEY, false) === true;
   selfPath = context.extensionPath;
   /*
-   * Where the copy this window runs stands (src/removal.js), read once per turn of the event loop.
+   * Install state of the copy this window runs (src/removal.js), memoized per turn of the event loop.
    *
    * Uninstalling: the editor has marked it for deletion with no other version staying, and waits for this window to
-   * restart its extensions. Until then this window must not patch what another window restored on its way out.
+   * restart its extensions. Until then it must not re-patch files another window has just restored.
    *
-   * Replaced: another build of this extension is installed now - another version beside it, or the same version again
-   * over it - while this window keeps running this one. It then leaves every shared file alone; the windows that reload
+   * Replaced: another build of this extension is installed now (another version beside it, or the same version again
+   * over it) while this window keeps running this one. It then leaves every shared file alone; the windows that reload
    * run the installed build and keep those files current.
    */
   const loadedStamp = removal.installStamp(context.extensionPath);
@@ -213,13 +213,13 @@ function start(context, renamed) {
    * The stylesheet the page reads sits in Claude Code's own folder, so every window writes the SAME file. If each wrote
    * only what its own open folders yielded, two windows would take turns adding and removing the section every refresh.
    * Remembering the union, merged and ordered the same way by every window (rememberDirs in src/tasks.js), makes every
-   * window write the same content, so whoever writes last changes nothing.
+   * window write the same content, so later writes change nothing.
    *
    * The known gap: a session started in a SUBdirectory of an open folder is not found, and its section simply does not
    * appear. Walking directories would trade a certain cost for an uncertain gain, so it waits for a real case.
    */
-  /* Kept under a key of its own. A window still running an earlier build reads and writes a plain list under the old
-     key, and two shapes in one key would have the two builds rewriting it in turn; the old list is where this starts. */
+  /* A key of its own: windows still on an earlier build read and write a plain list under the old one, and two formats
+     under one key would make the builds overwrite each other. The old list seeds the new key. */
   const DIRS_KEY = 'claudeCodeExtras.projectDirDays';
   const OLD_DIRS_KEY = 'claudeCodeExtras.projectDirs';
   const knownDirs = perTick(() => {
@@ -297,8 +297,8 @@ function start(context, renamed) {
     const patched = [], restored = [], problems = [];
     const leaving = uninstalling();
     const restoring = removed() || leaving;
-    /* What the live stylesheet says, worked out once and only for the panel's bundle: the host's ignores it, and working
-       it out reads the background sessions, the scheduled prompts and the pins. */
+    /* The live stylesheet's options, computed once and only for the panel's bundle (the host bundle ignores them),
+       since computing them reads the background sessions, the scheduled prompts and the pins. */
     let opts = null;
     let found = 0;
     for (const adapter of ADAPTERS) {
@@ -421,10 +421,8 @@ function start(context, renamed) {
     return `${ours || '?'}/${theirs || '?'}`;
   };
   const thresholdMs = () => Math.max(1, cfg().get(THRESHOLD_SETTING, 10)) * 1000;
-  /* How far this window's log has been read, the pairings still open in it, and the running count of fast opens, all in
-     memory. Each window writes a log of its own and a reload starts a new one, so none of it means anything to another
-     window or survives a reload; kept in the store every window shares, it would be carried into the wrong log and pair
-     lines that have nothing to do with each other. */
+  /* Read offset, open pairings and the fast-open count for this window's log, kept in memory only: each window has its
+     own log and a reload starts a new one, so shared storage would carry this state into the wrong log. */
   let latencyState = {};
   if (context.globalState.get(LATENCY_KEY) !== undefined) context.globalState.update(LATENCY_KEY, undefined);
   function sampleLatency() {
@@ -547,8 +545,8 @@ function start(context, renamed) {
     const r = sweepOrphans();
     if (r.why) log.appendLine('orphan work plans: ' + r.why);
     else if (r.deleted) log.appendLine(`orphan work plans: deleted ${r.deleted}, kept ${r.kept}`);
-    /* The efforts written beside the panel go with the conversation, judged by the same reading of the transcripts the
-       sweep just made; when it could not be made, nothing is removed. */
+    /* Efforts files beside the panel are pruned with the live-session list from the sweep just made; when that list is
+       unknown, nothing is removed. */
     if (r.live) for (const dir of installs(webview, true)) webview.pruneEfforts(dir, r.live);
   };
   /* The reader's time zone as a panel of this window last reported it (src/panel-tz.js), or empty until one has. */
@@ -825,8 +823,8 @@ function start(context, renamed) {
    * goes before the person accepts a confirmation that names each conversation and what of it is on disk. One that is
    * open in this window or running anywhere on this machine is left alone and named as such.
    *
-   * Called by the patched host from inside its own message handling, so the work is put off rather than done there, as
-   * the pin hook's is: finding what is on disk walks every project folder.
+   * Called by the patched host inside its own message handling, so the work is deferred, as the pin hook's is: finding
+   * what is on disk walks every project folder.
    */
   globalThis.__cceDeleteHook = (asked) => {
     setTimeout(() => deleteArchived(asked).catch((e) => log.appendLine('deleting archived conversations: ' + (e && e.message))), 0);
@@ -840,8 +838,8 @@ function start(context, renamed) {
       }
     }
     if (!want.length || !enabled() || removed()) return;
-    /* Which conversations are open is what keeps one in use from being deleted, so not knowing is a refusal, not an
-       empty list. */
+    /* Open conversations must never be deleted, so if their list cannot be read nothing is deleted; it is not treated
+       as empty. */
     let shown;
     try { shown = typeof globalThis.__cceSessionsShown === 'function' ? globalThis.__cceSessionsShown() : null; } catch (_) { shown = null; }
     if (!Array.isArray(shown)) {
@@ -931,8 +929,8 @@ function start(context, renamed) {
     const undone = state.registered === true && pluginInstall.registrationGone();
     const registered = state.registered === true && !undone;
     /* The registration points at the copy in this extension's global storage, and the editor deletes that folder along
-       with an uninstalled extension - so the registration can outlive the files it names. Compared by its contents, not
-       by its being there: a copy cut short, or one another window was replacing, is there and is not this plugin. */
+       with an uninstalled extension, so the registration can outlive the files it names. Check the copy's digest, not
+       just that it exists: a partly written copy, or one another window is replacing, exists but is not this plugin. */
     const staged = pluginInstall.digest(to) === stamp;
     if (!retry && registered && state.stamp === stamp && staged) return;
     if (undone) log.appendLine('work plan plugin: registering again - Claude Code lists neither it nor its marketplace, which is what uninstalling this extension leaves');
@@ -977,12 +975,10 @@ function start(context, renamed) {
     log.appendLine('work plan watcher not available: ' + e.message);
   }
   /*
-   * One timer for what is looked at again every half minute: the plan, and - while the additions are on and this window
-   * runs the installed build - the conversation's transcript, the live stylesheet and the log. A task file is written by
-   * another process, so nothing would otherwise notice it change and the panel would keep showing the reading from
-   * startup; only the live settings are rewritten, never the bundles, and the page's revision moves only when their
-   * content differs, so a quiet machine costs a few small reads and nothing else. While the additions are off the
-   * transcript is not watched either, rather than the watch staying open until a reload.
+   * A single 30-second timer re-checks the plan and, while the additions are on and this window runs the installed
+   * build, the transcript, the live stylesheet and the log. Task files are written by another process, so nothing else
+   * would notice them change. Only the live settings are rewritten, and the page's revision moves only when their
+   * content changes. While the additions are off the transcript is not watched.
    */
   const tick = setInterval(() => {
     refreshPlans();
@@ -1033,9 +1029,9 @@ function start(context, renamed) {
   );
 
   /*
-   * The one listener for settings. The copy of the settings kept for the timers is dropped first, so what follows reads
-   * the new values. A setting that only changes what the panel shows reaches it through the live stylesheet, and that is
-   * all that is written for it: checking the patched bundles reads ten megabytes for something that cannot change them.
+   * Settings listener. The cached settings are dropped first, so the code below sees the new values. A setting that
+   * only affects what the panel shows is applied through the live stylesheet alone; the patched bundles are not
+   * checked, since that reads ten megabytes and these settings cannot change them.
    */
   const LIVE_SETTINGS = [SETTING, COLOR_SETTING, EDGE_SETTING, PINS_SETTING, PIN_MARGIN_SETTING]
     .concat(webview.SWITCHES.map((k) => PREFIX + 'show.' + k));

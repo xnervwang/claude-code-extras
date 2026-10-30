@@ -16,9 +16,9 @@
  * windows looking at different conversations still write the same bytes; building it from what one window had scanned
  * would differ between windows, and the stylesheet is one file they all write - which is how settings once flickered.
  *
- * Reading is incremental (src/claude-files.js). The file records how far the transcript was read, for every conversation
- * looked at and not only one that started something, so that a window starting up reads on from there rather than from
- * the first byte; the first pass over a large conversation reads all of it once.
+ * Reading is incremental (src/claude-files.js). The file records the transcript read offset for every conversation
+ * scanned, including ones that launched no background session, so that a window starting up resumes from there instead
+ * of the first byte; the first pass over a large conversation reads all of it once.
  *
  * A detached session is never opened from here. The panel launches Claude on whatever conversation it opens, so opening
  * one that a daemon is still writing would put a second process on it.
@@ -96,11 +96,10 @@ function readLine(line, ran, jobs, seen) {
 }
 
 /*
- * What a link file says: the sessions found, how far the transcript was read, and when the newest of those sessions was
- * launched. `exists` says whether there was a file at all.
+ * `exists` says whether there was a link file at all.
  *
- * Each file is kept as last read, by its modification time and size, so a pass reads only the ones that changed - and
- * a pass over a conversation whose transcript has not grown reads nothing at all. Callers do not change what they get.
+ * Parsed files are cached by modification time and size, so a pass rereads only the files that changed, and a pass over
+ * a conversation whose transcript has not grown reads nothing.
  */
 const links = new Map();
 function readLink(file) {
@@ -131,8 +130,8 @@ function writeLink(file, link) {
   } catch (_) { /* read again next time */ }
 }
 
-/* When the newest of these sessions was launched, by their own records, so that every window reading them arrives at the
-   same time; 0 when none says. */
+/* Launch time of the newest of these sessions, from each session's own state.json, so that every window computes the
+   same value; 0 when no record has one. */
 function launchOf(ids, jobs) {
   let newest = 0;
   for (const id of ids) {
@@ -145,10 +144,9 @@ function launchOf(ids, jobs) {
 }
 
 /**
- * Read what one conversation's transcript has added since last time. Resolves to how many sessions were new.
+ * Read what one conversation's transcript has added since last time.
  *
- * One pass per conversation at a time (src/claude-files.js): a request made while one runs gets the pass after it, which
- * reads what was appended meanwhile.
+ * One pass runs at a time per conversation (oneAtATime in src/claude-files.js).
  */
 function scan(session, opts = {}) {
   if (!SESSION.test(String(session || ''))) return Promise.resolve({ added: 0, scannedTo: 0 });
@@ -162,8 +160,7 @@ const commands = new Map();
 /* How far this host has read each transcript, ahead of the file, which is written only every PERSIST_EVERY bytes. */
 const readTo = new Map();
 
-/* The lines that hold one of the needles are parsed, in file order, so that a call is seen before the result that
-   answers it. */
+/* Only lines containing a needle are parsed, in file order, so a call is seen before the result that answers it. */
 function readChunk(data, ran, jobs, seen) {
   const last = data.length - 1;
   const starts = new Set();
@@ -198,9 +195,7 @@ async function scanOnce(session, opts) {
   known.set(session, ids);
   readTo.set(session, consumed);
   const fresh = ids.filter((id) => !link.ids.includes(id));
-  /* Written for a conversation that started nothing too: it is what carries how far its transcript was read to the next
-     window and the next start, which would otherwise read it from the first byte. collect() leaves such a file out. The
-     launch time goes with the ids, for the order of the list. */
+  /* Written even when nothing was launched (see the top of this file); collect() skips such files. */
   if (fresh.length || !link.exists || consumed - link.scannedTo >= PERSIST_EVERY) {
     const launched = Math.max(link.launched, launchOf(link.launched ? fresh : ids, jobs));
     try {
@@ -252,8 +247,8 @@ function readState(id, jobs = jobsDir()) {
   return entry;
 }
 
-/* When a link file's conversation last launched a session, for the order of the list. A file written before that time
-   was recorded is ordered by its sessions' own records, worked out once per version of the file. */
+/* Sort key of the list: when the link file's conversation last launched a session. A file written before that was
+   recorded falls back to its sessions' own records, computed once per version of the file. */
 function launchedFor(file, link, jobs) {
   if (link.launched) return link.launched;
   const entry = links.get(file);
@@ -265,10 +260,8 @@ function launchedFor(file, link, jobs) {
 /**
  * Every recorded session, trimmed to what the panel shows, for the stylesheet.
  *
- * Ordered by when each conversation last launched one, newest first, which every window reads the same - so the order,
- * and through the caps the membership, do not depend on which window is asking. Not by the files' modification times:
- * a file is rewritten as its transcript is read, which says nothing about its sessions, and every rewrite would reorder
- * the list and with it the stylesheet every panel reloads.
+ * Newest launch first, not by the files' modification times: a file is rewritten as its transcript is read, which says
+ * nothing about its sessions, and every rewrite would reorder the list and with it the stylesheet every panel reloads.
  */
 function collect(opts = {}) {
   const dir = opts.dir || planDir();

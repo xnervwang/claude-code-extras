@@ -5,11 +5,10 @@
 // The context breakdown shown on hovering the usage meter.
 // Fragment of the in-page script - see README.md in this folder.
 
-  // Context usage detail on hover. The request crosses into the CLI and recomputes per-part token
-  // counts, so it is never polled: it fires 400ms after the pointer settles on the meter, and the
-  // result is cached until the used-token count changes (once per turn at most).
-  // ctxBusy is the session a breakdown is being asked for, so a request still out for a conversation the panel has left
-  // does not hold back the one it shows now.
+  // Context usage breakdown on hover. The CLI recomputes per-part token counts for each request, so it is never polled:
+  // it is requested only after the pointer rests on the meter, and cached until the used-token count changes, at most
+  // once per turn. ctxBusy is the session with a request in flight, so one pending for a conversation the panel has
+  // left does not block the current one.
   var CTX = null, ctxCache = null, ctxKey = '', ctxAt = 0, ctxOpenTimer = null, ctxHideTimer = null, ctxBusy = null;
   var ctxBtn = null, ctxOver = false;
   var CTX_TTL = 20000;  // even with an unchanged token count, the breakdown can shift when CLAUDE.md, skills or memory files change between turns
@@ -267,8 +266,7 @@
       ctxOpenTimer = setTimeout(function(){
         ctxOpenTimer = null;
         if (!ctxOver) return;
-        /* Said only while an answer is on its way, since only an answer clears it: one already in hand is shown
-           instead, and with no way to ask there is nothing to wait for. */
+        /* Show the loading note only when a request is sent, since nothing but a reply takes it away. */
         if (ctxFresh()) { showCtx(ctxCache); return; }
         if (!(sessionRef && ctxBusy === sessionRef) && !canAskCtx()) return;
         noteLine('Loading breakdown...');

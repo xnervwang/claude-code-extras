@@ -223,8 +223,7 @@ function readmeClaims(text = fs.readFileSync(README_FILE, 'utf8')) {
   return m[1].split(/,| and /).map((x) => x.trim()).filter(Boolean);
 }
 
-/* A machine that verified nothing has nothing to say about which builds work, so it leaves the sentence as it is rather
-   than write that none does. Returns whether the README changed. */
+/* With no verified versions the README is left alone: verifying nothing does not mean that no build works. */
 function syncReadme(versions) {
   if (!versions || !versions.length) return false;
   const was = fs.readFileSync(README_FILE, 'utf8');

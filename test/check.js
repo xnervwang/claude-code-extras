@@ -136,8 +136,8 @@ else bad(`the injected script calls ${undeclared.length} name(s) it never declar
 if (webview.SCRIPT.includes('!out.message; f = f.return')) ok('hot loop keeps its early exit');
 else bad('hot loop lost its early exit — the fiber walk will run to full depth on every element');
 
-/* The injected script runs in every panel, so a diagnostic written for one investigation stays in all of them for as long
-   as nobody removes it - and the word that says it may go is the one way the next reader learns that it may. */
+/* Diagnostics for one investigation are marked TEMPORARY; the injected script runs in every panel, so none may be
+   left. */
 if (!/TEMPORARY/.test(webview.SCRIPT)) ok('the injected script carries nothing marked temporary');
 else bad('the injected script carries code marked TEMPORARY, which belongs to an investigation that should be over');
 
@@ -233,22 +233,21 @@ console.log('\nwhat the page costs, in a browser');
       const older = harness.run(browser, { turns: 10, focusCtx: false });
       if (!older.error && older.viewButton && !older.focusButton) ok('a Claude Code build without Focus view gets no button');
       else bad('without Focus view in the panel: ' + (older.error || `the button was ${older.focusButton ? 'shown' : 'missing, and so was the view button'}`));
-      /* One panel moves between conversations in place - New and Resume in the sidebar do it - and what the page reads
-         off the session has to move with it. */
+      /* Panels switch conversations in place (New and Resume in the sidebar); what the page reads from the session must
+         follow. */
       const moved = harness.run(browser, { turns: 30, switchSession: true });
       if (!moved.error && /ctx 10%/.test(moved.labelBeforeSwitch) && /ctx 50%/.test(moved.labelAfterSwitch)
           && /Session11111111-2222-4333-8444-555555555555/.test(moved.infoAfterSwitch)) {
         ok('after the panel moves to another conversation, the newest reply\'s figures and the info box are that conversation\'s');
       } else bad('after the panel moved to another conversation: ' + (moved.error || JSON.stringify(
         { before: moved.labelBeforeSwitch, after: moved.labelAfterSwitch, info: moved.infoAfterSwitch })));
-      /* Switched off from the start, the view filter costs nothing: the owner is recorded whether or not the filter is
-         on, so the replies behind the newest still settle, and there is no button. */
+      /* View filter off from the start: owners are still recorded, so older replies settle, and there is no button. */
       const noFilter = harness.run(browser, { turns: SHORT, offSwitches: ['footerViewFilter'] });
       if (!noFilter.error && noFilter.msgs === 300 && noFilter.full <= 64 && !noFilter.viewButton) {
         ok(`with the view filter off, ${noFilter.full} of ${noFilter.msgs} replies are worked out each sweep and there is no button`);
       } else bad('with the view filter off: ' + (noFilter.error || `${noFilter.full} of ${noFilter.msgs} replies worked out, button ${noFilter.viewButton}`));
-      /* Switched off while the page is open, the way the extension does it - the live stylesheet changes and the revision
-         probe notices: what each addition put on the page goes, rather than only not being made again. */
+      /* Turned off while the page is open, as the extension does it (a new live stylesheet the revision probe notices):
+         the elements each addition already put on the page must be removed. */
       const offLive = harness.run(browser, { turns: SHORT, pickView: true,
         flip: ['footerViewFilter', 'footerInfo', 'footerMute', 'footerPlainView'] });
       if (!offLive.error && offLive.picked && offLive.hiddenInView > 0 && offLive.controlsBeforeFlip.length === 4
@@ -256,8 +255,8 @@ console.log('\nwhat the page costs, in a browser');
         ok(`switched off while open, a sub-agent view shows again the ${offLive.hiddenInView} messages it hid, and the info, mute, Focus view and view buttons go`);
       } else bad('switching the footer additions off while open: ' + (offLive.error || JSON.stringify({ picked: offLive.picked,
         hidden: [offLive.hiddenInView, offLive.hiddenAfterFlip], controls: [offLive.controlsBeforeFlip, offLive.controlsAfterFlip] })));
-      /* A mark is worked out once and kept, so a switch that changes what a mark holds has to reach the marks already made:
-         every message and reply, not only the newest and the last sixty. */
+      /* Marks are cached, so a switch that changes their content must update every message and reply, not only the
+         newest and the last sixty. */
       const marksLive = harness.run(browser, { turns: SHORT, subagentTurn: 5, flip: ['timestamps', 'subAgentTags'] });
       const tb = marksLive.timesBeforeFlip || {}, ta = marksLive.timesAfterFlip || {};
       if (!marksLive.error && tb.text === tb.replies && tb.prompt === tb.prompts && marksLive.tagsBeforeFlip > 0
@@ -312,19 +311,19 @@ console.log('\nwhat the page costs, in a browser');
       }
       /* A reply growing is what drives sweeps in use. Ordering two messages costs the browser a walk along every message
          between them, so a sweep that compares at all costs in proportion to the conversation squared. */
-      /* The text observer stays on the scroller it found while the messages are still in it: looking for it again reads
-         the style of every ancestor, which forces a style pass in the middle of a sweep's writes. */
+      /* The text observer keeps its scroller while the messages are still in it; finding it again reads every
+         ancestor's style and forces a style pass mid-sweep. */
       const styled = runs.filter(([, r]) => r.growGcs !== 0);
       if (!styled.length) ok('while a reply grows, a sweep reads no computed style');
       else bad('while a reply grew, sweeps read the computed style: ' + styled.map(([what, r]) => `${what}: ${r.growGcs} reads in ${r.growSweeps} sweeps`).join('; '));
-      /* One observer for children added and taken away, on the whole document; the one on the message list watches text
-         alone, or each such change inside the list would be handed over twice. */
+      /* One childList observer on the whole document; the message list's observer watches text only, or changes inside
+         the list would arrive twice. */
       const watchers = runs.filter(([, r]) => !((r.observed || []).filter((o) => o.childList).length === 1
         && (r.observed || []).some((o) => o.characterData && !o.childList)));
       if (!watchers.length) ok('one observer watches for children coming and going, and the message list\'s watches text alone');
       else bad('what the page\'s observers watch: ' + watchers.map(([what, r]) => `${what}: ${JSON.stringify(r.observed)}`).join('; '));
-      /* The tool clock counts the seconds on the working line in Focus view. Its own text changing starts no sweep, and its
-         two forms are written and then measured together: one layout for each change of its text, not one per form. */
+      /* The Focus view tool clock's own text updates start no sweep, and its two forms are measured together: one
+         layout per text change. */
       const clocked = harness.run(browser, { turns: 20, focus: true, busyClock: true });
       if (!clocked.error && /^Bash \d+s$/.test(clocked.clockText) && clocked.idleSweeps === 0 && clocked.clockWrites > 0
           && clocked.clockLayouts * 2 <= clocked.clockWrites) {
@@ -343,15 +342,15 @@ console.log('\nwhat the page costs, in a browser');
         ok(`four times the conversation: ${(long.fiber / short.fiber).toFixed(1)}x the walking, the same queries, at most 64 replies worked out`);
       } else bad(`four times the conversation: walking ${short.fiber} -> ${long.fiber}, queries per sweep ${perSweep(short)} -> `
         + `${perSweep(long)}, replies worked out ${short.full} -> ${long.full}`);
-      /* Each of your messages is walked up to its message and has its time formatted once: past the newest, a sweep reads
-         what was kept for it, so neither grows with how many messages there are. Formatting is counted in dates made. */
+      /* Each of your messages costs one walk up the React tree and one time format; later sweeps reuse the cached
+         result, so neither grows with the conversation. Formatting is counted by Date objects created. */
       const datesPer = (r) => r.growDates / Math.max(1, r.growSweeps);
       if (long.fiber <= short.fiber * 1.1 && datesPer(long) <= datesPer(short) * 1.1) {
         ok(`your messages are walked and timed once each: four times as many leave ${long.fiber} steps and ${datesPer(long)} dates a sweep`);
       } else bad(`with four times as many messages, the steps up React trees went ${short.fiber} -> ${long.fiber} and the dates `
         + `made per sweep ${datesPer(short)} -> ${datesPer(long)}`);
-      /* In a sub-agent's view the contents list is that agent's tool calls, those of its replies far behind the newest
-         included. */
+      /* In a sub-agent's view the contents list shows that agent's tool calls, including those in replies far behind
+         the newest. */
       const early = harness.run(browser, { turns: SHORT, subagentTurn: 5, pickView: true });
       if (!early.error && early.picked && early.railInView && early.tocInView.length === 1 && /Bash ls$/.test(early.tocInView[0])) {
         ok('in the view of a sub-agent whose reply is far behind the newest, the contents list holds its tool call');
@@ -633,13 +632,12 @@ console.log('\nshape selection');
     } else if (got.index === want) ok(what);
     else bad(`${what}: expected shape ${want + 1}, got ${got.error || 'shape ' + (got.index + 1)}`);
   }
-  /* Without the g flag a match returns the first match and its groups, so two places read as one and the edit would be
-     made at the first of them. */
+  /* Without the g flag two matching places would count as one, and the edit would go to the first. */
   const lone = pickShape('aaa then aaa', { name: 'no flag', re: /aaa/, to: () => 'X' });
   if (lone.error && /g flag/.test(lone.error)) ok('a pattern without the g flag is refused rather than counted wrong');
   else bad(`a pattern without the g flag gave ${JSON.stringify(lone)}`);
-  /* The bundle is several megabytes and the patch runs on the editor's extension host, so it is scanned once per shape:
-     the count finds the match, and the replacement is made there without a second pass over the whole file. */
+  /* Several megabytes, on the extension host: each shape is scanned once, and the replacement goes at the offset the
+     count found, without a second pass. */
   {
     const { applyEdits } = require('../src/edits');
     let passes = 0;
@@ -823,9 +821,9 @@ console.log('\nthe top and bottom buttons');
   if (scroller.scrollTop === 0) ok('to the top lands at the very start');
   else bad(`to the top left the view at ${scroller.scrollTop}`);
 
-  /* One hold at a time, and a hold begun by a key outlives that key. The , and . keys start a hold from a keydown
-     listener on the document, and the same keydown reaches the window after it - where a listener added during that
-     dispatch is called too. */
+  /* One hold at a time, and the keydown that starts a hold must not stop it. The , and . keys start one from a document
+     keydown listener, and that keydown then reaches the window, where a listener added during the dispatch also
+     runs. */
   {
     const live = new Set(), soon = new Map(), heard = [];
     let iv = 0, to = 0;
@@ -1002,9 +1000,8 @@ console.log('\na reopened conversation');
   else bad(`with the context share switched off later, that reply showed "${keptShareOff}"`);
 }
 
-/* The usage meter's switch reaches the two edits that keep the meter on screen: with it off, the meter is Claude Code's
-   own again - hidden while more than half the window is free, its states at its own points - and the trim and outline
-   this script put on it come off. */
+/* With the usage meter switch off the meter is Claude Code's own again (hidden while more than half the window is free,
+   Claude Code's thresholds), and this script's arc trim and outline are removed. */
 console.log('\nthe usage meter, kept on screen or left to Claude Code');
 {
   const { applyEdits } = require('../src/edits');
@@ -1046,8 +1043,8 @@ console.log('\nthe usage meter, kept on screen or left to Claude Code');
   } else bad(`the meter on and then off: ${JSON.stringify(drawn)} -> ${JSON.stringify(left)}`);
 }
 
-/* The breakdown behind the usage meter says it is loading only while an answer is on its way: only an answer takes the
-   note away again, so one put up with nothing to wait for stays for as long as the pointer does. */
+/* The breakdown's loading note appears only while a request is in flight; only a reply removes it, so a note with
+   nothing pending would stay as long as the pointer does. */
 console.log('\nthe context breakdown on the usage meter');
 {
   const fragment = fs.readFileSync(path.join(__dirname, '..', 'src', 'page', '55-context-detail.js'), 'utf8');
@@ -1122,8 +1119,8 @@ console.log('\nreply efforts');
     else bad(`three reads, the middle one unchanged, scheduled ${sweeps} sweeps`);
   }
   {
-    /* One load at a time: the one still loading when the next revision arrives is dropped, so a load nobody answers
-       does not hold a service-worker permit for good, and an older one answering late cannot replace a newer one. */
+    /* One load at a time: a pending load is dropped when the next revision arrives, so an unanswered load does not hold
+       a service-worker permit forever and an older one finishing late cannot replace a newer one. */
     const links = [];
     const headStub = { appendChild(n) { n.parentNode = headStub; links.push(n); },
       removeChild(n) { n.parentNode = null; links.splice(links.indexOf(n), 1); } };
@@ -1217,8 +1214,7 @@ console.log('\nreply efforts');
     if (f.css === rule(`${H(7)}=medium!${H(7)}`, sub) && g.css === rule(`${H(7)}=medium!${H(7)}`, `${H(11)}=low,${H(13)}=high!${H(13)}`)) {
       ok('a pass for the conversation alone leaves the sub-agents unread, and a full pass reads what they added');
     } else bad(`for the conversation alone: ${JSON.stringify(f)}; then in full: ${JSON.stringify(g)}`);
-    /* A full pass asked for while one for the conversation alone runs is not handed that one's result: it gets the pass
-       after it, and that pass reads the sub-agents. */
+    /* A full pass requested while a conversation-only one runs waits for the next, which reads the sub-agents. */
     {
       const subFile = path.join(root, sid, 'subagents', 'agent-a1.jsonl');
       const script = `
@@ -1322,8 +1318,8 @@ console.log('\nreply efforts');
 }
 
 console.log('\nverified builds');
-/* A machine that verified nothing would have written "Verified against Claude Code no build." and then read it back as a
-   build called "no build". Nothing is written for none, and that sentence claims none. */
+/* With no verified builds the list would read "Verified against Claude Code no build." and be parsed back as a build
+   named "no build", so an empty list writes nothing and the no-build sentence parses as no builds. */
 {
   const was = fs.readFileSync(supported.README_FILE, 'utf8');
   const wrote = supported.syncReadme([]);
@@ -1442,8 +1438,8 @@ console.log('\nscheduled prompts');
     else ok("another session's task is not shown here");
 
   }
-  /* Read once per stylesheet: the agent map asks on every render, and each read of the computed style makes the page work
-     its styles out. Each way a stylesheet arrives clears what was read (05-page-setup.js). */
+  /* Cached per stylesheet, because the agent map reads it on every render and getComputedStyle forces a style
+     recalculation; every stylesheet load clears the cache (05-page-setup.js). */
   {
     let reads = 0;
     const sb = Object.assign({}, sandbox, { window: {},
@@ -1518,9 +1514,9 @@ console.log('\nscheduled prompts');
 }
 
 /* ── Claude Code's directory, read the same way everywhere ──
-   Where Claude Code's directory is, which project folder holds a transcript, and which conversations still have one were
-   answered in five places, and they disagreed: two of them ignored CLAUDE_CONFIG_DIR, and one skipped a project folder it
-   could not read where another refused to go on. They are answered once now, in src/claude-files.js. */
+   Claude Code's directory, the project folder holding a transcript, and which conversations still have one are
+   computed once, in src/claude-files.js; separate copies drift apart, one ignoring CLAUDE_CONFIG_DIR or skipping an
+   unreadable project folder where another stops. */
 console.log("\nClaude Code's directory, read the same way everywhere");
 {
   const cf = require('../src/claude-files');
@@ -1551,8 +1547,8 @@ console.log("\nClaude Code's directory, read the same way everywhere");
       ok('CLAUDE_CONFIG_DIR moves where transcripts, the conversations still on disk and the background sessions are looked for, alike');
     } else bad(`with CLAUDE_CONFIG_DIR set: ${JSON.stringify(r)}`);
 
-    /* A conversation whose transcript is not written yet is asked about by several callers at the same moment and on
-       every refresh; each search stats a file in every project folder. */
+    /* A transcript not written yet is looked up by several callers at once and on every refresh, and each search stats
+       a file in every project folder. */
     const projects = path.join(cfg, 'projects');
     const missing = 'cdcdcdcd-1111-4222-8333-444444444444';
     let walks = 0;
@@ -1756,10 +1752,9 @@ console.log('\nbackground sessions');
     } else bad(`a hint that was not a launch was recorded: ${JSON.stringify(ids)}`);
   }
 
-  // A conversation that started nothing still gets a file, with no sessions in it: it is what tells the next window, or
-  // the next start, how far its transcript was read. The part already read is rewritten below to hold a launch, which only
-  // a pass starting again from the first byte would find - and the second pass is a process of its own, as a window
-  // starting up is.
+  // A conversation that launched nothing still gets an empty link file, which tells the next window, or the extension
+  // after a restart, how far its transcript was read. Below, the already-read part is rewritten to contain a launch
+  // that only a pass from byte 0 would find; the second pass runs in a separate process, like a starting window.
   {
     const SID2 = 'bbbbbbbb-1111-2222-3333-444444444444';
     const t2 = path.join(proj, SID2 + '.jsonl');
@@ -1809,10 +1804,10 @@ console.log('\nbackground sessions');
   if (!bg.collect({ dir: plans, jobs }).some((e) => e.id === '77777777')) ok('a session whose record is gone drops out');
   else bad('a session with no record left was still listed');
 
-  /* The list is ordered by when each conversation last launched a session, which every window reads the same. A link
-     file is rewritten as its transcript is read, so ordering by its modification time moved conversations about - and
-     past MAX_SESSIONS in and out of the list - and rewrote the stylesheet every panel reloads. A file written before
-     the launch time was kept is ordered by its sessions' own records. */
+  /* Ordered by last launch time, which every window reads the same. Link files are rewritten as transcripts are read,
+     so ordering by modification time would reshuffle the list, push sessions past MAX_SESSIONS in and out, and rewrite
+     the stylesheet every panel reloads. Files from before the launch time was stored are ordered by their sessions' own
+     records. */
   {
     const order = path.join(root, 'plans-order');
     fs.mkdirSync(order);
@@ -1839,8 +1834,8 @@ console.log('\nbackground sessions');
     } else bad(`ordered ${JSON.stringify(first)}, then after a rewrite ${JSON.stringify(second)}, expected ${JSON.stringify(want)}`);
   }
 
-  /* A request made while a pass runs is not handed that pass's result: the pass took the transcript's size before the
-     request, so a launch appended in between was left for whatever came next. It gets one more pass instead. */
+  /* A request made during a pass waits for the next one: the running pass took the transcript size before the request
+     and would miss a launch appended since. */
   {
     const SID4 = 'dddddddd-1111-2222-3333-444444444444';
     const t4 = path.join(proj, SID4 + '.jsonl');
@@ -2234,8 +2229,8 @@ console.log('\nabandoned work plans');
         return t;
       },
       (t, r) => r.deleted === 1 && left(t.dir).sort().join() === 'client-time-zone.json,config.json'],
-    /* The lock a writer of a plan takes is a directory beside it, held for milliseconds. One a day old was abandoned, and
-       stands in every writer's way until each has waited it out; one younger is somebody's, whatever the transcripts say. */
+    /* A plan lock is a directory held for milliseconds. A day-old one is abandoned and would delay every writer until
+       it times out, so it is removed; a younger one may be in use and is kept, whatever the transcripts say. */
     ['a plan\'s lock a day old is removed, and a younger one is left to whoever holds it',
       () => {
         const t = build([id(1), id(2)], [[id(1), NEW], [id(2), NEW]]);
@@ -2303,9 +2298,9 @@ console.log('\none live stylesheet, several windows');
     ok(`at the cap of ${tasks.MAX_TASKS}, which tasks survive does not depend on that order either`);
   } else bad('at the cap, the surviving tasks still depend on the order the directories arrived in');
 
-  /* Which directories to read, kept in a store every window shares. Each window put its own folders first and wrote the
-     store whenever the order differed, so two windows with different folders rewrote it on every refresh; and past the
-     cap each kept a different set, so the tasks and the stylesheet differed between them. Two windows, taking turns: */
+  /* Directories to read, kept in a store shared by all windows. If each window put its own folders first, two windows
+     with different folders would rewrite the store on every refresh and, past the cap, keep different sets. Two windows
+     taking turns: */
   {
     const day = 86400000, t0 = Date.UTC(2026, 9, 29, 12);
     const isDir = () => true;
@@ -2330,8 +2325,8 @@ console.log('\none live stylesheet, several windows');
     if (later.changed && gone.dirs.join() === '/p/a' && legacy.dirs.join() === '/p/x,/p/y' && legacy.changed) {
       ok('the store changes again when a day turns, drops a directory that is gone, and reads the list an earlier build kept');
     } else bad(`a day on changed ${later.changed}; with one gone ${JSON.stringify(gone.dirs)}; from a list ${JSON.stringify(legacy.dirs)}`);
-    /* A window still on an earlier build keeps its plain list under the old key; one key holding both shapes would have
-       the two builds rewriting it in turn. */
+    /* Windows on an earlier build keep a plain list under the old key; both formats in one key would make the two
+       builds rewrite it in turn. */
     const extDirs = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
     if (/const DIRS_KEY = 'claudeCodeExtras\.projectDirDays';/.test(extDirs) && /const OLD_DIRS_KEY = 'claudeCodeExtras\.projectDirs';/.test(extDirs)
       && /context\.globalState\.update\(DIRS_KEY, r\.store\)/.test(extDirs) && !/update\(OLD_DIRS_KEY/.test(extDirs)) {
@@ -2400,9 +2395,8 @@ console.log('\none live stylesheet, several windows');
       + ` (in script: ${edge}, defaults on: ${onByDefault}, absent when on: ${notInSheet}, off when asked: ${offWhenAsked})`);
   }
 
-  /* Two windows writing at once. One writes the stylesheet while another writes a conversation's efforts in between its
-     write and its move of the revision image; each moves only its own number, so neither puts back the other's number
-     from before that move. */
+  /* Two windows at once: one writes the stylesheet while the other writes efforts between that write and the
+     revision-image update. Each updates only its own counter, so neither restores the other's old value. */
   {
     const inst = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-rev-race-'));
     const wv = path.join(inst, 'webview');
@@ -2435,8 +2429,7 @@ console.log('\none live stylesheet, several windows');
         ok('an efforts write landing during a stylesheet write keeps its move of the revision image, and the stylesheet keeps its own');
       } else bad(`revisions went ${JSON.stringify(before)} -> ${JSON.stringify(after)} with an efforts write in between (raced ${raced()})`);
 
-      /* Two windows replacing the same file at the same moment: each has a temporary file of its own, so both renames
-         go through, rather than the second window's rename moving the first one's file and the first one failing. */
+      /* Two windows replacing the same file at once each use their own temporary file, so both renames succeed. */
       let threw = null;
       const nested = meanwhile(effort, () => webview.writeEffort(inst, sid, 'second'));
       try { webview.writeEffort(inst, sid, 'third'); } catch (e) { threw = e.message; }
@@ -2785,10 +2778,9 @@ console.log('\nwhat the Stop hook says, and how often');
     else bad(`with no transcript the hook exited ${r.status} and said ${JSON.stringify(r.said.slice(0, 120))}`);
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
-  /* The client writes into the user's place too: a loaded skill's text and a scheduled wake-up are isMeta, a compaction
-     leaves its summary as isCompactSummary, and an interruption is a line of its own. Counted as the user speaking, one
-     at the end of a turn moved the turn's start to after all its work, and summaries made a worker spoken to once look
-     like a conversation spoken to three times. */
+  /* The client also writes rows as the user: skill text and scheduled wake-ups (isMeta), compaction summaries
+     (isCompactSummary) and interruption lines. Counted as the user, a skill loaded at the end of a turn would move the
+     turn start past all its work, and summaries would make a worker addressed once look addressed three times. */
   {
     const said = [
       { type: 'user', isMeta: true, sourceToolUseID: 't1', message: { content: [{ type: 'text', text: 'Base directory for this skill: /x' }] } },
@@ -2816,8 +2808,8 @@ console.log('\nwhat the Stop hook says, and how often');
     fs.rmSync(t.dir, { recursive: true, force: true });
   }
   {
-    /* With a plan, the injection hook marks when the turn began, and nothing written into the user's place can move it.
-       Calls from before that mark belong to the turn before. */
+    /* With a plan, the injection hook's mark sets the turn start, and client-written user rows cannot move it; earlier
+       calls belong to the previous turn. */
     const t = stage(0, { nodes: [{ title: 'x', state: 'todo' }] });
     const call = (at) => JSON.stringify({ type: 'assistant', timestamp: at,
       message: { content: [{ type: 'tool_use', name: 'Write', input: {} }] } });
@@ -2917,9 +2909,9 @@ console.log('\nthe waiting, paired out of the official log');
     else bad(`summarise gave ${JSON.stringify(rows)}`);
     fs.rmSync(root, { recursive: true, force: true });
   }
-  /* The host-busy watcher and the record of patch writes served one investigation, which traced the slow first message
-     to the editor's webview service-worker cache. A per-second timer in every window is not something to keep for its
-     own sake, so nothing of either is left: not the code, not its call sites, not its lines in the report. */
+  /* The host-busy watcher and the patch-write log were diagnostics for one investigation (the slow first message,
+     traced to the editor's webview service-worker cache). A per-second timer in every window is not worth keeping, so
+     the code, its call sites and its report lines must be gone. */
   {
     const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
     const lat = fs.readFileSync(path.join(__dirname, '..', 'src', 'openlatency.js'), 'utf8');
@@ -3110,9 +3102,9 @@ console.log('\nthe waiting, paired out of the official log');
       ok('versions are summarised apart, worst first, which is what shows a regression');
     } else bad(`summarise gave ${JSON.stringify(rows)}`);
   }
-  /* The log's times are the extension host's local time with no zone. Read as UTC, a click five seconds old on a machine
-     in Los Angeles was a request seven hours old, written off at once as a panel that never opened. Run in a zone that is
-     not UTC, since this machine may well be in UTC. */
+  /* The log's times are local to the extension host, with no zone. Parsed as UTC, a five-second-old click in Los
+     Angeles would look seven hours old and count as a panel that never opened. Runs in a zone other than UTC, since
+     this machine may be on UTC. */
   {
     const script = `
       const fs = require('fs'), os = require('os'), path = require('path');
@@ -3136,8 +3128,8 @@ console.log('\nthe waiting, paired out of the official log');
     else if (z.parsed === z.want && !z.added.length && z.waiting) ok('the log\'s times are read as local time, so a click five seconds ago is still waiting rather than hours old');
     else bad(`in America/Los_Angeles a click 5s old read as ${z.parsed} (want ${z.want}) and gave ${JSON.stringify(z.added)}`);
   }
-  /* Each window writes a log of its own and a reload starts a new one. A request still open in one log belongs to it: a
-     panel that comes up in another window's log answers a different request. */
+  /* Each window has its own log and a reload starts a new one; a panel coming up in another window's log answers a
+     different request. */
   {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat10-'));
     const one = path.join(root, 'exthost1', 'Claude VSCode.log'), two = path.join(root, 'exthost2', 'Claude VSCode.log');
@@ -3153,8 +3145,8 @@ console.log('\nthe waiting, paired out of the official log');
     fs.rmSync(root, { recursive: true, force: true });
   }
   {
-    /* A request replaced by a newer one twenty minutes later was not waited on for twenty minutes: past the ceiling it is
-       a window left alone, as it is for a panel that does come up that late. */
+    /* A request replaced twenty minutes later is not a twenty-minute wait: past the ceiling it counts as a window left
+       alone, as for a panel that comes up that late. */
     const line = (clock, msg) => `2026-09-29 21:${clock} [info] ${msg}`;
     const waits = one([line('00:00.000', clicked), line('20:00.000', clicked), line('20:05.000', up)].join('\n'));
     if (!waits.some((w) => w.what === 'abandoned') && waits.some((w) => w.what === 'panel' && w.waited === 5000)) {
@@ -3176,8 +3168,8 @@ console.log('\nthe waiting, paired out of the official log');
     fs.rmSync(root, { recursive: true, force: true });
   }
   {
-    /* The last line may still be being written when it is read. Taken as it stood, it was classified on half its text and
-       the rest of it, read next time, was no line at all. */
+    /* The last line may be mid-write when read; taken as is it would be classified on half its text and the rest would
+       not parse as a line. */
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat12-'));
     const log = path.join(root, 'Claude VSCode.log'), dir = path.join(root, 'rec');
     const t0 = new Date(2026, 8, 29, 21, 0, 31).getTime();
@@ -3192,9 +3184,9 @@ console.log('\nthe waiting, paired out of the official log');
     fs.rmSync(root, { recursive: true, force: true });
   }
   {
-    /* At its size limit the editor moves the log to `.1.log` and starts a new one. What was written to the old one after
-       the last read is read from there before the new one is read from its start - whether the new one is still shorter
-       than the old offset or has already grown past it. */
+    /* At its size limit the editor moves the log to `.1.log` and starts a new one. Lines written to the old log since
+       the last read are taken from there first, then the new log from its start, whether it is still shorter than the
+       old offset or already past it. */
     const rotated = (grown) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-lat13-'));
       const log = path.join(root, 'Claude VSCode.log'), dir = path.join(root, 'rec');
@@ -3266,8 +3258,8 @@ console.log('\none switch per addition, wired at both ends');
     ok('switching the time off leaves the rule that also draws the duration and figures');
   } else bad('turning off timestamps dropped the rule the other three need');
 
-  /* The main switch takes the marks away and nothing else: an addition switched off on its own stays off while the
-     marks are off, and the agent map keeps the scheduled prompts and background sessions it lists. */
+  /* The main switch removes only the marks: additions switched off individually stay off, and the agent map keeps its
+     scheduled prompts and background sessions. */
   const marksOff = webview.liveCss({ enabled: false, off: ['cost', 'toc'], tasks: [{ id: 't1' }], background: [{ id: 'b1' }] });
   if (marksOff.includes('--cce-off-cost:1;--cce-off-toc:1;') && /--cce-schedule:"/.test(marksOff)
       && /--cce-background:"/.test(marksOff) && !marksOff.includes('::before') && marksOff.includes('--cce-on:0')) {
@@ -3428,8 +3420,8 @@ console.log('\nwhose plan the tree shows');
   if (/this\.focus \? readPlan\(this\.focus\) : null/.test(src) && !/readPlans/.test(src)) {
     ok('with no conversation in focus the tree is empty, never every conversation on the machine');
   } else bad('the view can still fall back to showing all plans');
-  /* One plan or none is all the view is ever given, so what drew several - a heading row per conversation with its own
-     summary and menu value, a count "across N conversations", a picker of plans - drew nothing anyone could reach. */
+  /* The view only ever gets one plan or none, so code for several (a heading row per conversation with its own summary
+     and menu value, an "across N conversations" count, a plan picker) would be unreachable. */
   const extText = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   const leftovers = [
     ['a heading row per conversation', /kind: 'root'|cceWorkPlanRoot|function summary\(/.test(src)],
@@ -3542,8 +3534,8 @@ console.log('\nwhat the injected block says about the work in hand');
     else bad(`with nothing open: injected ${allClosed.text.length} bytes, mark ${JSON.stringify(allClosed.mark)}`);
   }
   {
-    /* Cut newest first and depth first, the block once let the newest row's subtree take every line it had, and the other
-       open rows at the top went out of sight with nothing to say they were there. */
+    /* Cutting newest first and depth first would give the newest row's subtree every line and silently hide the other
+       open top-level rows. */
     const kids = Array.from({ length: 60 }, (_, i) => ({ title: 'kid' + i, state: 'todo' }));
     const text = inject([{ title: 'older', state: 'todo' }, { title: 'old', state: 'waiting' },
       { title: 'newest', state: 'doing', children: kids }]).text;
@@ -3555,8 +3547,8 @@ console.log('\nwhat the injected block says about the work in hand');
       + `last line ${JSON.stringify(text.split('\n').pop())}`);
   }
   {
-    /* The file is edited by hand, so anything can stand where a row's children belong, and a walk that trusted it raised
-       on every prompt until the file was fixed. */
+    /* The file is hand-edited, so anything can be where a row's children belong; a walk that trusted it would raise on
+       every prompt until the file was fixed. */
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-inj-'));
     fs.writeFileSync(path.join(dir, session + '.json'), JSON.stringify({ nodes: [
       { title: 'numbered', state: 'todo', children: 5 }, { title: 'keyed', state: 'doing', children: { a: 1 } }] }));
@@ -3856,8 +3848,8 @@ console.log('\nthe row command');
     done(t);
   }
   {
-    /* Each run reads the whole file, changes its row and writes all of it back, so two at once without a lock each write
-       what they read and the later one drops the earlier one's change - 14 times in 20 when this was measured with two. */
+    /* Without a lock, two runs that each read, change and rewrite the whole file lose one change; measured with two
+       runs, 14 times in 20. */
     const t = stage(plan());
     const n = 16;
     const r = cp.spawnSync('python3', ['-c', [
@@ -3872,9 +3864,8 @@ console.log('\nthe row command');
     done(t);
   }
   {
-    /* A lock older than ten seconds was left by a run that died holding it, and is taken over at once. One still held is
-       waited on for two seconds and then gone around, saying so: a missed lock must never stop the work. Either way the
-       other holder's lock is not removed for it. */
+    /* A lock older than ten seconds belongs to a dead run and is taken over at once. A held lock is waited on for two
+       seconds and then bypassed with a message. Either way the other holder's lock is not removed for it. */
     const t = stage(plan());
     const lock = t.file + '.lock';
     fs.mkdirSync(lock);
@@ -4007,11 +3998,10 @@ console.log("\nthe reader's time zone, told to the model");
   } else bad('extension.js does not write client-time-zone.json into planDir() on a report, or does not pass tellClaudeYourTimeZone to the hooks');
 }
 
-/* ── 19d. one copy of what the hooks share ──
-   Reading the end of a transcript, writing a file whole, the name a plan is given, the names of the files kept beside it,
-   the walk over a row's children and the command line that changes a row each exist once, in plan_path.py. Copies of
-   them drifted apart before: one atomic write used a fixed temporary name two processes could collide on, two marker
-   files were written in place, and the plan's name was checked in two scripts and not in the function that builds it. */
+/* ── 19d. one copy of what the hooks share ── The transcript tail, the atomic write, the plan's file name, the
+   side-file names, the row walk and the row command line exist once, in plan_path.py. Copies can drift, for example: a
+   fixed temporary name two processes can collide on, marker files written in place, a plan-name check missing from the
+   function that builds the name. */
 console.log('\none copy of what the hooks share');
 {
   const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
@@ -4262,8 +4252,8 @@ console.log('\nan uninstall puts Claude Code back at once');
     const checks = [
       ['deactivate restores and hands the rest on, and only for an uninstall',
         /beingUninstalled\(selfPath, ID\)/.test(deact) && /restoreAll/.test(deact) && /finishLater/.test(deact)],
-      /* Another editor on this machine can have this extension installed and running; sweeping its folder from here took
-         its patch out from under it. The uninstall hook, run when this folder is deleted, is what looks everywhere. */
+      /* Another editor on this machine can be running this extension, and sweeping its folder from here would pull its
+         patch out from under it; the uninstall hook, run when this folder is deleted, covers every editor. */
       ['deactivate restores only this editor\'s extensions folder', /removal\.restoreAll\(\[path\.dirname\(selfPath\)\]\)/.test(deact) && !/roots\(/.test(deact)],
       ['a window that has not restarted yet restores rather than patching again',
         /const restoring = removed\(\) \|\| leaving;/.test(ext) && /if \(restoring\) \{\s*const r = adapter\.restore\(dir\);/.test(ext)],
@@ -4320,8 +4310,8 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
   if (/const staged = pluginInstall\.digest\(to\) === stamp;/.test(body)) ok('the staged copy counts as in place only when its contents are the plugin\'s');
   else bad('the staged copy is still taken as in place because its folder exists');
 
-  /* Every window stages into the same folder. With one shared name for the copy being made, two of them emptied each
-     other's copy halfway; and a window finding the place already taken by the same plugin has nothing left to do. */
+  /* All windows stage into the same folder; with one shared name for the copy in progress, two windows would delete
+     each other's half-made copy. Finding the same plugin already in place counts as success. */
   {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-stage-'));
     const from = path.join(root, 'from'), to = path.join(root, 'storage', 'claude-plugin');
@@ -4346,8 +4336,8 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
     fs.rmSync(root, { recursive: true, force: true });
   }
 
-  /* The command that stops the plugin loading asked for Claude Code's binary with no installs to look in, so it never
-     found one and the command never did anything. A stand-in binary records what it is told. */
+  /* The disable command must be given the Claude Code installs to find the binary; without them it finds none and does
+     nothing. A stand-in binary records the command. */
   {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-disable-'));
     const bin = path.join(root, 'install', pi.BINARY);
@@ -4635,10 +4625,10 @@ console.log('\na window whose install was replaced by a rebuild of the same vers
   else bad('not guarded against a replaced install: ' + missing.join(', '));
 }
 
-/* A window still running an older version of this extension after a newer one was installed beside it: its folder is
-   marked for deletion, and another version's is not. It is neither being uninstalled nor reinstalled over, so it went on
-   syncing - read the newer build's marker as outdated, patched both bundles back to its own edits on any settings or
-   extensions change, and took turns with every window that had reloaded. It counts as replaced. */
+/* A window still running an older version after a newer one was installed beside it: its folder is marked for deletion
+   and the other version's is not. It is neither uninstalling nor reinstalled over, and if it kept syncing it would
+   treat the newer marker as outdated, patch both bundles back to its own edits on any settings or extensions change,
+   and fight every reloaded window. It counts as replaced. */
 console.log('\na window still running a version that another one has replaced');
 {
   const removal = require('../src/removal');
@@ -4666,8 +4656,8 @@ console.log('\na window still running a version that another one has replaced');
     (got === want ? ok : bad)(got === want ? what : `${what}: said ${JSON.stringify(got)}`);
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  /* Claude Code's own folders: a sibling marked for deletion is a build nobody runs, so it is not patched - but the one
-     this window runs stays whatever its mark, and taking the patch back out still reaches every folder. */
+  /* Claude Code's folders: a sibling marked for deletion is not patched, since nobody runs it, but the folder this
+     window runs from is, whatever its mark; removing the patch still covers every folder. */
   const dirs = ['/x/anthropic.claude-code-2.1.311', '/x/anthropic.claude-code-2.1.312', '/x/anthropic.claude-code-2.1.313'];
   const marked = { 'anthropic.claude-code-2.1.311': true, 'anthropic.claude-code-2.1.312': true };
   const got = removal.unmarked(dirs, dirs[1], marked);
@@ -4681,11 +4671,10 @@ console.log('\na window still running a version that another one has replaced');
   } else bad('extension.js does not take replaced from removal.standing, or still patches the marked siblings');
 }
 
-/* What a tick and a change of setting cost, read from the source since they need the editor to run. Each was cheap on
-   its own and paid several times over: two half-minute timers doing much the same, four listeners on the settings, the
-   marks and the manifest re-read three or four times a tick, a couple of dozen fresh copies of the settings per tick, the
-   live stylesheet's options worked out for each bundle though only the panel's uses them, and a colour change re-reading
-   ten megabytes of bundles. */
+/* Costs of a tick and of a settings change, checked against the source since measuring them needs the editor. Each is
+   small but adds up: two half-minute timers doing similar work, four settings listeners, the marks and the manifest
+   reread three or four times per tick, a couple of dozen settings copies per tick, the live stylesheet's options
+   computed per bundle though only the panel's uses them, and a colour change rereading ten megabytes of bundles. */
 console.log('\nwhat a tick and a change of setting cost');
 {
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
@@ -4703,8 +4692,8 @@ console.log('\nwhat a tick and a change of setting cost');
   ];
   for (const [what, pass] of checks) (pass ? ok : bad)(what);
 
-  /* The host's half of that answer: a backup that carries a patch of its own is reported as such. It used to come back as
-     "already patched", the very words that mean nothing is wrong, so the bundle stayed outdated without a warning. */
+  /* Host side: a backup carrying its own patch is reported as such, not as "already patched", which would leave the
+     bundle outdated without a warning. */
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-current-'));
   try {
     fs.writeFileSync(host.hostFile(dir), host.ANY_MARK + '1-000000000000 */\nold');
@@ -4731,9 +4720,9 @@ console.log('\nwhat a tick and a change of setting cost');
     } else bad(`panel with both patched: ${JSON.stringify(both)}; with this patch in: ${JSON.stringify(now)}`);
   } finally { fs.rmSync(wdir, { recursive: true, force: true }); }
 
-  /* Nothing else here runs extension.js itself, so a name used before its declaration, or a hook that throws, would show
-     only in the editor. A stand-in for the editor's API, in a process whose home is a temporary folder: activation, a
-     change of setting, every timer once, the hooks the patched bundles call, a change of extensions, and deactivation. */
+  /* Nothing else runs extension.js itself, so a name used before its declaration or a throwing hook would only show in
+     the editor. This runs it against a stand-in editor API, with a temporary home folder, through activation, a
+     settings change, each timer once, the hooks the patched bundles call, an extensions change, and deactivation. */
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-activate-'));
   try {
     const stub = path.join(home, 'vscode-stub.js');
@@ -4996,8 +4985,7 @@ console.log('\na panel whose bundle never arrives says so');
     const z = on.indexOf(zone);
     if (z > csp && z < i) ok('the time zone report goes in after the policy and ahead of the watch, with the same nonce');
     else bad('the time zone report is not between the policy and the watch in the generated HTML');
-    /* The clearing of the editor's resource cache that builds up to 1.0.8 made necessary went with them; nothing of it
-       is left for every panel to run. */
+    /* The resource-cache clearing that builds up to 1.0.8 needed is gone with them; none of it runs in any panel. */
     if (!/resourceCacheCleared|caches\.keys/.test(on) && !('CACHE_CLEAR' in host)
       && !fs.existsSync(path.join(__dirname, '..', 'src', 'panel-cache-clear.js'))) {
       ok('the panel\'s HTML no longer carries the one-off clearing of the resource cache');
@@ -5339,10 +5327,10 @@ console.log('\nconversations pinned in the session list');
         const ages = ['p/p1/${A}.jsonl', 'p/p1/${A}/tool-results/a.txt', 'p/p1/${A}/tool-results/s/b.txt', 'p/p1/${A}/tool-results/s/d/c.txt',
           'p/p1/${A}/subagents/agent-1.jsonl', 'p/p2/${B}.jsonl', 'p/p2/${D}.jsonl'].map(age);
         const times = { '${A}': first.updates['${A}'] };
-        // Half an hour on, as the next pass in any window comes: the files are past the floor, so nothing moves.
+        // The next pass, half an hour later in any window: the files are already past the floor, so nothing moves.
         const soon = await pins.keep({ ids: new Set(['${A}']), times, days: 90, projectsDir: path.join(root, 'p'), now: now + 30 * 60000 });
-        // Another window's pass moved the file between this one reading the record and looking at the file, so the record
-        // in hand is the one before.
+        // Another window's pass moved the file between this window reading the record and checking the file, so the
+        // record this window has is the older one.
         const stale = await pins.keep({ ids: new Set(['${A}']), times: { '${A}': { real: times['${A}'].real, set: times['${A}'].set - 2 * DAY } },
           days: 90, projectsDir: path.join(root, 'p'), now: now + 30 * 60000 });
         const later = now + 2 * DAY;
@@ -5376,8 +5364,8 @@ console.log('\nconversations pinned in the session list');
       && rec2.real === rec.real && rec2.set === NOW + 2 * DAY - 75 * DAY) {
       ok('the first move records the time the transcript had, and the next keeps that time while recording the new one');
     } else bad(`records: first ${JSON.stringify(k.first.updates)}, second ${JSON.stringify(k.second.updates)}`);
-    /* Every window passes every half hour. Moved to exactly the floor, each pass found the files half an hour behind it,
-       moved them again, rewrote the record, and the stylesheet every panel reloads changed with it. */
+    /* Passes run every half hour in every window; files moved to exactly the floor would be found half an hour behind
+       and moved again each time, rewriting the record and the stylesheet every panel reloads. */
     if (k.soon.touched === 0 && !Object.keys(k.soon.updates).length) ok('a pass half an hour after another moves no file and changes no record');
     else bad(`a pass half an hour on touched ${k.soon.touched} file(s) and gave ${JSON.stringify(k.soon.updates)}`);
     if (!(A in k.stale.updates)) ok('a file another window\'s pass has just moved is not taken for one written to, so its real time is kept');
@@ -5753,8 +5741,8 @@ console.log('\nhover text on the session list rows');
   env.offKey = '';
   if (afterLeave === 0 && timers.length === 0 && off.length === 0) ok('leaving the row before the delay shows nothing, and the switch off shows nothing');
   else bad(`after leaving ${afterLeave} box(es) were shown; with the switch off ${JSON.stringify(off)}`);
-  /* The pin at the front of a row shows its own hover text in the same box: while the pointer is on the pin the row's
-     text waits, and back on the row it comes up again. */
+  /* The row pin shares the tooltip box: the row's tooltip is held back while the pointer is on the pin and returns when
+     it is back on the row. */
   {
     const PIN = '0ccccccc-2222-4333-8444-555555555555';
     let current = null, tn = 0;
@@ -5929,8 +5917,8 @@ console.log('\ntabs VS Code did not restore');
       === JSON.stringify([[id(1)], [id(2)], [], [id(2)], [id(2)], [], []])) {
     ok('a dropped tab whose conversation runs in another window waits, is reopened once it runs nowhere, and is let go if it gets shown here meanwhile');
   } else bad(`the waiting tabs went ${JSON.stringify([ids(sp2.now), ids(sp2.later), ids(st1.ready), ids(st1.waiting), ids(st2.ready), ids(st3.ready), ids(st3.waiting)])}`);
-  /* Two conversations with one title, one restored in a tab and the other dropped: the restored tab is the shown one's,
-     so its label cannot also stand for the dropped one, which is reopened. */
+  /* Same title, one restored in a tab and one dropped: the restored tab belongs to the shown conversation, so the
+     dropped one is still reopened. */
   {
     const twins = [{ sessionId: id(1), title: 'Same title' }, { sessionId: id(2), title: 'Same title' }];
     const back = dropped.find({ record: twins, shown: [id(1)], labels: ['Same title'], strip, exists: () => true });
@@ -6012,8 +6000,8 @@ console.log('\ndeleting an archived conversation');
     else bad(`the running check gave ${JSON.stringify([...live])}`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 
-  /* A session folder that is a symbolic link goes as a link. Listed through, it put what the link points at - which can
-     be anywhere - among what the confirmation named and the delete removed. */
+  /* A session folder that is a symlink is deleted as a link; following it would add the target, which could be
+     anywhere, to the confirmation and the deletion. */
   {
     const base = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-delete-link-'));
     const root2 = path.join(base, 'claude'), outside = path.join(base, 'elsewhere');
@@ -6033,8 +6021,8 @@ console.log('\ndeleting an archived conversation');
     } finally { fs.rmSync(base, { recursive: true, force: true }); }
   }
 
-  /* Several conversations asked about at once are found in one walk of the project folders, and the lock a plan's writer
-     takes goes with the plan. */
+  /* One walk of the project folders finds several conversations at once, and a plan's lock directory is deleted with
+     the plan. */
   {
     const root3 = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-delete-many-'));
     try {
@@ -6105,9 +6093,9 @@ console.log('\ndeleting an archived conversation');
       && webview.SWITCHES.includes('deleteArchived') && require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.show.deleteArchived']) {
     ok('nothing is deleted before a modal confirmation is accepted, an open or running conversation is left alone, and the switch is a setting of its own');
   } else bad('the delete is not guarded as expected');
-  /* The hook is called inside Claude Code's own message handling, and finding what is on disk walks every project
-     folder, so the work waits for that handling to finish. And not knowing which conversations are open is a refusal: an
-     empty list there would let an open conversation be deleted. */
+  /* The hook runs inside Claude Code's message handling and finding the files walks every project folder, so the work
+     is deferred. If the open conversations cannot be read, nothing is deleted; treating them as none would allow
+     deleting an open one. */
   const hook = (/globalThis\.__cceDeleteHook = \(asked\) => \{([\s\S]*?)\n  \};/.exec(extSrc) || [])[1] || '';
   const work = (/const deleteArchived = async \(asked\) => \{([\s\S]*?)\n  \};/.exec(extSrc) || [])[1] || '';
   if (/^\s*setTimeout\(\(\) => deleteArchived\(asked\)[\s\S]*, 0\);\s*$/.test(hook)
@@ -6183,8 +6171,8 @@ console.log('\nrecently closed sessions');
     if (JSON.stringify(henv.closed) === '["S1"]' && JSON.stringify(henv.pushed) === '["S1"]') ok('a tab the person closed reaches this extension as Claude Code notes it, and a replaced tab does not');
     else bad(`closings reported ${JSON.stringify(henv.closed)}, noted ${JSON.stringify(henv.pushed)}`);
   }
-  /* In the bundle the closing sits in a loop inside Claude Code's onDidDispose, ahead of the broadcast of the open
-     conversations and the disposal of the panel's listeners, so a hook that throws must not skip them. */
+  /* In the bundle the close hook runs in a loop in Claude Code's onDidDispose, before the open-conversation broadcast
+     and the listener disposal, so a throwing hook must not skip those. */
   {
     const loop = 'function d($,Z,q,X){for(let F of [1]){if(!this.discardedReplacements.has($))this.pushRecentlyClosedSession(Z,q,!!X)}this.after.push(Z)}';
     const lr = he ? applyEdits(loop, [he]) : { error: 'no such edit' };
@@ -6270,8 +6258,9 @@ console.log('\nrecently closed sessions');
     ok('the closed list is kept per workspace, and the setting, 10 by default, says how many to show');
   } else bad('the closed list is not wired as expected');
 
-  /* One index of the list's conversations for both sections, kept while the list holds the same array: drawing them again
-     reads no conversation beyond the ones asked for. One that is given its id after it joined the array is still found. */
+  /* Both sections use one index of the list's conversations. It is kept while the list holds the same array, so a
+     redraw touches only the conversations it looks up, and a conversation that gets its id after joining the array is
+     still found. */
   {
     let reads = 0;
     const counted = (sid) => {
@@ -6304,9 +6293,8 @@ console.log('\nrecently closed sessions');
   }
 }
 
-/* Every window writes the same patched file, so the copy each one writes before renaming it into place has to be its
-   own: two of them sharing one temporary name truncate each other's copy, and one of the renames then fails. Read off
-   the renames a restore makes, which goes through the same writer as a patch. */
+/* Every window writes the same patched file, so each needs its own temporary name; with a shared one they truncate each
+   other's copy and a rename fails. Checked via a restore, which uses the same writer as a patch. */
 console.log('\na patched file written by several windows at once');
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-atomic-'));

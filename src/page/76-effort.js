@@ -66,9 +66,8 @@
     effortPending = new WeakSet();
     schedule();
   };
-  /* The one still loading when the next is asked for, dropped for the reasons reloadCss gives for the live stylesheet
-     (05-page-setup.js): a load the service worker never answers would hold one of its permits for as long as the panel
-     lives, one more for every revision, and an older load answering late would replace a newer one. */
+  /* The efforts stylesheet still loading. It is dropped when the next load starts, as reloadCss does for the live
+     stylesheet (05-page-setup.js), and so that an older load finishing late cannot replace a newer one. */
   var effortLoading = null;
   var dropEffortLoad = function(){
     if (!effortLoading) return;
@@ -104,8 +103,8 @@
     head.appendChild(l);
     return true;
   };
-  /* The panel moved to another conversation: what was read for the one before goes, its stylesheet included, so the
-     carrier holds nothing of it, and the next probe loads the new one's. */
+  /* On a conversation switch, discard the previous conversation's efforts and stylesheet; the next probe loads the new
+     one's. */
   var resetEfforts = function(){
     dropEffortLoad();
     if (effortLink) {

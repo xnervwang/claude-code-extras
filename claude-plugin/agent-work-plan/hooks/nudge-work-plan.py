@@ -76,14 +76,13 @@ def changed(row):
 
 
 def spoke(row):
-    """True when this row is the user actually saying something, rather than a tool handing a result back or the client
-    writing in the user's place.
+    """True for a user row that is a real message, not a tool result or a row the client wrote.
 
-    All of these are recorded as `user`. What the client writes there is marked isMeta - a loaded skill's text, a
-    scheduled wake-up, a note that an image was resized - or isCompactSummary for the summary a compaction leaves, and an
-    interruption is a line of its own that starts "[Request interrupted". Counted as the user, one transcript read 180
-    more turns than were spoken, a skill loaded at the end of a turn moved the turn's start to after all its work, and a
-    worker spoken to once read as spoken to three times after two compactions.
+    All of these are recorded as `user`. Rows the client writes are marked isMeta (skill text, scheduled wake-ups,
+    image-resize notes) or isCompactSummary (compaction summaries), and an interruption is a line of its own that starts
+    "[Request interrupted". Counted as the user, one transcript showed 180 more turns than were spoken, a skill loaded
+    at the end of a turn would move the turn's start past all its work, and a worker addressed once looked addressed
+    three times after two compactions.
     """
     if row.get("type") != "user" or row.get("isMeta") or row.get("isCompactSummary"):
         return False
@@ -98,13 +97,12 @@ def spoke(row):
 
 
 def turn_shape(tail, plan="", began=None):
-    """When this turn began, as seconds, how many tools it used, how many things it changed, how often the user has
-    spoken, and whether it went to the plan.
+    """Shape of the current turn: (start time in epoch seconds, tool calls, changes, user turns, whether a tool call
+    went to the plan).
 
-    With a plan, the injection hook has marked when the turn began (`began`, from plan_path.turn_began), and the walk back
-    from the end of the transcript stops at the first line older than that; the count of turns is not needed then and is
-    not taken. Without that mark the turn begins at the last message the user sent. Reading the transcript whole would
-    mean parsing megabytes on every turn, so only the tail is read, and only lines that could be a call or the user.
+    With a plan, `began` (plan_path.turn_began) marks the turn's start and the backward walk stops at the first older
+    line, without counting turns; otherwise the turn starts at the user's last message. Only the tail is read, and only
+    lines that may be a tool call or a user message are parsed, since the whole file can be megabytes.
 
     That tail is also where the count of turns comes from, and it is a lower bound rather than a total: a conversation
     long enough to overflow the window has more turns than are visible here. The bound is in the safe direction - it can

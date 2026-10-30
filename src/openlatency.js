@@ -50,9 +50,9 @@ const TRIM_AT = Math.floor(KEEP * 1.5);
 /* A window's file is removed this long after that window last wrote to it. Its pid is gone by then and will be reused. */
 const STALE_MS = 30 * 24 * 60 * 60 * 1000;
 
-/* The editor's log writes the extension host's local time with no zone, so it is read back as local time. Read as UTC it
-   is off by the zone's offset, and set against the clock in `sample` a click on a machine west of Greenwich becomes a
-   request hours old. */
+/* The editor's log writes the extension host's local time with no zone, so it is read back as local time. Read as UTC
+   it is off by the zone's offset, and set against the clock in `sample` a click in a zone behind UTC becomes a request
+   hours old. */
 function at(m) {
   return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]).getTime();
 }
@@ -102,10 +102,10 @@ function readOut(text, pending = {}) {
     const before = prev;
     prev = { ms: row.ms, text: row.text.slice(0, 200) };
     if (kind === 'activate' || kind === 'panel-asked') {
-      /* A fresh request while one is still pending, long after it: the first panel never came up and was given up on.
-         Quick succession is two panels opening together instead, so the gap has to be worth calling a wait - and that
-         same gap is how long someone sat there before closing it, which is the only figure this case can report. Past
-         the ceiling it is a window left alone, as it is for a panel that does come up. */
+      /* A new request long after one that is still pending means the first panel never came up and was abandoned, while
+         two requests in quick succession are two panels opening together. So the gap must be at least HOST_FLOOR_MS,
+         and it is reported as the time waited. A gap past CEILING_MS is not reported: the window was just left alone,
+         as can happen with a panel that does come up. */
       if (asked && row.ms - asked.ms >= HOST_FLOOR_MS && row.ms - asked.ms <= CEILING_MS) {
         out.push({
           what: 'abandoned', trigger: asked.trigger,
@@ -249,12 +249,11 @@ function prune(dir, now = Date.now(), keepFile = '') {
 }
 
 /*
- * The whole lines a file holds from `from` up to `size`, and the offset just past the last of them.
+ * Read the complete lines between byte offsets `from` and `size`. Returns { text, to }, where `to` is the offset just
+ * past the last newline.
  *
- * The log is being appended to while this runs, so the last line may be half written; it is left for the next read
- * rather than taken as it stands, which would classify it on half its text and lose the rest. A short read is ordinary
- * for the same reason, and only what the read got is decoded - the rest of an unsafely allocated buffer is whatever was
- * in that memory.
+ * The log may be mid-append, so a trailing partial line is left for the next read. Reads can come back short for the
+ * same reason; only the bytes read are decoded, since the rest of the allocUnsafe buffer is uninitialised.
  */
 function wholeLines(file, from, size) {
   if (size <= from) return { text: '', to: from };
@@ -277,14 +276,12 @@ function rotatedFile(log) {
 /**
  * Read whatever is new in the log and append the slow waits to this window's record file. Returns what was added.
  *
- * `state` is held by the caller between calls, in memory: `{ file, ino, size }` is the log this offset refers to and how
- * far it had been read, `pending` the pairings still open in that log, and the day's running count of fast opens and
- * which day that is. Each window writes a log of its own, and a reload starts a new one, so nothing of this belongs in
- * storage the windows share: an offset or a pending request carried into another window's log pairs lines that have
- * nothing to do with each other.
+ * `state` is kept in memory by the caller: `{ file, ino, size }` identifies the log and the read offset, `pending`
+ * holds the open pairings, plus the current day's count of fast opens. It is not shared between windows, since each
+ * window has its own log and a reload starts a new one.
  *
- * A log that was moved aside at its size limit is finished first, from where it had been read, and then the new one is
- * read from its start. Any other change of file starts from the beginning, with nothing pending.
+ * A log that was moved aside at its size limit is finished first from the saved offset, and then the new one is read
+ * from its start. Any other change of file starts from the beginning, with nothing pending.
  *
  * Fast opens are held in that state and written out as one line when the day turns, so an ordinary day leaves a line
  * rather than a line per open. A host that goes away before the day turns loses that day's count for that window, which

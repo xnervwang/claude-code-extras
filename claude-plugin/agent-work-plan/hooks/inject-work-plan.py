@@ -19,9 +19,9 @@ until something starts writing one.
 
 It also leaves a mark beside the plan saying which turn this is and when it began, for the hooks that watch the turn:
 remind-work-plan.py after each batch of tool calls, and nudge-work-plan.py at its end, which takes the turn's start from
-it. The mark is written once the plan has been read, before anything here can decide to stay quiet about its rows: a
-plan whose rows are all closed injects nothing, and new work started in that turn is exactly what those hooks are for. A
-conversation with no plan, or one whose plan does not parse, gets no mark.
+it. The mark is written as soon as the plan has been read, before the check that may skip injecting: a plan whose rows
+are all closed injects nothing, but those hooks still need the mark for new work started in that turn. A conversation
+with no plan, or one whose plan does not parse, gets no mark.
 """
 import json
 import sys
@@ -34,8 +34,7 @@ sys.dont_write_bytecode = True
 from plan_path import OPEN_STATES, any_in, children, epoch, listed, plan_file, row_command, settings, write_turn
 
 GLYPH = {"discussing": "?", "todo": "o", "doing": ">", "waiting": "~", "parked": "=", "done": "+", "dropped": "x"}
-# Enough for a plan a person reads; a runaway file must not turn every turn into a wall of text. Rows at the top level
-# are drawn whatever this says, and it is the rows under them that are cut (see rows).
+# Row cap for the injected block. Top-level rows are always drawn; only the rows under them are cut (see rows).
 MAX_ROWS = 40
 # The two states a row is meant to leave soon, so how long one has been in either is worth saying: a row `doing` for
 # three days is not being done, and nothing else on the row shows that. Measured on the machine this was written on, the
@@ -52,8 +51,8 @@ def age(seconds):
 
 
 def shown(node):
-    """Whether a row is drawn: it has a title, and it is open or something under it is. A closed row is kept only while
-    something under it is still open, since that is what says where to return to."""
+    """A row is drawn if it has a title and it or a descendant is open; a closed parent of open work is kept as its
+    context."""
     return (isinstance(node, dict) and bool(str(node.get("title", "")).strip())
             and (node.get("state", "todo") in OPEN_STATES or any_open(children(node))))
 
@@ -66,10 +65,10 @@ def open_below(node):
 
 
 def numbered(nodes, prefix):
-    """The rows newest first, each with its number.
+    """The rows in reverse order, each with its number.
 
-    Newest first, the same way the tree view draws them, while the number still comes from the real position: rows are
-    only appended, so the end of the file is the current work, and when rows have to be cut the oldest go first.
+    Reversed like the tree view, numbered by file position: rows are only appended, so the end of the file is the
+    current work, and when rows have to be cut the oldest go first.
     """
     return list(reversed([("%s%d" % (prefix + "." if prefix else "", i + 1), node)
                           for i, node in enumerate(listed(nodes))]))
@@ -97,8 +96,8 @@ def rows(nodes, now, limit=MAX_ROWS):
     way, because two places disagreeing about which row is 3 would be worse than neither showing a number.
 
     Every top-level row is drawn, and the rows under them share what is left of `limit`, newest first. Cutting depth
-    first instead let the newest row's subtree take every line, and the other open work at the top went out of sight with
-    nothing to say it was there.
+    first would let the newest row's subtree take every line and hide the other open work at the top, with nothing to
+    show it was there.
     """
     top = [(num, node) for num, node in numbered(nodes, "") if shown(node)]
     room = [max(0, limit - len(top))]

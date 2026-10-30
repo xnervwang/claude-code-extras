@@ -40,8 +40,8 @@ function find({ record, shown, labels, strip = (t) => t, exists = transcriptExis
     left.set(t, (left.get(t) || 0) + 1);
   }
   const entries = Array.isArray(record) ? record : [];
-  /* A conversation shown now answers for its own restored tab first. Left in the count, its label would be taken by the
-     next entry of the same title, and a dropped tab sharing its title with a restored one would never be reopened. */
+  /* Subtract the open conversations' own restored tabs first; otherwise a dropped tab that shares a title with a
+     restored one is never reopened. */
   const answered = new Set();
   for (const e of entries) {
     if (!e || typeof e.sessionId !== 'string' || !open.has(e.sessionId) || answered.has(e.sessionId)) continue;

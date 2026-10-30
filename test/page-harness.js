@@ -60,8 +60,8 @@ const SETUP = String.raw`
   window.requestAnimationFrame = function(cb){ return setTimeout(function(){ cb(performance.now()); }, 16); };
   var COUNT = { cdp: 0, qsa: 0, text: 0, dates: 0, gcs: 0 };
   var OBSERVED = [];
-  /* Dates made, which is what formatting a time costs: counted to tell a sweep that formats only what is new from one
-     that formats every message again. */
+  /* Counts Date objects created (formatting a time creates one), to tell a sweep that formats only new messages from
+     one that reformats every message. */
   (function(){
     var RealDate = window.Date;
     window.Date = class extends RealDate { constructor(...a) { super(...a); COUNT.dates++; } };
@@ -132,11 +132,11 @@ const SETUP = String.raw`
     subagentTasks: { value: new Map() },
     sessionId: { value: CFG.efforts && !CFG.efforts.sidAfterMs ? CFG.efforts.sid : '' },
   };
-  // A window and a token count, so the newest reply's figures say whose they are: 10% here, 50% in the conversation a
-  // switch moves to.
+  // A context window size and a token count, so the newest reply's figures show which conversation they belong to: 10%
+  // here and 50% in the conversation switched to.
   if (CFG.switchSession) session.usageData = { value: { totalTokens: 100000, contextWindow: 1000000 } };
-  /* A turn at work in Focus view, on a tool call that has not come back: the working line is drawn, and the tool clock
-     at its end counts the seconds. The line is narrow enough that only the clock's short form fits. */
+  /* A Focus view turn waiting on a tool call: the working line is drawn with the tool clock counting at its end, in a
+     line narrow enough that only the clock's short form fits. */
   if (CFG.busyClock) {
     session.visiblyBusy = { value: true };
     session.messages = { value: [
@@ -234,8 +234,8 @@ const SETUP = String.raw`
   };
   for (var i = 0; i < CFG.turns; i++) turn(i);
   var addTurn = function(){ turn(CFG.turns); };
-  /* The panel moving to another conversation in place, as New and Resume in the sidebar do: another session object,
-     its own messages in place of the old ones, and the footer handed the new session. */
+  /* Switch conversations in place, as New and Resume do: a new session object, its own messages, and the footer given
+     the new session. */
   var NEXT_SID = '11111111-2222-4333-8444-555555555555';
   var switchSession = function(){
     var next = { agentMapAgents: { value: new Map() }, subagentTasks: { value: new Map() }, sessionId: { value: NEXT_SID },
@@ -396,8 +396,7 @@ const PHASES = String.raw`
       next();
     });
   };
-  /* The panel moving to another conversation, and what the page reads off the session afterwards: the newest reply's
-     figures and the info box. */
+  /* Switch, then read the newest reply's figures and the info box. */
   var newestBlock = function(){
     var rs = document.querySelectorAll('[data-testid="assistant-message"]'), last = rs[rs.length - 1];
     return last && last.children[CFG.panelStamp ? 1 : 0];
@@ -439,13 +438,13 @@ const PHASES = String.raw`
       next();
     });
   };
-  /* Switches turned off while the page is open, the way the extension does it: the live stylesheet changes and the
-     revision probe sees a new number. Then what is left of each: the times, what the view hid, the contents rail and
-     its keys, and the footer controls. */
+  /* Switches turned off while the page is open, as the extension does it (a new live stylesheet and revision number),
+     then a check of what remains: the times, what the view hid, the contents rail and its keys, and the footer
+     controls. */
   var controls = function(){
     return ['info', 'mute', 'focus-btn', 'view'].filter(function(k){ return !!document.querySelector('[data-cce-' + k + ']'); });
   };
-  /* The key that steps to the next of your messages, pressed with the conversation scrolled to its top. */
+  /* The next-message key, pressed with the conversation scrolled to the top. */
   var pressNext = function(done){
     var sc = document.getElementById('list');
     sc.scrollTop = 0;
@@ -480,8 +479,8 @@ const PHASES = String.raw`
   later(500, function(){ settle(-1, 0, 500); });
 `;
 
-/* The switches a run turns off, as custom properties: from the start in a style of the page's own, or behind an
-   attribute in the live stylesheet that a flip puts on the root. */
+/* Custom properties for the switches a run turns off: either in a page style from the start, or in the live stylesheet
+   behind an attribute that a flip adds to the root. */
 const offRules = (keys) => (keys || []).map((k) => `--cce-off-${k}:1;`).join('');
 
 function page(cfg, script) {
@@ -502,9 +501,9 @@ function page(cfg, script) {
 }
 
 /**
- * One stand-in panel, run to the end. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent, subagentTurn,
- * switchSession, offSwitches (off from the start), pickView, flip (switches turned off later), and the phase lengths.
- * Resolves to the page's counts, or { error } saying why there are none.
+ * Run one simulated panel to completion. `cfg`: turns, compactEvery, focus, focusCtx, clickFocus, subagent,
+ * subagentTurn, switchSession, offSwitches (off from the start), pickView, flip (switches turned off later), and the
+ * phase lengths. Resolves to the page's counts or { error }.
  */
 const DEFAULTS = { turns: 100, compactEvery: 20, focus: true, subagent: true, settleCapMs: 6000, idleMs: 3000, grows: 8 };
 

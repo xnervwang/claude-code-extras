@@ -141,7 +141,7 @@ function installStamp(extensionPath) {
  *
  * Replaced is any case of this window running a build that is no longer the installed one, and there are two. The same
  * version installed again over this copy changes its install stamp (replacedSince). Another version installed beside it
- * marks this folder for deletion while a folder of the new version stays unmarked - an update, or a downgrade - and a
+ * (an update, or a downgrade) marks this folder for deletion while a folder of the new version stays unmarked, and a
  * window that has not reloaded keeps running this one. It reads the newer build's marker as outdated, and patching both
  * bundles back to its own edits on the next settings or extensions change, it takes turns with every reloaded window.
  * Either way the window leaves every shared file to the windows running the installed build.
