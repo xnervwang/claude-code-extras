@@ -1,8 +1,8 @@
 # Work Plan for Claude Code
 
-Claude still sees unfinished work when you raise a new topic before finishing the last one, or when compaction summarizes older turns away. Each Claude Code conversation has a work plan: a tree of rows with states and optional child rows. Claude updates it as you talk. The plan lives in a file outside the conversation and appears in its own view in VS Code's activity bar, next to the Claude Code panel. Its open rows are given back to Claude every turn.
+Claude can lose track of unfinished work when you switch topics before the work is done, or when compaction summarizes older turns. Claude starts a plan when there is work to track and updates it as you talk. The plan lists numbered rows, one piece of work each, with states like `discussing`, `todo`, `doing`, or `done`.
 
-The extension also adds smaller features to the Claude Code panel, including timestamps, reply figures and sound alerts; see [Other features](#other-features).
+The plan is stored in a file outside the conversation, and Claude gets its open rows every turn. Claude is asked to bring the rows it is working on up to date before automatic compaction and, after compaction, to read the plan file before anything else. You see the plan in its own view next to the Claude Code panel. You answer by row number and can settle several rows in one message, like "2.1: not now". Rows Claude proposes on its own start as `discussing` and become `todo` only when you agree.
 
 Requires Anthropic's Claude Code extension and VS Code 1.94 or later.
 
@@ -73,7 +73,7 @@ remote.
 
 The extension works by editing files inside the installed Claude Code extension.
 
-Verified against Claude Code 2.1.312.
+Verified against Claude Code 2.1.312 and 2.1.314.
 
 ## Other features
 

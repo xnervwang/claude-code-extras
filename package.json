@@ -1,8 +1,8 @@
 {
   "name": "claude-code-extras",
   "displayName": "Work Plan for Claude Code",
-  "description": "The work plan tracks open work for each Claude Code conversation, even after compaction. Also adds timestamps and reply figures.",
-  "version": "1.0.18",
+  "description": "Help Claude track open work across topics and compaction. See the plan in its own view beside the Claude Code panel and answer by row number, even for several rows in one message: \"2.1: not now\". Claude starts and updates the plan as you talk, and rows it proposes stay \"discussing\" until you agree to make them \"todo\". The Claude Code panel also gets a line under each reply for time, context use, cost, model and effort, plus sound alerts.",
+  "version": "1.0.19",
   "publisher": "xnervwang",
   "license": "BSD-3-Clause",
   "icon": "images/icon.png",
