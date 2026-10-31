@@ -6400,8 +6400,8 @@ console.log('\ntext colors in the session list');
   env.paint();
   const style = env.appended[0];
   const ruled = style && style.textContent;
-  if (env.appended.length === 1 && ruled === `[class*="sessionItem_"][id$="${A}"]:not([class*=" active_"]) [class*="sessionName_"]{color:var(--vscode-charts-red,#f14c4c)}`) {
-    ok('a colored conversation gets one rule, for its title in every row whose id ends in its session ID, except the row of the conversation shown');
+  if (env.appended.length === 1 && ruled === `[class*="sessionItem_"][id$="${A}"] span[class*="sessionName_"]{color:var(--vscode-charts-red,#f14c4c)}`) {
+    ok('a colored conversation gets one rule, for its title in every row whose id ends in its session ID, the open conversation\'s row included');
   } else bad(`the colors were drawn as ${JSON.stringify(ruled)}`);
   item([A], true).submenu[2].onSelect();
   const chosen = style.textContent;

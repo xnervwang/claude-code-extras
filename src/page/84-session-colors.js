@@ -52,8 +52,8 @@
 
   /*
    * One rule per colored conversation, for its title in every row that shows it: the list's rows, and those of Open
-   * sessions and Recently closed, all have an id ending in the session ID. The row of the conversation shown in this
-   * panel keeps the list's own highlight, because light themes draw that row in white on a strong blue.
+   * sessions and Recently closed, all have an id ending in the session ID. The `span` makes the rule outrank the list's
+   * own color for the open conversation's row, which keeps its bold.
    */
   var paintColors = function(){
     var d = isOff('sessionColors') ? null : colorsNow();
@@ -64,7 +64,7 @@
         if (i && ids[i] === ids[i - 1]) continue;
         var name = colorOf(ids[i], d);
         if (name && COLOR_OF[name]) {
-          css += '[class*="sessionItem_"][id$="' + ids[i] + '"]:not([class*=" active_"]) [class*="sessionName_"]{color:'
+          css += '[class*="sessionItem_"][id$="' + ids[i] + '"] span[class*="sessionName_"]{color:'
             + COLOR_OF[name] + '}';
         }
       }
