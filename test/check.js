@@ -6453,6 +6453,61 @@ console.log('\ntext colors in the session list');
     ok('a choice is handled outside the host\'s message handling, a deleted or vanished conversation loses its color, and the switch is a setting of its own');
   } else bad('the text colors are not wired into the extension as expected');
 }
+console.log('\nbackground sessions left out of the session list');
+{
+  const bg = require('../src/bgsessions');
+  const { applyEdits } = require('../src/edits');
+  const A = '13758ed9-0b76-42b7-9685-534451164c72', B = '183f7e74-ec1e-408a-b4cd-da3791f683cb', C = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const D = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee', E = 'eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cce-bg-'));
+  try {
+    const cwd = '/work/my project';
+    const dir = path.join(root, bg.folderName(cwd));
+    fs.mkdirSync(dir, { recursive: true });
+    const rec = (o) => JSON.stringify(o) + '\n';
+    fs.writeFileSync(path.join(dir, A + '.jsonl'), rec({ type: 'agent-name', agentName: 'x' })
+      + rec({ parentUuid: null, type: 'user', entrypoint: 'cli', sessionKind: 'bg', message: { content: 'go' } }));
+    fs.writeFileSync(path.join(dir, B + '.jsonl'), rec({ parentUuid: null, type: 'user', entrypoint: 'claude-vscode',
+      message: { content: 'why does "sessionKind":"bg" show up in the list?' } }));
+    fs.writeFileSync(path.join(dir, C + '.jsonl'), rec({ type: 'agent-name', agentName: 'starting' }));
+    const elsewhere = path.join(root, 'elsewhere');
+    fs.mkdirSync(elsewhere);
+    fs.writeFileSync(path.join(elsewhere, E + '.jsonl'), rec({ parentUuid: null, type: 'user', sessionKind: 'bg' }));
+    const ids = (list) => list.map((e) => e.id);
+    const entries = [{ id: A }, { id: B }, { id: C }, { id: D }, { id: 'remote:x' }];
+    const first = ids(bg.withoutBackground(entries, cwd, root));
+    fs.appendFileSync(path.join(dir, C + '.jsonl'), rec({ parentUuid: null, type: 'user', sessionKind: 'bg' }));
+    const later = ids(bg.withoutBackground(entries, cwd, root));
+    const long = ids(bg.withoutBackground([{ id: E }, { id: B }], '/' + 'x'.repeat(240), root));
+    if (JSON.stringify([first, later, long]) === JSON.stringify([[B, C, D, 'remote:x'], [B, D, 'remote:x'], [B]])) {
+      ok('a session whose first record says sessionKind "bg" is left out; text quoting it in a message is not that field; one not yet started is read again later; a missing transcript keeps its row; a folder name past 200 characters falls back to a search');
+    } else bad(`left in ${JSON.stringify([first, later, long])}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+  const he = host.EDITS.find((x) => x.name === 'session list leaves out background sessions');
+  const src = 'class S{cwd="/w";async attachSessionPermissionModes(e){}async buildSessionList(){let n=[{id:"a"},{id:"b"}];return this.onSessionsListed?.([]),await this.attachSessionPermissionModes(n),n}}';
+  const r = he ? applyEdits(src, [he]) : { error: 'no such edit' };
+  if (r.error) bad('the background-session edit did not apply: ' + r.error);
+  else {
+    // The patched function is async, and this suite is not, so it runs in a child process.
+    const script = r.out + `;(async()=>{let seen=null;const run=async(h)=>{globalThis.__cceListedSessions=h;`
+      + `return(await new S().buildSessionList()).map((x)=>x.id).join(",")};`
+      + `const kept=await run((l,c)=>{seen=c;return l.filter((x)=>x.id!=="a")});`
+      + `const none=await run(undefined),broken=await run(()=>{throw new Error("x")}),odd=await run(()=>"not a list");`
+      + `process.stdout.write(JSON.stringify([kept,seen,none,broken,odd]))})()`;
+    const child = require('child_process').spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    if (child.stdout === JSON.stringify(['b', '/w', 'a,b', 'a,b', 'a,b'])) {
+      ok('the patched host hands its finished list and its folder to this extension, and keeps the list as it was when that fails or is missing');
+    } else bad(`the patched list was ${child.stdout || child.stderr}`);
+  }
+  const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  const setting = require('../package.json').contributes.configuration.properties['claudeCodeWorkPlan.hideBackgroundSessions'];
+  if (/globalThis\.__cceListedSessions = \(entries, cwd\) => \{\s*if \(removed\(\) \|\| cfg\(\)\.get\(HIDE_BG_SETTING, true\) === false\) return entries;/.test(extSrc)
+      && /if \(e\.affectsConfiguration\(HIDE_BG_SETTING\)\) \{\s*try \{ if \(typeof globalThis\.__cceSessionsChanged === 'function'\) globalThis\.__cceSessionsChanged\(\);/.test(extSrc)
+      && setting && setting.default === true) {
+    ok('background sessions are left out by default, a setting turns that off, and flipping it makes every panel read the list again');
+  } else bad('the background-session setting is not wired as expected');
+}
 console.log('\nthe patch markers follow the code');
 {
   /* A marker that stays the same while what patching writes changes leaves the old patch in place, and every step

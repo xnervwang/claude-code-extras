@@ -205,6 +205,17 @@ const EDITS = [
     to: (m, groups) => `groupedSessionKeys:new Set([...${groups},...(()=>{try{let p=globalThis.__ccePinnedIds,`
       + 'r=typeof p==="function"?p():[];return Array.isArray(r)?r.filter((x)=>typeof x==="string"):[]}catch(e){return[]}})()])',
   },
+  /*
+   * The finished session list passes through this extension, which leaves out background sessions (src/bgsessions.js).
+   * It does so after every source has added to the list, so it covers both of Claude Code's listing paths and the
+   * entries it adds for unreadable files.
+   */
+  {
+    name: 'session list leaves out background sessions',
+    re: /(await this\.attachSessionPermissionModes\(([\w$]+)\),)\2\}/g,
+    to: (m, head, list) => `${head}await(async()=>{try{let h=globalThis.__cceListedSessions;`
+      + `if(typeof h!=="function")return ${list};let r=await h(${list},this.cwd);return Array.isArray(r)?r:${list}}catch(e){return ${list}}})()}`,
+  },
 ];
 
 /* As in src/webview.js: the digest says whether the host runs the code this tree produces, so an edit changed without

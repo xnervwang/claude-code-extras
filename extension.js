@@ -32,6 +32,7 @@ const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
 const sessionPins = require('./src/sessionpins');
 const sessionColors = require('./src/sessioncolors');
+const bgSessions = require('./src/bgsessions');
 const droppedTabs = require('./src/droppedtabs');
 const deleteSession = require('./src/deletesession');
 const recentClosed = require('./src/recentclosed');
@@ -62,6 +63,7 @@ const PINS_SETTING = PREFIX + 'sessionPins';
 const PIN_MARGIN_SETTING = PREFIX + 'sessionPinsMarginDays';
 const REOPEN_SETTING = PREFIX + 'reopenDroppedTabs';
 const RECENT_SETTING = PREFIX + 'recentClosedSessions';
+const HIDE_BG_SETTING = PREFIX + 'hideBackgroundSessions';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
   enabled: PREFIX + 'workPlan',
@@ -757,6 +759,11 @@ function start(context, renamed) {
     });
     pinsWatch.on('error', () => { try { pinsWatch.close(); } catch (_) { /* closed */ } pinsWatch = null; });
   } catch (_) { /* the periodic refresh still carries a change across */ }
+  /* Read by the patched host each time it builds the session list (src/bgsessions.js). */
+  globalThis.__cceListedSessions = (entries, cwd) => {
+    if (removed() || cfg().get(HIDE_BG_SETTING, true) === false) return entries;
+    return bgSessions.withoutBackground(entries, cwd);
+  };
   /* Read by the patched host each time it works out which conversations are in use and so not to be archived. */
   globalThis.__ccePinnedIds = () => {
     try { return pinsOn() ? sessionPins.read(pinsFile()).pinned : []; } catch (_) { return []; }
@@ -768,6 +775,7 @@ function start(context, renamed) {
     if (pinsWatch) { try { pinsWatch.close(); } catch (_) { /* closed */ } }
     if (globalThis.__ccePinHook) delete globalThis.__ccePinHook;
     if (globalThis.__cceColorHook) delete globalThis.__cceColorHook;
+    if (globalThis.__cceListedSessions) delete globalThis.__cceListedSessions;
     if (globalThis.__ccePinnedIds) delete globalThis.__ccePinnedIds;
   } });
   /*
@@ -1067,6 +1075,9 @@ function start(context, renamed) {
     if (e.affectsConfiguration(PIN_MARGIN_SETTING) && !keepSoon) keepSoon = setTimeout(() => { keepSoon = 0; keepPinned(); }, 5000);
     if (e.affectsConfiguration(RECENT_SETTING) || e.affectsConfiguration(SETTING)) {
       try { if (typeof globalThis.__cceSendSessionStates === 'function') globalThis.__cceSendSessionStates(); } catch (_) { /* next update */ }
+    }
+    if (e.affectsConfiguration(HIDE_BG_SETTING)) {
+      try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }
     }
     if (!LIVE_SETTINGS.some((k) => e.affectsConfiguration(k))) return;
     const c = cfg().get(COLOR_SETTING, '');

@@ -95,6 +95,7 @@ Verified against Claude Code 2.1.312 and 2.1.314.
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
 | **Pinned conversations:** Click the pin at the start of a session-list row to keep that conversation from Claude Code's transcript cleanup (`cleanupPeriodDays`) and out of Archived sessions, as long as a window keeps connecting to its machine (see Known limits). | Session list |
 | **Text colors:** Right-click a conversation and choose **Text color** to give its title one of the colors of Claude Code's `/color`. The color shows wherever the conversation is listed. | Session list |
+| **Background sessions left out:** Sessions started with `claude --bg` are not listed. Turn off `claudeCodeWorkPlan.hideBackgroundSessions` to list them. | Session list |
 | **Chimes:** A short sound when a turn finishes, permission is requested or Claude asks a question, played on the machine showing the panel; mute it in the footer. | Footer; machine showing the panel |
 | **Background sessions:** This conversation's `claude --bg` sessions, each state in its own colour and counted at the top, with what each waits for, its result, and the attach and logs commands. | Agents button in the footer and its map |
 | **Scheduled prompts:** See timers this conversation set through Claude Code's scheduled tasks, with each schedule, last-fired time and prompt. | Agents button in the footer and its map |
@@ -109,7 +110,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 35 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 36 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 
