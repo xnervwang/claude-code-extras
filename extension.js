@@ -24,9 +24,11 @@ const { safeColor } = webview;
 const { readTasks, rememberDirs } = require('./src/tasks');
 const background = require('./src/background');
 const efforts = require('./src/efforts');
-const { countOpen, sweepOrphans, planDir, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
+const { countOpen, sweepOrphans, planDir, readPlan, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
 const { transcriptOf, writeAtomic } = require('./src/claude-files');
 const { WorkPlanProvider } = require('./src/workplan-view');
+const waiting = require('./src/waiting');
+const { WaitingProvider } = require('./src/waiting-view');
 const pluginInstall = require('./src/plugin-install');
 const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
@@ -64,6 +66,7 @@ const PIN_MARGIN_SETTING = PREFIX + 'sessionPinsMarginDays';
 const REOPEN_SETTING = PREFIX + 'reopenDroppedTabs';
 const RECENT_SETTING = PREFIX + 'recentClosedSessions';
 const HIDE_BG_SETTING = PREFIX + 'hideBackgroundSessions';
+const WAITING_SETTING = PREFIX + 'waitingOnYou';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
   enabled: PREFIX + 'workPlan',
@@ -516,15 +519,33 @@ function start(context, renamed) {
   const view = vscode.window.createTreeView('claudeCodeExtras.workPlan', { treeDataProvider: workplan });
   context.subscriptions.push(view);
 
-  /* The badge is the whole point of a glance: it says how much is waiting without anything being opened, and it is
-     absent rather than zero when nothing is, so an idle machine grows no ornament. */
+  /*
+   * Waiting on you, above the work plan in the same sidebar: what every running conversation is waiting for from the
+   * reader (src/waiting.js).
+   */
+  const waitingTree = new WaitingProvider();
+  const waitingView = vscode.window.createTreeView('claudeCodeExtras.waitingOnYou', { treeDataProvider: waitingTree });
+  context.subscriptions.push(waitingView);
+  const waitingOn = () => cfg().get(WAITING_SETTING, true) !== false && cfg().get(PREFIX + 'workPlan', true) !== false;
+
+  /*
+   * The editor adds the numbers of every view in a sidebar into the one on its icon, so two counts of different things
+   * would be added together. While Waiting on you is shown, the icon is its count: what waits on the reader across
+   * conversations, leaving out the waits over a week old. The work plan's own count of open rows moves to the
+   * description beside its title.
+   *
+   * Each is counted over what its view is showing, not over the machine: a count that takes in what the tree does not
+   * show gives a number the reader cannot find.
+   */
   const paintBadge = () => {
-    /* Counted over what the view is showing, not over the machine. A count that includes conversations the tree does not
-       show says a number the reader cannot find, which reads as the tree being broken rather than the count being wider. */
     const plan = workplan.shown();
     const n = plan ? countOpen(plan.nodes) : {};
     const open = (n.todo || 0) + (n.discussing || 0);
-    view.badge = open ? { value: open, tooltip: `${open} still open in this conversation` } : undefined;
+    const board = waitingOn();
+    view.badge = open && !board ? { value: open, tooltip: `${open} still open in this conversation` } : undefined;
+    view.description = open && board ? `${open} open` : undefined;
+    const waits = board ? waitingTree.data.count : 0;
+    waitingView.badge = waits ? { value: waits, tooltip: `${waits} waiting on you across conversations` } : undefined;
   };
   /* The id of the conversation in front of the reader, or empty. The patched field writes it on every change; before
      anything has, or when the panel has no conversation open, it is not a string and reads as empty - the view shows
@@ -584,6 +605,49 @@ function start(context, renamed) {
     workplan.setTimeZone(clientZone());
     const moved = workplan.setFocus(activeChat());
     if (workplan.refresh() || moved) paintBadge();
+    refreshWaiting(false);
+  };
+  /*
+   * The running conversations are asked for at most every half minute, on the periodic tick, and a change to any plan
+   * re-reads only the plans against the last answer: a question added to a plan should show at once, and starting
+   * Claude Code's binary for every write to a plan would cost a process per row changed.
+   *
+   * One pass at a time.
+   */
+  let agentsAt = 0, agentsLast = { records: null, error: '' }, waitingBusy = false, waitingAgain = null;
+  const readTitles = waiting.reader();
+  const refreshWaiting = async (askAgents) => {
+    if (waitingBusy) { waitingAgain = !!(waitingAgain || askAgents); return; }
+    waitingBusy = true;
+    try {
+      if (!waitingOn()) {
+        if (waitingTree.set({ fresh: [], stale: [], count: 0 })) paintBadge();
+        return;
+      }
+      if (askAgents || !agentsAt) {
+        agentsLast = await waiting.listAgents(pluginInstall.findClaude(claudeFolders()));
+        agentsAt = Date.now();
+      }
+      const { records, error } = agentsLast;
+      if (!records) {
+        if (waitingTree.set({ fresh: [], stale: [], count: 0 }, error)) paintBadge();
+        return;
+      }
+      const sessions = waiting.merge(records);
+      /* What a blocked background session asks for is in its job's own record, which Claude Code does not document as
+         an interface; without it the row says the session is blocked, and attaching to it shows the question. */
+      for (const sess of sessions.values()) {
+        if (sess.kind !== 'background' || !(sess.blocked || sess.waitingFor) || !sess.id) continue;
+        try { const st = background.readState(sess.id); if (st && st.needs) sess.needs = st.needs; } catch (_) { /* generic line */ }
+      }
+      const data = waiting.collect({ sessions, readPlan, titles: readTitles.titles, since: readTitles.since });
+      if (waitingTree.set(data)) paintBadge();
+    } catch (e) {
+      log.appendLine('waiting on you: ' + (e && e.message));
+    } finally {
+      waitingBusy = false;
+      if (waitingAgain !== null) { const again = waitingAgain; waitingAgain = null; refreshWaiting(again); }
+    }
   };
   /*
    * Following the conversation has to be immediate, so the patched field calls this the moment it is written. Waiting
@@ -1013,6 +1077,7 @@ function start(context, renamed) {
    * content changes. While the additions are off the transcript is not watched.
    */
   const tick = setInterval(() => {
+    agentsAt = 0;
     refreshPlans();
     if (removed() || !enabled() || uninstalling() || replaced()) { unwatchEffort(); return; }
     scanBackground();
@@ -1044,11 +1109,43 @@ function start(context, renamed) {
     registerCommand('showWorkPlanDetail', (row) => {
       if (!row) return;
       const head = [[row.state, row.note].filter(Boolean).join(' · ')];
+      if (row.question) head.push('Question: ' + row.question);
       if (row.times) head.push(row.times);
       if (row.path && row.path.length) head.push('in: ' + row.path.join(' › '));
       if (row.children) head.push(row.children + ' of its own to finish first');
       const body = row.detail || 'No description was written for this one.';
       vscode.window.showInformationMessage(row.title, { modal: true, detail: head.concat(['', body]).join('\n') });
+    }),
+    /*
+     * A row of Waiting on you goes to its conversation. Only one open in this window can be shown: an extension cannot
+     * bring another window forward, and opening the conversation here as well would put a second process on it - which
+     * is how one conversation comes to be held twice. So for those it says where the conversation is instead. A
+     * background session is reached the way the command line offers, by attaching to it in a terminal.
+     */
+    registerCommand('openWaitingConversation', async (target) => {
+      if (!target || !target.sessionId) return;
+      if (target.kind === 'background') {
+        const bin = pluginInstall.findClaude(claudeFolders());
+        if (!bin || !target.id) {
+          vscode.window.showInformationMessage(`"${target.title}" is a background session; attach to it with: claude attach ${target.id || target.sessionId}`);
+          return;
+        }
+        const term = vscode.window.createTerminal({ name: 'claude attach ' + target.id, shellPath: bin,
+          shellArgs: ['attach', target.id], cwd: target.cwd && fs.existsSync(target.cwd) ? target.cwd : undefined });
+        term.show();
+        return;
+      }
+      const list = (name) => { try { const f = globalThis[name]; return typeof f === 'function' ? f() || [] : []; } catch (_) { return []; } };
+      const elsewhere = list('__cceSessionsElsewhere');
+      const here = list('__cceSessionsShown').filter((id) => !elsewhere.includes(id));
+      if (here.includes(target.sessionId)) {
+        await vscode.commands.executeCommand('claude-vscode.editor.open', target.sessionId);
+        return;
+      }
+      const where = target.cwd ? ` (folder ${target.cwd})` : '';
+      vscode.window.showInformationMessage(elsewhere.includes(target.sessionId)
+        ? `"${target.title}" is open in another VS Code window${where}.`
+        : `"${target.title}" is not open in this window${where}. It is running outside it, so it is not opened here as well.`);
     }),
     registerCommand('openWorkPlanFile', async (element) => {
       const file = (element && element.plan && element.plan.file) || (workplan.shown() && workplan.shown().file);
@@ -1075,6 +1172,11 @@ function start(context, renamed) {
     if (e.affectsConfiguration(PIN_MARGIN_SETTING) && !keepSoon) keepSoon = setTimeout(() => { keepSoon = 0; keepPinned(); }, 5000);
     if (e.affectsConfiguration(RECENT_SETTING) || e.affectsConfiguration(SETTING)) {
       try { if (typeof globalThis.__cceSendSessionStates === 'function') globalThis.__cceSendSessionStates(); } catch (_) { /* next update */ }
+    }
+    if (e.affectsConfiguration(WAITING_SETTING) || e.affectsConfiguration(PREFIX + 'workPlan')) {
+      agentsAt = 0;
+      refreshWaiting(true);
+      paintBadge();
     }
     if (e.affectsConfiguration(HIDE_BG_SETTING)) {
       try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }

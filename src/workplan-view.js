@@ -65,11 +65,28 @@ const LOOK = {
  */
 const TIMED = ['doing', 'waiting'];
 function held(node, now = Date.now()) {
-  if (!node || !TIMED.includes(node.state) || !node.since || now < node.since) return '';
-  const s = Math.floor((now - node.since) / 1000);
+  if (!node || !TIMED.includes(node.state)) return '';
+  return ageSince(node.since, now);
+}
+/* The age of `since` in those steps, or '' when it is not known or is in the future. */
+function ageSince(since, now = Date.now()) {
+  if (!since || now < since) return '';
+  const s = Math.floor((now - since) / 1000);
   if (s < 3600) return Math.max(1, Math.floor(s / 60)) + 'm';
   if (s < 48 * 3600) return Math.floor(s / 3600) + 'h';
   return Math.floor(s / 86400) + 'd';
+}
+
+/*
+ * Who a held-up row waits on, in the words the tooltip and the dialog use. A `waiting` row written before the field
+ * existed says it only in its note. The view shows it as unknown and does not read the note: the list of what waits on
+ * the reader is built from the field, so a guess here would disagree with that list.
+ */
+const WHO = { user: 'you', build: 'a build or CI', someone: 'someone else', session: 'another conversation',
+  other: 'something else' };
+function waitsOn(node) {
+  if (node && WHO[node.waitingOn]) return { known: true, words: 'on ' + WHO[node.waitingOn] };
+  return node && node.state === 'waiting' ? { known: false, words: 'on: unknown' } : null;
 }
 
 /* Every such figure in a tree, in file order. Part of what decides whether the tree is redrawn, since the figure goes
@@ -296,7 +313,10 @@ class WorkPlanProvider {
     item.id = element.key;
     const times = stamp(node.opened, node.closed, this.timeZone);
     const lasted = held(node);
-    const word = look.word + (lasted ? ' for ' + lasted : '');
+    const on = waitsOn(node);
+    const word = on && on.known
+      ? `${look.word}${node.state === 'waiting' ? ' ' : ', '}${on.words}${lasted ? ' for ' + lasted : ''}`
+      : look.word + (lasted ? ' for ' + lasted : '') + (on ? ' · ' + on.words : '');
     /*
      * The row carries its time and nothing else beside the title - and, on a row `doing` or `waiting`, how long it has
      * been so, since that is the one fact about such a row that cannot wait for the hover: a stale one looks exactly like
@@ -313,7 +333,7 @@ class WorkPlanProvider {
     item.iconPath = new vscode.ThemeIcon(look.icon, new vscode.ThemeColor(look.color));
     item.contextValue = 'cceWorkPlanNode';
     const head = `**${node.title}**\n\n${word}${node.note ? ' — ' + node.note : ''}`
-      + (times ? '\n\n' + times : '');
+      + (node.question ? '\n\nQuestion: ' + node.question : '') + (times ? '\n\n' + times : '');
     item.tooltip = new vscode.MarkdownString(node.detail ? head + '\n\n' + node.detail : head);
     /*
      * EVERY row opens, including one with no description to show. Binding this only where there is something to read
@@ -328,7 +348,7 @@ class WorkPlanProvider {
       command: 'claudeCodeWorkPlan.showWorkPlanDetail',
       title: 'Show the description',
       arguments: [{
-        title: node.title, state: word, note: node.note, detail: node.detail,
+        title: node.title, state: word, note: node.note, detail: node.detail, question: node.question,
         path: element.path, children: kids.length, times,
       }],
     };
@@ -336,4 +356,4 @@ class WorkPlanProvider {
   }
 }
 
-module.exports = { WorkPlanProvider, hasOpen, stamp, held, heldAll, LOOK, TIMED, waitingIcon };
+module.exports = { WorkPlanProvider, hasOpen, stamp, held, heldAll, ageSince, waitsOn, LOOK, TIMED, WHO, waitingIcon };

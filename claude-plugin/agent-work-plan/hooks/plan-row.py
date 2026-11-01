@@ -5,8 +5,8 @@
 
 """Change one row of a work plan, or add a row: the state, the note, the description, and the times that go with them.
 
-  plan-row.py PLAN set ROW [STATE] [--note TEXT] [--detail TEXT]
-  plan-row.py PLAN add STATE TITLE [--under ROW] [--note TEXT]
+  plan-row.py PLAN set ROW [STATE] [--note TEXT] [--detail TEXT] [--waiting-on WHO] [--question TEXT]
+  plan-row.py PLAN add STATE TITLE [--under ROW] [--note TEXT] [--waiting-on WHO] [--question TEXT]
 
 ROW is the number shown in front of a row, closed rows counted: 3 is the third row at the top, 2.1 the first one under
 the second. Not a hook - the model runs it, and the injected block gives its full path every turn.
@@ -29,8 +29,8 @@ import sys
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
 
-from plan_path import (CLOSED_STATES, MAX_DETAIL_CHARS, MAX_DETAIL_LINES, PLAN_NAME, STATES, detail_over, now_stamp,
-                       plan_lock, settings, write_atomic)
+from plan_path import (CLOSED_STATES, HELD_STATES, MAX_DETAIL_CHARS, MAX_DETAIL_LINES, MAX_QUESTION_CHARS, PLAN_NAME,
+                       STATES, WAITING_ON, detail_over, now_stamp, plan_lock, settings, write_atomic)
 
 
 class Refused(Exception):
@@ -92,6 +92,54 @@ def detail(node, text):
         node.pop("detail", None)
 
 
+def hold(node, changed, who, question):
+    """Say who a held-up row waits on and, when that is the user, the question they have to answer.
+
+    These are fields rather than words in the note because the list of what waits on the user, across conversations, is
+    built from them. So they are checked here, when the row is written.
+
+    A change of state drops both unless the same command gives them again: a row moved on from `waiting` that still said
+    it waited on the user would go on asking a question nobody needs answered. Raises Refused before anything is
+    written.
+    """
+    if changed:
+        node.pop("waitingOn", None)
+        node.pop("question", None)
+    if who is not None:
+        who = who.strip()
+        if who and who not in WAITING_ON:
+            raise Refused("--waiting-on is one of %s, not %r." % (", ".join(WAITING_ON), who))
+        if who:
+            node["waitingOn"] = who
+        else:
+            node.pop("waitingOn", None)
+            node.pop("question", None)
+    if question is not None:
+        asked = " ".join(question.split())
+        if len(asked) > MAX_QUESTION_CHARS:
+            raise Refused("That question is %d characters; keep it to one sentence of at most %d that the user can answer "
+                          "as it stands. Anything longer belongs in --detail." % (len(asked), MAX_QUESTION_CHARS))
+        if asked:
+            node["question"] = asked
+        else:
+            node.pop("question", None)
+    state = node.get("state", "todo")
+    on = node.get("waitingOn")
+    if on and state not in HELD_STATES:
+        raise Refused("Only a waiting or a discussing row waits on someone, and this one is %s." % state)
+    if on and state == "discussing" and on != "user":
+        raise Refused("A discussing row waits on nobody but the user, whose word it needs before it can be agreed.")
+    if changed and state == "waiting" and not on:
+        raise Refused("Say who this row now waits on, with --waiting-on: user (the person in this conversation), build "
+                      "(CI or a build), someone (a reviewer or anyone else), session (another conversation) or other. "
+                      "When it is the user, add --question.")
+    if node.get("question") and on != "user":
+        raise Refused("A question is what the user has to answer, so it goes with --waiting-on user.")
+    if on == "user" and not node.get("question"):
+        raise Refused("A row waiting on the user carries what they have to answer: give --question, one sentence they "
+                      "can answer as it stands without reading the conversation.")
+
+
 def load(path, may_create):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -135,8 +183,9 @@ def change(path, args):
     plan = load(path, args.action == "add")
     now = now_stamp()
     if args.action == "set":
-        if args.state is None and args.note is None and args.detail is None:
-            raise Refused("Nothing to change: give a state, --note or --detail.")
+        if args.state is None and args.note is None and args.detail is None and args.waiting_on is None \
+                and args.question is None:
+            raise Refused("Nothing to change: give a state, --note, --detail, --waiting-on or --question.")
         node = find(plan["nodes"], args.row)
         if node is None:
             raise Refused("There is no row %s in this plan." % args.row)
@@ -144,11 +193,15 @@ def change(path, args):
         detail(node, args.detail)
         # The state a row is already in is not entered again: `since` says how long it has been in it, and a command
         # that only rewrites the description must not restart that clock.
-        if args.state is not None and args.state != was:
+        changed = args.state is not None and args.state != was
+        if changed:
             enter(node, args.state, now)
             said = "row %s: %s -> %s" % (args.row, was, args.state)
         else:
             said = "row %s: still %s" % (args.row, was)
+        hold(node, changed, args.waiting_on, args.question)
+        if node.get("waitingOn"):
+            said += ", on %s" % node["waitingOn"]
         note(node, args.note)
         if args.detail is not None:
             said += ", description %s" % ("set" if args.detail.strip() else "removed")
@@ -169,9 +222,12 @@ def change(path, args):
         note(node, args.note)
         node["opened"] = now
         enter(node, args.state, now)
+        hold(node, True, args.waiting_on, args.question)
         node["children"] = []
         siblings.append(node)
         said = "row %s%d added: %s" % (prefix, len(siblings), args.state)
+        if node.get("waitingOn"):
+            said += ", on %s" % node["waitingOn"]
     save(path, plan)
     return said
 
@@ -187,11 +243,16 @@ def main(argv=None):
     change.add_argument("state", nargs="?", choices=STATES, help="leave it out to keep the state the row is in")
     change.add_argument("--note", help="replace the row's note; an empty one removes it")
     change.add_argument("--detail", help="replace the row's description; an empty one removes it")
+    change.add_argument("--waiting-on", metavar="WHO", help="who a waiting row waits on: %s; an empty one removes it"
+                        % ", ".join(WAITING_ON))
+    change.add_argument("--question", help="with --waiting-on user: the one question the user has to answer")
     add = actions.add_parser("add", help="add a row, at the end of the plan or under another row")
     add.add_argument("state", choices=STATES)
     add.add_argument("title")
     add.add_argument("--under", metavar="ROW", help="the row to add it under")
     add.add_argument("--note")
+    add.add_argument("--waiting-on", metavar="WHO", help="who a waiting row waits on: %s" % ", ".join(WAITING_ON))
+    add.add_argument("--question", help="with --waiting-on user: the one question the user has to answer")
     args = parser.parse_args(argv)
     try:
         print(run(args))

@@ -3365,11 +3365,14 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
   {
     /* The setting has to reach the plugin, and the view has to be hidden by it. Neither is visible from the other side. */
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-    const view = manifest.contributes.views.claudeCodeExtras[0];
+    const views = manifest.contributes.views.claudeCodeExtras;
+    const view = views.find((v) => v.id === 'claudeCodeExtras.workPlan') || {};
     const setting = manifest.contributes.configuration.properties['claudeCodeWorkPlan.workPlan'];
-    if (setting && setting.default === true && view.when === 'config.claudeCodeWorkPlan.workPlan') {
-      ok('the view is hidden by the same setting the hooks read, and starts on');
-    } else bad(`setting ${JSON.stringify(setting && setting.default)}, view when ${JSON.stringify(view.when)}`);
+    const others = views.filter((v) => v !== view);
+    if (setting && setting.default === true && view.when === 'config.claudeCodeWorkPlan.workPlan'
+      && others.every((v) => String(v.when).startsWith('config.claudeCodeWorkPlan.workPlan && '))) {
+      ok('the views are hidden by the same setting the hooks read, and start on');
+    } else bad(`setting ${JSON.stringify(setting && setting.default)}, view when ${JSON.stringify(views.map((v) => v.when))}`);
   }
 }
 
@@ -3461,17 +3464,38 @@ console.log('\none list of states, in three places');
   const skill = fs.readFileSync(path.join(root, 'claude-plugin', 'agent-work-plan', 'skills', 'maintain', 'SKILL.md'), 'utf8');
   const tuple = /^STATES = \(([^)]*)\)/m.exec(py);
   const inPython = tuple ? (tuple[1].match(/"([a-z]+)"/g) || []).map((s) => s.slice(1, -1)) : [];
-  const inSkill = [];
-  for (const line of skill.split('\n')) {
-    const m = /^\| `([a-z]+)` \|/.exec(line);
-    // The table's own header is `state`, written the same way as the rows under it.
-    if (m && m[1] !== 'state' && !inSkill.includes(m[1])) inSkill.push(m[1]);
-  }
+  /* The keywords in the skill's table headed by `header`: its rows run from that header to the first line that is not
+     part of a table. */
+  const tableOf = (header) => {
+    const out = [];
+    let inside = false;
+    for (const line of skill.split('\n')) {
+      if (new RegExp('^\\| `' + header + '` \\|').test(line)) { inside = true; continue; }
+      if (!inside) continue;
+      if (!line.startsWith('|')) break;
+      const m = /^\| `([a-z]+)` \|/.exec(line);
+      if (m && !out.includes(m[1])) out.push(m[1]);
+    }
+    return out;
+  };
+  const inSkill = tableOf('state');
   const want = plan.STATES.join();
   if (inPython.join() === want) ok(`the plugin's scripts and the view list the same ${plan.STATES.length} states, in one order`);
   else bad(`the view lists ${want}, plan_path.py ${inPython.join()}`);
   if (inSkill.slice().sort().join() === plan.STATES.slice().sort().join()) ok('the skill explains every one of them, and no other');
   else bad(`the skill's table has ${inSkill.join()}, the view ${want}`);
+  /* The parties a row can wait on are kept in the same three places: the row command refuses a value the view does not
+     know, and the list across conversations is built from it. */
+  const whoTuple = /^WAITING_ON = \(([^)]*)\)/m.exec(py);
+  const whoPython = whoTuple ? (whoTuple[1].match(/"([a-z]+)"/g) || []).map((s) => s.slice(1, -1)) : [];
+  const whoSkill = tableOf('waitingOn');
+  if (whoPython.join() === plan.WAITING_ON.join() && whoSkill.join() === plan.WAITING_ON.join()) {
+    ok(`the plugin's scripts, the view and the skill list the same ${plan.WAITING_ON.length} parties a row can wait on`);
+  } else bad(`waiting on: view ${plan.WAITING_ON.join()}, plan_path.py ${whoPython.join()}, skill ${whoSkill.join()}`);
+  const qPython = /^MAX_QUESTION_CHARS = (\d+)/m.exec(py);
+  if (qPython && Number(qPython[1]) === plan.MAX_QUESTION_CHARS && skill.includes('at most ' + plan.MAX_QUESTION_CHARS + ' characters')) {
+    ok(`a question is held to ${plan.MAX_QUESTION_CHARS} characters by the row command, the view and the skill alike`);
+  } else bad(`question limit: view ${plan.MAX_QUESTION_CHARS}, plan_path.py ${qPython && qPython[1]}`);
 }
 
 /* ── 17. what the injected block says about the work in hand ──
@@ -3514,11 +3538,20 @@ console.log('\nwhat the injected block says about the work in hand');
       { title: 'untimed', state: 'doing' },
       { title: 'queued', state: 'todo', since: ago(5 * 3600) },
       { title: 'colonless', state: 'doing', since: ago(5 * 3600 + 60).replace(/\.\d+Z$/, '+0000') },
+      { title: 'asked', state: 'waiting', since: ago(3600 + 60), waitingOn: 'user', question: 'Ship 2.0 now?' },
+      { title: 'built', state: 'waiting', since: ago(120), waitingOn: 'build' },
+      { title: 'decide', state: 'discussing', waitingOn: 'user', question: 'A or B?' },
     ]).text;
-    const got = ['working', 'held', 'untimed', 'queued', 'colonless'].map((t) => rowOf(text, t).replace(/^.*\[/, '['));
-    const want = ['[doing for 2h]', '[waiting for 3d · on the user]', '[doing]', '[todo]', '[doing for 5h]'];
-    if (got.join('|') === want.join('|')) ok('a row doing or waiting says for how long, whichever way its time is written');
-    else bad(`the rows came out ${JSON.stringify(got)}`);
+    const titles = ['working', 'held', 'untimed', 'queued', 'colonless', 'asked', 'built', 'decide'];
+    const got = titles.map((t) => rowOf(text, t).replace(/^.*\[/, '['));
+    const want = ['[doing for 2h]', '[waiting on ? for 3d · on the user]', '[doing]', '[todo]', '[doing for 5h]',
+      '[waiting on user for 1h · asks: Ship 2.0 now?]', '[waiting on build for 2m]', '[discussing on user · asks: A or B?]'];
+    if (got.join('|') === want.join('|')) {
+      ok('a row doing or waiting says for how long, and a held row who it waits on and what it asks the user');
+    } else bad(`the rows came out ${JSON.stringify(got)}`);
+    if (/^1 waiting row does not say who it waits for \(shown `on \?`\)/m.test(text)) {
+      ok('a waiting row from before the field is counted, so the conversation gives it one');
+    } else bad(`no line about the waiting row without a party: ${JSON.stringify(text.slice(0, 900))}`);
   }
   {
     const text = inject([{ title: 'a', state: 'todo' }]).text;
@@ -3763,12 +3796,44 @@ console.log('\nthe row command');
   }
   {
     const t = stage(plan());
-    row(t, 'set', '1', 'waiting', '--note', 'on the user');
-    const noted = read(t).nodes[0].note;
+    row(t, 'set', '1', 'waiting', '--note', 'on the user', '--waiting-on', 'user', '--question', 'Ship it?');
+    const held = read(t).nodes[0];
     row(t, 'set', '1', 'doing', '--note', '');
     const cleared = read(t).nodes[0];
-    if (noted === 'on the user' && !('note' in cleared)) ok('a note is set with the state, and an empty one removes it');
-    else bad(`note was ${JSON.stringify(noted)}, then ${JSON.stringify(cleared.note)}`);
+    if (held.note === 'on the user' && !('note' in cleared)) ok('a note is set with the state, and an empty one removes it');
+    else bad(`note was ${JSON.stringify(held.note)}, then ${JSON.stringify(cleared.note)}`);
+    if (held.waitingOn === 'user' && held.question === 'Ship it?' && !('waitingOn' in cleared) && !('question' in cleared)) {
+      ok('who a row waits on and its question are set with the state, and leaving the state takes both away');
+    } else bad(`held ${JSON.stringify(held)}, then ${JSON.stringify(cleared)}`);
+    done(t);
+  }
+  {
+    const cases = [
+      ['waiting with nobody named', ['set', '1', 'waiting']],
+      ['waiting on the user with no question', ['set', '1', 'waiting', '--waiting-on', 'user']],
+      ['a party that is not one of the five', ['set', '1', 'waiting', '--waiting-on', 'robots']],
+      ['a question for anyone but the user', ['set', '1', 'waiting', '--waiting-on', 'build', '--question', 'x']],
+      ['a question past the limit', ['set', '1', 'waiting', '--waiting-on', 'user', '--question', 'q'.repeat(201)]],
+      ['a todo row waiting on someone', ['set', '1', '--waiting-on', 'user', '--question', 'x']],
+      ['a discussing row waiting on a build', ['add', 'discussing', 'z', '--waiting-on', 'build']],
+    ];
+    for (const [what, args] of cases) {
+      const t = stage(plan());
+      const before = fs.readFileSync(t.file, 'utf8');
+      const r = row(t, ...args);
+      if (r.status === 1 && r.stderr.trim() && fs.readFileSync(t.file, 'utf8') === before) ok(`refused: ${what}`);
+      else bad(`${what}: status ${r.status}, said ${JSON.stringify(r.stdout + r.stderr)}`);
+      done(t);
+    }
+    const t = stage({ nodes: [{ title: 'old', state: 'waiting', note: 'n' }] });
+    const r = row(t, 'set', '1', '--note', 'still');
+    const d = read(t).nodes[0];
+    if (r.status === 0 && d.note === 'still' && !('waitingOn' in d)) {
+      ok('a waiting row written before the field can still have its note changed without naming anyone');
+    } else bad(`changing an old waiting row: status ${r.status}, ${JSON.stringify(r.stderr)}, row ${JSON.stringify(d)}`);
+    const q = row(t, 'set', '1', '--waiting-on', 'user', '--question', 'Line one\n  line two?');
+    if (q.status === 0 && read(t).nodes[0].question === 'Line one line two?') ok('a question is kept to one line');
+    else bad(`question with a newline: ${JSON.stringify(q.stderr)}, ${JSON.stringify(read(t).nodes[0])}`);
     done(t);
   }
   {
@@ -6536,6 +6601,168 @@ console.log('\nthe patch markers follow the code');
     if (other === null) bad(`${label}: the replacement to change was not found`);
     else if (other !== now && other.startsWith(now.slice(0, now.indexOf('-')))) ok(`${label}: changing one edit's replacement changes the marker, without the number being raised`);
     else bad(`${label}: the marker stayed ${now} after a replacement changed`);
+  }
+}
+
+/* ── waiting on you ──
+   The list is built from two fields only: a plan row's waitingOn, and the state Claude Code reports for a session. */
+console.log('\nwaiting on you');
+{
+  const w = require('../src/waiting');
+  const DAY = 24 * 3600 * 1000, now = Date.parse('2026-11-01T12:00:00Z');
+  const S = (n) => '9' + String(n).padStart(7, '0') + '-0000-0000-0000-000000000000';
+
+  if (w.isDefaultName('claude-code-extras-92', '/x/claude-code-extras') && w.isDefaultName('manfredstoredevtool-dev-db', '/a/ManfredStoreDevTool-dev')
+    && !w.isDefaultName('ADV returns N dbs', '/x/claude-code-extras') && !w.isDefaultName('claude-code-extras', '/x/claude-code-extras')) {
+    ok('a name Claude Code made up from the folder is told apart from one somebody gave');
+  } else bad('isDefaultName misjudged a name');
+
+  const merged = w.merge([
+    { sessionId: S(1), id: 'aaaa1111', kind: 'interactive', cwd: '/x/claude-code-extras', name: 'claude-code-extras-92', status: 'idle' },
+    { sessionId: S(1), id: 'aaaa1111', kind: 'interactive', cwd: '/x/claude-code-extras', name: 'Release work', status: 'waiting', waitingFor: 'permission prompt' },
+    { sessionId: S(2), id: 'bbbb2222', kind: 'background', cwd: '/x/y', name: 'overnight run', state: 'blocked' },
+    { sessionId: S(3), id: 'cccc3333', kind: 'interactive', cwd: '/x/z', name: 'z-1f', status: 'busy' },
+    { nope: true },
+  ]);
+  const one = merged.get(S(1));
+  if (merged.size === 3 && one.processes === 2 && one.name === 'Release work' && one.waitingFor === 'permission prompt') {
+    ok('two processes holding one conversation are one conversation, waiting if either is, under the name somebody gave');
+  } else bad(`merged ${JSON.stringify([...merged.values()])}`);
+
+  const plans = {
+    [S(1)]: { title: '', nodes: [
+      { title: 'publish', state: 'waiting', since: now - 3600e3, waitingOn: 'user', question: 'Publish 1.0.20 now?', children: [] },
+      { title: 'old style', state: 'waiting', since: now - 7200e3, waitingOn: '', question: '', children: [] },
+      { title: 'parent', state: 'doing', children: [
+        { title: 'pick', state: 'discussing', since: now - 60e3, waitingOn: 'user', question: 'A or B?', children: [] },
+      ] },
+      { title: 'built', state: 'waiting', since: now - 60e3, waitingOn: 'build', question: '', children: [] },
+    ] },
+  };
+  const since = { [S(1)]: now - 120e3, [S(2)]: now - 30 * DAY };
+  const data = w.collect({
+    sessions: merged, now,
+    readPlan: (id) => plans[id] || null,
+    titles: (sess) => (sess.sessionId === S(2) ? { custom: '', ai: '' } : { custom: '', ai: 'AI title' }),
+    since: (sess) => since[sess.sessionId] || 0,
+  });
+  const g = data.fresh[0];
+  const shape = g && g.items.map((it) => it.kind + ':' + (it.row || '') + ':' + it.text).join('|');
+  if (data.fresh.length === 1 && g.sessionId === S(1) && g.title === 'Release work'
+    && shape === 'prompt::Permission prompt|question:1:Publish 1.0.20 now?|question:3.1:A or B?') {
+    ok('a conversation lists its prompt first, then the plan rows that wait on the user, by number, oldest first');
+  } else bad(`fresh ${JSON.stringify(data.fresh)}`);
+  if (!JSON.stringify(data).includes('old style') && !JSON.stringify(data).includes('built') && !data.fresh.concat(data.stale).some((x) => x.sessionId === S(3))) {
+    ok('a waiting row that does not name the user, one waiting on a build, and a busy conversation are all left out');
+  } else bad('something not waiting on the user was listed');
+  if (data.stale.length === 1 && data.stale[0].sessionId === S(2) && data.stale[0].items[0].kind === 'blocked' && data.count === 3) {
+    ok('a wait over a week old is set apart, and only the newer ones are counted');
+  } else bad(`stale ${JSON.stringify(data.stale)}, count ${data.count}`);
+
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-wait-'));
+    const file = path.join(dir, 't.jsonl');
+    fs.writeFileSync(file, [
+      '{"type":"custom-title","customTitle":"First name","sessionId":"x"}',
+      '{"type":"ai-title","aiTitle":"Old AI","sessionId":"x"}',
+      '{"type":"user","message":"..."}',
+      '{"type":"custom-title","customTitle":"Second name","sessionId":"x"}',
+      '{"type":"ai-title","aiTitle":"New AI","sessionId":"x"}',
+      '{"type":"assistant"}',
+    ].join('\n') + '\n');
+    const t = w.transcriptTitles(file);
+    if (t.custom === 'Second name' && t.ai === 'New AI') ok('a conversation is titled from the last titles its transcript carries');
+    else bad(`titles ${JSON.stringify(t)}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  {
+    /* In a child process, because this script ends synchronously and a result that arrives later would never be counted. */
+    const script = `const w = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'waiting.js'))});
+      let got = null;
+      const fake = (out) => (bin, args, opts, cb) => { got = args; cb(null, out, ''); };
+      Promise.all([w.listAgents('claude', fake('[{"sessionId":"s","status":"idle"}]')), w.listAgents('claude', fake('not json')),
+        w.listAgents('')]).then((r) => console.log(JSON.stringify([got].concat(r))));`;
+    const r = cp.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    let got, good, broken, none;
+    try { [got, good, broken, none] = JSON.parse(r.stdout); } catch (_) { got = null; }
+    if (got && got.join(' ') === 'agents --json' && good.records.length === 1 && broken.records === null && broken.error
+      && none.records === null && none.error) {
+      ok('the running conversations come from `claude agents --json`, and an answer that is not a list is reported, not shown as nothing');
+    } else bad(`listAgents: ${r.stdout} ${r.stderr}`);
+  }
+  {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-wait-home-'));
+    const id = S(9);
+    const dir = path.join(home, '.claude', 'plugins', 'data', require('../src/plugin-install').DATA_DIR);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, id + '.json'), JSON.stringify({ nodes: [
+      { title: 'legacy', state: 'waiting', note: 'on the user' },
+      { title: 'odd', state: 'waiting', waitingOn: 'robots', question: 'x' },
+      { title: 'asks', state: 'waiting', waitingOn: 'user', question: 'Line one\n line two?' },
+      { title: 'build', state: 'waiting', waitingOn: 'build', question: 'not for the user' },
+    ] }));
+    const script = `const p = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'workplan.js'))}).readPlan(${JSON.stringify(id)});`
+      + 'console.log(JSON.stringify(p.nodes.map((n) => [n.waitingOn, n.question])))';
+    let r = null;
+    try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: Object.assign({}, process.env, { HOME: home, USERPROFILE: home }) })); }
+    catch (e) { r = String(e); }
+    if (JSON.stringify(r) === JSON.stringify([['', ''], ['', ''], ['user', 'Line one line two?'], ['build', '']])) {
+      ok('a plan written before the field, or with a party the view does not know, reads as unknown rather than failing');
+    } else bad(`read back ${JSON.stringify(r)}`);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+
+  {
+    const stub = path.join(os.tmpdir(), 'cce-vscode-stub-waiting.js');
+    fs.writeFileSync(stub, `
+      class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
+      class MarkdownString { constructor(v) { this.value = v || ''; } appendText(t) { this.value += t; return this; } appendMarkdown(t) { this.value += t; return this; } }
+      module.exports = {
+        version: '1.144.0', TreeItem, MarkdownString,
+        TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+        ThemeIcon: class { constructor(id, color) { this.id = id; this.color = color; } },
+        ThemeColor: class { constructor(id) { this.id = id; } },
+        EventEmitter: class { constructor() { this.event = () => ({ dispose() {} }); } fire() {} },
+      };
+    `);
+    const Module = require('module');
+    const realResolve = Module._resolveFilename;
+    Module._resolveFilename = function (request, ...rest) { return request === 'vscode' ? stub : realResolve.call(this, request, ...rest); };
+    let WaitingProvider, views;
+    try {
+      delete require.cache[require.resolve('../src/workplan-view')];
+      delete require.cache[require.resolve('../src/waiting-view')];
+      ({ WaitingProvider } = require('../src/waiting-view'));
+      views = require('../src/workplan-view');
+    } finally { Module._resolveFilename = realResolve; }
+    const tree = new WaitingProvider();
+    const first = tree.set(data, '', now), again = tree.set(data, '', now);
+    const top = tree.getChildren();
+    const items = tree.getChildren(top[0]).map((e) => tree.getTreeItem(e));
+    const conv = tree.getTreeItem(top[0]);
+    if (first && !again && top.length === 2 && top[1].kind === 'old' && conv.label === 'Release work'
+      && items.map((i) => i.iconPath.id).join() === 'shield,question,question'
+      && items.every((i) => i.command && i.command.arguments[0].sessionId === S(1))) {
+      ok('Waiting on you draws a conversation with what it waits for under it, each going to the conversation, and the old ones in a group');
+    } else bad(`tree ${JSON.stringify([first, again, top.map((t) => t.kind), conv.label, items.map((i) => i.iconPath.id)])}`);
+    tree.set({ fresh: [], stale: [], count: 0 });
+    if (tree.getChildren().length === 0) ok('with nothing waiting it is empty, so its one-line welcome text is all it shows');
+    else bad('an empty Waiting on you drew rows');
+    const legacy = views.waitsOn({ state: 'waiting', waitingOn: '' }), user = views.waitsOn({ state: 'waiting', waitingOn: 'user' });
+    if (legacy && !legacy.known && legacy.words === 'on: unknown' && user.words === 'on you' && views.waitsOn({ state: 'todo' }) === null) {
+      ok('the work plan says who a row waits on, and "unknown" for a waiting row written before the field');
+    } else bad(`waitsOn ${JSON.stringify([legacy, user])}`);
+  }
+
+  {
+    const pkg = require('../package.json');
+    const ids = pkg.contributes.views.claudeCodeExtras.map((v) => v.id);
+    const setting = pkg.contributes.configuration.properties['claudeCodeWorkPlan.waitingOnYou'];
+    const welcome = pkg.contributes.viewsWelcome.find((v) => v.view === 'claudeCodeExtras.waitingOnYou');
+    if (ids[0] === 'claudeCodeExtras.waitingOnYou' && ids[1] === 'claudeCodeExtras.workPlan' && setting && setting.default === true && welcome) {
+      ok('Waiting on you sits above the work plan, on by default, with a welcome line for when nothing waits');
+    } else bad(`views ${ids.join()}, setting ${JSON.stringify(setting)}`);
   }
 }
 

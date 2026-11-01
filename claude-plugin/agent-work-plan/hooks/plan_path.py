@@ -29,6 +29,16 @@ STATES = ("discussing", "todo", "doing", "waiting", "parked", "done", "dropped")
 OPEN_STATES = ("discussing", "todo", "doing", "waiting", "parked")
 CLOSED_STATES = ("done", "dropped")
 
+# Who a held-up row waits on, in the row's `waitingOn` field. A `waiting` row must say; a `discussing` row may say
+# `user` when the conversation has put a decision to them. The extension keeps the same list (WAITING_ON in
+# src/workplan.js) and the skill tabulates it.
+WAITING_ON = ("user", "build", "someone", "session", "other")
+# The states a row can say it is waiting on someone in.
+HELD_STATES = ("waiting", "discussing")
+# A row waiting on the user carries the one question they have to answer, in `question`, on one line. Long enough for
+# a real question and short enough to read in a list of them across conversations.
+MAX_QUESTION_CHARS = 200
+
 
 def data_dir():
     given = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("CLAUDE_PLUGIN_DATA", "")

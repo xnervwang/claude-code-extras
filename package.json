@@ -1,7 +1,7 @@
 {
   "name": "claude-code-extras",
   "displayName": "Work Plan for Claude Code",
-  "description": "Help Claude track open work across topics and compaction. See the plan in its own view beside the Claude Code panel and answer by row number, even for several rows in one message: \"2.1: not now\". Claude starts and updates the plan as you talk, and rows it proposes stay \"discussing\" until you agree to make them \"todo\". The Claude Code panel also gets a line under each reply for time, context use, cost, model and effort, plus sound alerts.",
+  "description": "Help Claude track open work across topics and compaction. Claude starts and updates a plan as you talk. See it in its own view beside the Claude Code panel and answer by row number, even for several rows in one message: \"2.1: not now\". Rows Claude proposes stay \"discussing\" until you agree to make them \"todo\". Waiting on you shows what every running conversation on this machine needs from you. The Claude Code panel also gets a line under each reply for time, context use, cost, model and effort, plus sound alerts.",
   "version": "1.0.19",
   "publisher": "xnervwang",
   "license": "BSD-3-Clause",
@@ -116,6 +116,11 @@
     "views": {
       "claudeCodeExtras": [
         {
+          "id": "claudeCodeExtras.waitingOnYou",
+          "name": "Waiting on you",
+          "when": "config.claudeCodeWorkPlan.workPlan && config.claudeCodeWorkPlan.waitingOnYou"
+        },
+        {
           "id": "claudeCodeExtras.workPlan",
           "name": "Work plan",
           "when": "config.claudeCodeWorkPlan.workPlan"
@@ -123,6 +128,10 @@
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "claudeCodeExtras.waitingOnYou",
+        "contents": "Nothing is waiting on you."
+      },
       {
         "view": "claudeCodeExtras.workPlan",
         "contents": "No work plan for this conversation yet."
@@ -332,6 +341,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Keep a work plan for each conversation: the tree in the activity bar, the open rows put in front of the model every turn, and the reminder to reconcile them at the end of one. Turned off, the view and its activity bar icon go, nothing is put in front of the model, and a write to a plan file is refused so one is not kept where nobody can see it.\n\nWhat stays is the skill's own description, about 110 tokens a session, because the plugin is still registered with Claude Code. **Work Plan for Claude Code: Stop Loading the Work Plan Plugin** removes that too; it is a separate command because it changes Claude Code's own settings rather than this extension's."
+        },
+        "claudeCodeWorkPlan.waitingOnYou": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show **Waiting on you** above the work plan. It lists what each running conversation is waiting for from you: a permission prompt, a blocked background session, or a question in its work plan. Takes effect without a reload."
         },
         "claudeCodeWorkPlan.tellClaudeYourTimeZone": {
           "type": "boolean",

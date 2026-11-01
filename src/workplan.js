@@ -30,6 +30,8 @@
  *                  "opened": "optional ISO 8601; when this row was added",
  *                  "since": "optional ISO 8601; when it entered the state it is in",
  *                  "closed": "optional ISO 8601; when it reached done or dropped",
+ *                  "waitingOn": "optional, on a waiting or discussing row: user|build|someone|session|other",
+ *                  "question": "optional, with waitingOn user: the one question the user has to answer",
  *                  "children": [ ... ] } ] }
  *
  * A child is something that has to be finished before its parent can be, whether that was planned or discovered on the
@@ -69,6 +71,10 @@ const LOCK = /\.lock$/i;
 const LOCK_STALE_MS = 24 * 60 * 60 * 1000;
 /* The same list as STATES in the plugin's plan_path.py, in the same order; test/check.js holds them together. */
 const STATES = ['discussing', 'todo', 'doing', 'waiting', 'parked', 'done', 'dropped'];
+/* Who a held-up row waits on: the same list as WAITING_ON in plan_path.py, held together by test/check.js. A value not
+   in it, or none, reads as '' - not known - since a row written before the field existed says it only in its note. */
+const WAITING_ON = ['user', 'build', 'someone', 'session', 'other'];
+const MAX_QUESTION_CHARS = 200;
 /* Depth and count are bounded because the file is written by another process: a cycle turned into JSON, or a runaway
    generator, would otherwise be rendered forever. Both are far above any plan a person reads. */
 const MAX_DEPTH = 8;
@@ -127,9 +133,11 @@ function node(raw, depth, budget) {
       if (c) children.push(c);
     }
   }
+  const waitingOn = WAITING_ON.includes(raw.waitingOn) ? raw.waitingOn : '';
+  const question = waitingOn === 'user' ? text(raw.question, MAX_QUESTION_CHARS * 2).replace(/\s+/g, ' ') : '';
   return {
     title, state, note: text(raw.note, 120), detail: detail(raw.detail),
-    opened: when(raw.opened), since: when(raw.since), closed: when(raw.closed), children,
+    opened: when(raw.opened), since: when(raw.since), closed: when(raw.closed), waitingOn, question, children,
   };
 }
 
@@ -257,5 +265,5 @@ function countOpen(nodes, acc = { discussing: 0, todo: 0, doing: 0, waiting: 0, 
 module.exports = {
   readPlan, countOpen, planDir, liveSessions, sweepOrphans, openFirst,
   DATA_ROOT, PLAN_DIR, PLAN_FILE, SIDE_SUFFIXES, SETTLED_MS, LOCK_STALE_MS, OPEN_STATES,
-  STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS,
+  STATES, MAX_DEPTH, MAX_NODES, MAX_DETAIL_LINES, MAX_DETAIL_CHARS, WAITING_ON, MAX_QUESTION_CHARS,
 };

@@ -41,8 +41,9 @@ const REF = PLUGIN + '@' + MARKETPLACE;
 /** The directory the platform gives the plugin for its own data, named from those two. */
 const DATA_DIR = PLUGIN + '-' + MARKETPLACE;
 const dataPath = () => path.join(os.homedir(), '.claude', 'plugins', 'data', DATA_DIR);
-/** Where Claude Code keeps the command-line binary inside its own extension directory. */
-const BINARY = path.join('resources', 'native-binary', 'claude');
+/** Where Claude Code keeps the command-line binary inside its own extension directory; the Windows build names it
+    claude.exe. */
+const BINARY = path.join('resources', 'native-binary', process.platform === 'win32' ? 'claude.exe' : 'claude');
 /* Generous, because this binary is a 241 MB single file: a cold start of it is slow on a machine that has just booted,
    and a timeout here would be reported as a failure that is really only a wait. */
 const TIMEOUT_MS = 60000;

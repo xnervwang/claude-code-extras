@@ -70,6 +70,8 @@ anything is inserted, and then the file contradicts itself.
       "opened": "2026-09-28T23:45:12+00:00",
       "since": "2026-09-29T00:00:00+00:00",
       "closed": "2026-09-29T01:10:03+00:00",
+      "waitingOn": "user",
+      "question": "optional: with waitingOn user, the one question the user has to answer",
       "children": []
     }
   ]
@@ -102,7 +104,7 @@ The seven `state` values are fixed keywords and are always these:
 | `discussing` | raised, not yet agreed to be done |
 | `todo` | agreed, not started |
 | `doing` | agreed, and being worked on right now by this conversation or an agent it started with `claude --bg` |
-| `waiting` | agreed and started, but held up by someone or something outside this conversation; what it waits on goes in `note` |
+| `waiting` | agreed and started, but held up by someone or something outside this conversation; who it waits on goes in `waitingOn` (see below) |
 | `parked` | deliberately not being done now, with the reason in `note` |
 | `done` | finished |
 | `dropped` | decided against, with the reason in `detail` |
@@ -117,6 +119,41 @@ started with `claude --bg` is still working on it.** Between turns, nothing else
 row to `waiting` if it waits on someone or something outside this conversation, to `done` if it is finished, and otherwise
 back to `todo` - and if it never got finished, that is worth a word in `note` rather than being silently reset. Nothing
 else cleans these up: an agent that was killed did not get to, and no hook can tell which row it had been on.
+
+## Who a held-up row waits on
+
+A `waiting` row says who it waits on in `waitingOn`, one of five fixed keywords:
+
+| `waitingOn` | who |
+|---|---|
+| `user` | the person in this conversation |
+| `build` | CI or a build |
+| `someone` | a reviewer, a colleague, anyone else |
+| `session` | another conversation |
+| `other` | anything that is none of these |
+
+**When it is `user`, the row also carries `question`.** Write it as one sentence
+they can answer as it stands, without scrolling back through this conversation. "Publish
+1.0.20 to both marketplaces now, or wait for the colour fix?" can be answered; "Thoughts?", "Waiting for your
+confirmation" and "See above" cannot. It is in the conversation's language, like the title, and at most 200 characters
+on one line; anything longer belongs in `detail`.
+
+These are fields rather than words in `note` because the extension lists, across every open conversation, what is
+waiting on the user, and it builds that list from these two fields only. Nothing reads `note` for it: a guess from free
+text would get the list wrong. So a row with no
+`waitingOn` is shown as waiting on someone unknown and is not listed, and one with `user` but no answerable question
+gives the user nothing to act on.
+
+When it is required:
+
+- **Moving a row into `waiting`** needs `--waiting-on`; the row command refuses without it, and refuses `user` without
+  `--question`.
+- **A `discussing` row** may say `--waiting-on user` with its question when you have put a decision to the user and the
+  work cannot go on without it. Leave it off a `discussing` row that is only an idea for later.
+- **A change of state drops both** unless the same command gives them again, because they describe why the row is held
+  where it is.
+- **A `waiting` row from before the field** shows `on ?` in the injected block. Give it `--waiting-on` the next time you
+  touch it; do not guess one for rows you are not otherwise touching.
 
 ## The three times
 
@@ -155,7 +192,8 @@ undo.
 | The user asks you to look into something | Add a row for looking into it, `doing` while you look and `done` when you have answered; add any work it turns up that might be worth doing as `discussing` |
 | The user says to go ahead with it | Move that node to `todo` |
 | You are about to start on it | Move it to `doing`, before the work rather than after |
-| An agreed, started row is held up by someone or something outside this conversation | Move it to `waiting` when that happens; put what it waits on in `note` |
+| An agreed, started row is held up by someone or something outside this conversation | Move it to `waiting` when that happens, with `--waiting-on`, and `--question` when it waits on the user |
+| You put a decision on a `discussing` row to the user and cannot go on without it | Give it `--waiting-on user` and the `--question` you asked |
 | You pick up a `waiting` row again | Move it to `doing` when you resume work |
 | The work is finished, or the user says it is | Move it to `done` and set `closed` |
 | The user decides against it | Move it to `dropped` and set `closed`, with the reason in `detail` |
@@ -200,8 +238,8 @@ hand means reading the clock first and rewriting the whole file. The block put i
 command line with both paths filled in. Its two forms are:
 
 ```bash
-python3 <path>/plan-row.py <plan file> set <row> [<state>] [--note TEXT] [--detail TEXT]
-python3 <path>/plan-row.py <plan file> add <state> <title> [--under <row>] [--note TEXT]
+python3 <path>/plan-row.py <plan file> set <row> [<state>] [--note TEXT] [--detail TEXT] [--waiting-on WHO] [--question TEXT]
+python3 <path>/plan-row.py <plan file> add <state> <title> [--under <row>] [--note TEXT] [--waiting-on WHO] [--question TEXT]
 ```
 
 `<row>` is the number in front of a row, such as `3` or `2.1`; closed rows count, and `--note ""` removes the note.
@@ -211,8 +249,12 @@ is refused without changing the file. Omitting `<state>` keeps the row's state; 
 `closed` from the clock, writes the whole file, and renames it into place; `add` creates a missing plan file, but `set`
 does not.
 
+`--waiting-on ""` removes who a row waits on, and its question with it; `--question ""` removes the question.
+
 The command refuses a row number that does not exist, a state outside the seven fixed keywords, a file that does not
-parse, a file that is not a plan, and plans switched off. It leaves the file untouched in each case.
+parse, a file that is not a plan, and plans switched off. It also refuses a move into `waiting` without `--waiting-on`,
+`user` without a question, a question on a row not waiting on the user, a question past 200 characters, and
+`--waiting-on` on a row that is neither `waiting` nor `discussing`. It leaves the file untouched in each case.
 
 Change a title, or move a row, by editing the file directly under the two rules below: read the file
 before writing it, and never delete a node. The row command satisfies both rules by itself.

@@ -4,6 +4,8 @@ Claude can lose track of unfinished work when you switch topics before the work 
 
 The plan is stored in a file outside the conversation, and Claude gets its open rows every turn. Claude is asked to bring the rows it is working on up to date before automatic compaction and, after compaction, to read the plan file before anything else. You see the plan in its own view next to the Claude Code panel. You answer by row number and can settle several rows in one message, like "2.1: not now". Rows Claude proposes on its own start as `discussing` and become `todo` only when you agree.
 
+Above the work plan, Waiting on you lists permission prompts, blocked background sessions, and questions in work plans across conversations running on this machine.
+
 Requires Anthropic's Claude Code extension and VS Code 1.94 or later.
 
 ## What it looks like
@@ -38,7 +40,7 @@ A number marks a row's place in the file. Finishing a row leaves a gap. A child 
 | `discussing` | Raised, not agreed yet. |
 | `todo` | Agreed, not started. |
 | `doing` | Being worked on now. |
-| `waiting` | Started but held up by someone or something outside the conversation; its note says what it waits on. |
+| `waiting` | Started but held up outside the conversation by you, a build or CI, a reviewer, another conversation, or something else. |
 | `parked` | Left for later, with the reason; still open. |
 | `done` | Finished. |
 | `dropped` | Decided against, with the reason. |
@@ -61,6 +63,22 @@ Claude writes the file through a small command shipped with the plugin. To corre
 
 See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, thresholds and measurements.
 
+### Waiting on you
+
+Waiting on you sits above the work plan in the same sidebar. It lists waits across every conversation running on this machine:
+
+- Conversations Claude Code reports as waiting, such as at a permission prompt.
+- Blocked sessions started with `claude --bg`, with what they asked for.
+- Work plan rows waiting on you, with their questions.
+
+A `discussing` row also appears if Claude has asked you to decide and the row has a question.
+
+Each conversation has one row, titled as in Claude Code's session list. Its waits appear beneath it with elapsed times such as `3h`. Permission prompts come first. Waits older than 7 days go into a collapsed "Waiting over 7 days" group at the bottom.
+
+Clicking a row goes to its conversation if it is open in this window. If it is open in another window or running outside VS Code, the extension says where it is instead of opening it a second time. Clicking a background session opens a terminal attached to it with `claude attach`.
+
+The list of running conversations comes from `claude agents --json` and refreshes every 30 seconds. A work plan change appears at once. While the view is on, the sidebar icon counts waits under 7 days old. The work plan's count of open rows appears next to the work plan view's title. Rows written before this version say who they wait on only in their note: the work plan view shows them as waiting on "unknown", and Waiting on you does not list them.
+
 ## Install
 
 Search for **Work Plan for Claude Code** in the Extensions view, or run
@@ -73,7 +91,7 @@ remote.
 
 The extension works by editing files inside the installed Claude Code extension.
 
-Verified against Claude Code 2.1.312 and 2.1.314.
+Verified against Claude Code 2.1.314.
 
 ## Other features
 
@@ -110,13 +128,14 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 36 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 37 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `claudeCodeWorkPlan.workPlan` | on | Off removes the view, adds nothing about the plan to turns, and refuses writes to plan files. |
+| `claudeCodeWorkPlan.waitingOnYou` | on | Off removes Waiting on you and puts the work plan's count of open rows back on the sidebar icon. |
 | `claudeCodeWorkPlan.workPlanOfferMinTurns` | 3 | Messages you must have sent before a conversation without a plan is offered one. |
 | `claudeCodeWorkPlan.workPlanOfferMinToolCalls` | 25 | Tool calls one turn must make before that offer. |
 | `claudeCodeWorkPlan.workPlanQuietWhenReplyMatches` | empty | Regular expression tested on the latest reply. A match silences the prompts before and after compaction, for conversations relaying another model's replies word for word. Empty matches nothing. |

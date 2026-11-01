@@ -31,7 +31,8 @@ import time
 # plugin directory, and a hook that runs on every turn should leave nothing behind in a directory the platform manages.
 sys.dont_write_bytecode = True
 
-from plan_path import OPEN_STATES, any_in, children, epoch, listed, plan_file, row_command, settings, write_turn
+from plan_path import (OPEN_STATES, WAITING_ON, any_in, children, epoch, listed, plan_file, row_command, settings,
+                       write_turn)
 
 GLYPH = {"discussing": "?", "todo": "o", "doing": ">", "waiting": "~", "parked": "=", "done": "+", "dropped": "x"}
 # Row cap for the injected block. Top-level rows are always drawn; only the rows under them are cut (see rows).
@@ -78,13 +79,30 @@ def line(node, num, depth, now):
     state = node.get("state", "todo")
     note = str(node.get("note", "")).strip()
     said = str(state)
+    on = node.get("waitingOn")
+    # A waiting row that does not say who it waits on predates the field; `?` marks it so it gets one when next touched.
+    if on in WAITING_ON:
+        said += " on " + on
+    elif state == "waiting":
+        said += " on ?"
     if state in TIMED:
         since = epoch(node.get("since"))
         if since is not None and now >= since:
             said += " for " + age(int(now - since))
     # The dot is only in what is drawn; `num` stays bare because children are numbered from it.
+    asked = str(node.get("question", "")).strip() if on == "user" else ""
     return "%s%s %s. %s%s" % ("  " * depth, GLYPH.get(state, "o"), num, str(node.get("title", "")).strip(),
-                              "   [%s%s]" % (said, " · " + note if note else ""))
+                              "   [%s%s%s]" % (said, " · asks: " + asked if asked else "", " · " + note if note else ""))
+
+
+def unsaid(nodes):
+    """How many open `waiting` rows do not say who they wait on."""
+    n = 0
+    for node in listed(nodes):
+        if isinstance(node, dict):
+            n += int(node.get("state") == "waiting" and node.get("waitingOn") not in WAITING_ON)
+            n += unsaid(children(node))
+    return n
 
 
 def rows(nodes, now, limit=MAX_ROWS):
@@ -170,6 +188,7 @@ def main():
     if closed:
         head += " · %d closed" % closed
     command = row_command(path)
+    missing = unsaid(nodes)
     # What is said about `doing` is here rather than only in the skill because here is the one moment that comes BEFORE
     # the work, and the skill is rarely loaded at all. A row marked as the work starts shows up in the tree while the
     # turn runs, which is the whole point of the state.
@@ -182,15 +201,19 @@ def main():
         "A child is something that has to be finished before its parent can be.",
         "Set a row to `doing` as you start on it, not afterwards. Work the user asks for in this message goes in as "
         "`doing` as soon as you start on it, and so does a request to look into something. When you stop working on a "
-        "row, move it on: `done` if it is finished, `waiting` if it now waits on someone else, with what it waits on in "
-        "its note.",
+        "row, move it on: `done` if it is finished, `waiting` if it now waits on someone else. A `waiting` row says who "
+        "with --waiting-on (user, build, someone, session, other), and one waiting on the user carries --question: the "
+        "one sentence they have to answer, answerable without reading the conversation. A `discussing` row you have "
+        "put to the user for a decision can say --waiting-on user with its question too.",
         ("A row that is `doing` now was left that way by an earlier turn: unless this turn carries on with it, or an "
          "agent you started is still working on it, move it on." if any_in(nodes, "doing")
          else "Nothing is `doing` right now."),
-        "To change a row: %s set <row> <state> [--note TEXT]. To add one: %s add <state> TITLE [--under <row>]. Both "
-        "read the clock themselves." % (command, command),
-        "",
-    ] + out)
+        "To change a row: %s set <row> <state> [--note TEXT] [--waiting-on WHO] [--question TEXT]. To add one: %s add "
+        "<state> TITLE [--under <row>] [--waiting-on WHO] [--question TEXT]. Both read the clock themselves."
+        % (command, command),
+    ] + ([("%d waiting row%s %s not say who %s for (shown `on ?`). Give each one --waiting-on when you next touch "
+           "it.") % (missing, "" if missing == 1 else "s", "does" if missing == 1 else "do",
+                     "it waits" if missing == 1 else "they wait")] if missing else []) + [""] + out)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": payload.get("hook_event_name", "UserPromptSubmit"),
         "additionalContext": text,
