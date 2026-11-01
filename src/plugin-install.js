@@ -68,6 +68,74 @@ function registrationGone(home = os.homedir()) {
   return !Object.prototype.hasOwnProperty.call(listed, REF) && !Object.prototype.hasOwnProperty.call(markets, MARKETPLACE);
 }
 
+/*
+ * Which Python 3 runs the plugin's hooks here.
+ *
+ * The hooks ship as `python3 <script>`, and that name is not on every machine: macOS and Linux have it, the python.org
+ * installer for Windows provides python and the py launcher but no python3, and a clean Windows has no Python at all.
+ * So the names are tried in turn, and the staged copy is fitted to the first one that runs (fitHooks). Each is asked to
+ * print its version and its own path, which passes over a name that resolves to something else, such as the Microsoft
+ * Store's stand-in python.exe that only offers to install Python.
+ */
+const PYTHONS = process.platform === 'win32' ? [['py', '-3'], ['python'], ['python3']] : [['python3'], ['python']];
+const PYTHON_MIN = [3, 7];
+const ASK_PYTHON = 'import sys; print(sys.version_info[0], sys.version_info[1]); print(sys.executable)';
+
+/** The first Python 3 that runs, as { launcher, executable, version }, or null. */
+async function findPython(run = cp.execFile, candidates = PYTHONS) {
+  for (const launcher of candidates) {
+    const said = await new Promise((resolve) => {
+      try {
+        run(launcher[0], launcher.slice(1).concat(['-c', ASK_PYTHON]), { timeout: 15000, windowsHide: true },
+          (err, stdout) => resolve(err ? '' : String(stdout || '')));
+      } catch (_) { resolve(''); }
+    });
+    const m = /^(\d+) (\d+)\s*\n\s*(\S.*?)\s*$/.exec(said.replace(/\r/g, '').trim());
+    if (!m) continue;
+    const major = Number(m[1]), minor = Number(m[2]);
+    if (major > PYTHON_MIN[0] || (major === PYTHON_MIN[0] && minor >= PYTHON_MIN[1])) {
+      return { launcher, executable: m[3], version: major + '.' + minor };
+    }
+  }
+  return null;
+}
+
+/* A hook as the plugin ships it: python3, then its script and the data directory, each quoted. */
+const HOOK_COMMAND = /^python3 "([^"]+)" "([^"]+)"$/;
+
+/**
+ * Fit a staged copy of the plugin to the Python found here, in place.
+ *
+ * With python3 nothing changes. With another Python each hook is written as an executable and its arguments, which
+ * Claude Code starts without a shell, so it runs the same whether its shell is Git Bash or PowerShell; and
+ * launcher.json tells the hooks how to start Python in the row command they give Claude.
+ *
+ * With no Python 3 the copy keeps neither hooks nor skill. Hooks that cannot start would put an error in the
+ * conversation every turn, and the skill would have Claude run a command that cannot start; the view says what is
+ * missing instead.
+ */
+function fitHooks(dir, python) {
+  const plugin = path.join(dir, PLUGIN);
+  const hooksFile = path.join(plugin, 'hooks', 'hooks.json');
+  if (!python) {
+    fs.writeFileSync(hooksFile, JSON.stringify({ hooks: {} }, null, 2) + '\n');
+    fs.rmSync(path.join(plugin, 'skills'), { recursive: true, force: true });
+    return;
+  }
+  if (python.launcher.length === 1 && python.launcher[0] === 'python3') return;
+  const config = JSON.parse(fs.readFileSync(hooksFile, 'utf8'));
+  for (const groups of Object.values(config.hooks || {})) {
+    for (const group of groups || []) {
+      for (const hook of group.hooks || []) {
+        const m = HOOK_COMMAND.exec(hook.command || '');
+        if (m) { hook.command = python.executable; hook.args = [m[1], m[2]]; }
+      }
+    }
+  }
+  fs.writeFileSync(hooksFile, JSON.stringify(config, null, 2) + '\n');
+  fs.writeFileSync(path.join(plugin, 'hooks', 'launcher.json'), JSON.stringify({ row: python.launcher }) + '\n');
+}
+
 /** The first Claude Code install that carries a runnable binary. */
 function findClaude(dirs) {
   for (const dir of dirs || []) {
@@ -123,16 +191,19 @@ function digest(dir) {
  * The copy is built in a per-process folder because every window stages into the same place. A rename that fails
  * because another window just installed the same plugin is not an error.
  */
-function stage(from, to) {
+function stage(from, to, fit = () => {}) {
   const next = `${to}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.new`;
   fs.mkdirSync(path.dirname(to), { recursive: true });
+  let want = '';
   try {
     fs.cpSync(from, next, { recursive: true });
+    fit(next);
+    want = digest(next);
     fs.rmSync(to, { recursive: true, force: true });
     fs.renameSync(next, to);
   } catch (e) {
     fs.rmSync(next, { recursive: true, force: true });
-    if (digest(to) !== digest(from)) throw e;
+    if (!want || digest(to) !== want) throw e;
   }
 }
 
@@ -142,8 +213,8 @@ function stage(from, to) {
  * Both commands are idempotent - a second marketplace add says "already on disk", a second install says "already
  * installed" - and both exit zero, so a retry after a partial failure needs no special case.
  */
-async function install({ claudeBin, from, to, refreshOnly }) {
-  try { stage(from, to); }
+async function install({ claudeBin, from, to, refreshOnly, python }) {
+  try { stage(from, to, (dir) => fitHooks(dir, python)); }
   catch (e) { return { ok: false, step: 'copying the plugin to ' + to, said: e.message }; }
   if (refreshOnly) return { ok: true, step: '', said: 'refreshed the staged copy' };
   const added = await run(claudeBin, ['plugin', 'marketplace', 'add', to]);
@@ -231,6 +302,7 @@ async function disable(dirs) {
 
 
 module.exports = {
-  install, disable, removeSync, rescuePlans, findClaude, digest, stage, registrationGone, MARKETPLACE, PLUGIN, REF, BINARY,
+  install, disable, removeSync, rescuePlans, findClaude, findPython, fitHooks, digest, stage, registrationGone, MARKETPLACE,
+  PLUGIN, REF, BINARY, PYTHONS,
   DATA_DIR,
 };

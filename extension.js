@@ -1009,6 +1009,14 @@ function start(context, renamed) {
    * Skipped entirely for someone who asked this extension to leave Claude Code alone - that request is about all of it,
    * not only the patched files.
    */
+  /* Shown instead of the plan when no Python 3 answers; the plugin is then staged without its hooks and skill. */
+  const NO_PYTHON = {
+    title: 'Work plans need Python 3',
+    step: 'finding Python 3',
+    said: `No Python 3.7 or later was found (tried ${pluginInstall.PYTHONS.map((l) => l.join(' ')).join(', ')}). Install it from `
+      + (process.platform === 'win32' ? 'python.org or the Microsoft Store, or run winget install Python.Python.3.12' : 'python.org')
+      + '. Then reload the window.',
+  };
   const syncPlugin = async (retry) => {
     if (removed()) return;
     const state = context.globalState.get(PLUGIN_KEY, {});
@@ -1016,7 +1024,10 @@ function start(context, renamed) {
     /* What is compared is the plugin's own contents, not this extension's version: the version changes when a release is
        cut, so a plugin file that changed without one was staged once and never again, and the registered plugin kept
        running the older file. Nothing said so, because the state recorded agreed with itself. */
-    const stamp = pluginInstall.digest(from);
+    /* The staged copy is fitted to the Python found here (pluginInstall.fitHooks), so which one it was is part of what
+       is compared: installing Python, or a different one, stages the copy again. */
+    const python = await pluginInstall.findPython();
+    const stamp = pluginInstall.digest(from) + '|' + (python ? python.launcher.join(' ') + '|' + python.executable : 'none');
     const to = path.join(context.globalStorageUri.fsPath, 'claude-plugin');
     /* The memory of having registered is kept by the editor and outlives an uninstall of this extension, while the
        uninstall unregisters the plugin and its marketplace together. Both missing from Claude Code's own records is
@@ -1027,7 +1038,7 @@ function start(context, renamed) {
     /* The registration points at the copy in this extension's global storage, and the editor deletes that folder along
        with an uninstalled extension, so the registration can outlive the files it names. Check the copy's digest, not
        just that it exists: a partly written copy, or one another window is replacing, exists but is not this plugin. */
-    const staged = pluginInstall.digest(to) === stamp;
+    const staged = !!state.staged && pluginInstall.digest(to) === state.staged;
     if (!retry && registered && state.stamp === stamp && staged) return;
     if (undone) log.appendLine('work plan plugin: registering again - Claude Code lists neither it nor its marketplace, which is what uninstalling this extension leaves');
     // A registered plugin on a new version of this extension needs its files refreshed, not registering again: the
@@ -1041,11 +1052,13 @@ function start(context, renamed) {
       log.appendLine('work plan plugin: ' + problem.step + ': ' + problem.said);
       return;
     }
-    const result = await pluginInstall.install({ claudeBin, from, to, refreshOnly });
+    const result = await pluginInstall.install({ claudeBin, from, to, refreshOnly, python });
     log.appendLine('work plan plugin: ' + (result.ok ? result.said : result.step + ' failed: ' + result.said));
+    if (python) log.appendLine(`work plan plugin: hooks run with ${python.launcher.join(' ')} (Python ${python.version}, ${python.executable})`);
     if (result.ok) {
-      await context.globalState.update(PLUGIN_KEY, { registered: true, stamp, error: '' });
-      workplan.setProblem(null);
+      await context.globalState.update(PLUGIN_KEY, { registered: true, stamp, staged: pluginInstall.digest(to), error: '' });
+      workplan.setProblem(python ? null : NO_PYTHON);
+      if (!python) log.appendLine('work plan plugin: ' + NO_PYTHON.said);
       refreshPlans();
     } else {
       await context.globalState.update(PLUGIN_KEY,

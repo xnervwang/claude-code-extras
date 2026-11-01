@@ -4379,9 +4379,70 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
   if (/registrationGone\(\)/.test(body) && /!undone/.test(body) && /&& staged\) return;/.test(body)) {
     ok('registering consults Claude Code\'s records and the staged copy, not only its own memory');
   } else bad('syncPlugin still trusts only its remembered state');
-  /* The staged copy is there or not by its contents: one cut short, or being replaced by another window, is there. */
-  if (/const staged = pluginInstall\.digest\(to\) === stamp;/.test(body)) ok('the staged copy counts as in place only when its contents are the plugin\'s');
-  else bad('the staged copy is still taken as in place because its folder exists');
+  /* The staged copy is there or not by its contents: one cut short, or being replaced by another window, is there. Its
+     contents are the fitted copy, so they are compared with what was recorded when it was staged. */
+  if (/const staged = !!state\.staged && pluginInstall\.digest\(to\) === state\.staged;/.test(body)
+    && /staged: pluginInstall\.digest\(to\)/.test(body) && /findPython\(\)/.test(body)) {
+    ok('the staged copy counts as in place only when its contents are what was staged for the Python found here');
+  } else bad('the staged copy is still taken as in place because its folder exists');
+
+  /* The hooks are Python started by name, and Windows has no python3 even with Python installed from python.org. */
+  {
+    const replies = {
+      'py -3': [new Error('not found'), ''],
+      python: [null, '2 7\nC:\\Python27\\python.exe\n'],
+      python3: [null, '3 12\r\nC:\\Program Files\\Python312\\python.exe\r\n'],
+    };
+    const script = `const pi = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'plugin-install.js'))});
+      const replies = ${JSON.stringify(replies, (k, v) => (v instanceof Error ? { err: v.message } : v))};
+      const asked = [];
+      const fake = (cmd, args, opts, cb) => { const key = [cmd].concat(args.slice(0, -2)).join(' '); asked.push(key);
+        const r = replies[key] || [{ err: 'x' }, '']; cb(r[0] && r[0].err ? new Error(r[0].err) : null, r[1], ''); };
+      Promise.all([pi.findPython(fake, [['py', '-3'], ['python'], ['python3']]), pi.findPython(fake, [['py', '-3']])])
+        .then((r) => console.log(JSON.stringify({ found: r[0], none: r[1], asked })));`;
+    const r = cp.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    let got = null;
+    try { got = JSON.parse(r.stdout); } catch (_) { got = null; }
+    if (got && got.found && got.found.launcher.join(' ') === 'python3' && got.found.executable === 'C:\\Program Files\\Python312\\python.exe'
+      && got.found.version === '3.12' && got.none === null) {
+      ok('the first Python 3 that answers is used, with its own path; one that fails to start or answers as Python 2 is passed over');
+    } else bad(`findPython: ${r.stdout} ${r.stderr}`);
+  }
+  {
+    const src = path.join(__dirname, '..', 'claude-plugin');
+    const copy = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-fit-')); fs.cpSync(src, d, { recursive: true }); return d; };
+    const hooksOf = (d) => JSON.parse(fs.readFileSync(path.join(d, pi.PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+    const all = (cfg) => Object.values(cfg.hooks).flatMap((groups) => groups.flatMap((g) => g.hooks));
+    const original = fs.readFileSync(path.join(src, pi.PLUGIN, 'hooks', 'hooks.json'), 'utf8');
+    const a = copy(), b = copy(), c = copy();
+    pi.fitHooks(a, { launcher: ['py', '-3'], executable: 'C:\\Program Files\\Python312\\python.exe', version: '3.12' });
+    pi.fitHooks(b, null);
+    pi.fitHooks(c, { launcher: ['python3'], executable: '/usr/bin/python3', version: '3.7' });
+    const fitted = all(hooksOf(a));
+    const launcher = JSON.parse(fs.readFileSync(path.join(a, pi.PLUGIN, 'hooks', 'launcher.json'), 'utf8'));
+    if (fitted.length === all(JSON.parse(original)).length && fitted.every((h) => h.command === 'C:\\Program Files\\Python312\\python.exe'
+      && h.args.length === 2 && /\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/[\w-]+\.py$/.test(h.args[0]) && h.args[1] === '${CLAUDE_PLUGIN_DATA}')
+      && launcher.row.join(' ') === 'py -3') {
+      ok('with another Python each hook is started as that executable with its arguments, and the row command is told how to start it');
+    } else bad(`fitted hooks ${JSON.stringify(fitted.slice(0, 2))}, launcher ${JSON.stringify(launcher)}`);
+    if (JSON.stringify(hooksOf(b)) === JSON.stringify({ hooks: {} }) && !fs.existsSync(path.join(b, pi.PLUGIN, 'skills'))) {
+      ok('with no Python 3 the staged plugin has neither hooks nor skill');
+    } else bad('without Python the staged plugin still has hooks or its skill');
+    if (fs.readFileSync(path.join(c, pi.PLUGIN, 'hooks', 'hooks.json'), 'utf8') === original
+      && !fs.existsSync(path.join(c, pi.PLUGIN, 'hooks', 'launcher.json'))) ok('with python3 the staged plugin is left as it ships');
+    else bad('python3 changed the staged plugin');
+    /* The block the model reads names the same launcher in the row command it gives. */
+    const sess = '47000000-0000-0000-0000-000000000000';
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-fit-data-'));
+    fs.writeFileSync(path.join(data, sess + '.json'), JSON.stringify({ nodes: [{ title: 'a', state: 'todo' }] }));
+    const r = cp.spawnSync('python3', [path.join(a, pi.PLUGIN, 'hooks', 'inject-work-plan.py'), data], {
+      encoding: 'utf8', input: JSON.stringify({ session_id: sess, hook_event_name: 'UserPromptSubmit' }) });
+    let text = '';
+    try { text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) { text = r.stdout + r.stderr; }
+    if (/To change a row: py -3 \S+plan-row\.py \S+ set <row>/.test(text)) ok('the row command in the block starts Python the same way the hooks found it');
+    else bad(`row command with a launcher: ${JSON.stringify(text.slice(0, 400))}`);
+    for (const d of [a, b, c, data]) fs.rmSync(d, { recursive: true, force: true });
+  }
 
   /* All windows stage into the same folder; with one shared name for the copy in progress, two windows would delete
      each other's half-made copy. Finding the same plugin already in place counts as success. */

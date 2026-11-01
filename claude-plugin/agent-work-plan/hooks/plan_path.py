@@ -383,11 +383,29 @@ def any_in(nodes, state):
 
 # The command that changes a row, beside this file, given with its full path so it never has to be found.
 ROW_TOOL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plan-row.py")
+# Written by the extension beside this file when Python is started by another name here, as on Windows, where the
+# python.org installer provides `py` and `python` but no `python3`.
+LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher.json")
+
+
+def launcher():
+    """How Python is started here, as a list of words: from launcher.json, or python3 when that file is absent."""
+    try:
+        with open(LAUNCHER, encoding="utf-8") as fh:
+            words = json.load(fh).get("row")
+        if isinstance(words, list) and words and all(isinstance(w, str) and w for w in words):
+            return words
+    except (OSError, ValueError, AttributeError):
+        pass
+    return ["python3"]
 
 
 def row_command(plan):
-    """The command line that changes a row of `plan`, both paths quoted for the shell."""
-    return "python3 %s %s" % (shlex.quote(ROW_TOOL), shlex.quote(plan))
+    """The command line that changes a row of `plan`, every word quoted for the shell.
+
+    The launcher is a command name rather than a full path: a quoted path runs as a command in Bash but not in
+    PowerShell, which Claude Code uses on Windows when Git Bash is not installed."""
+    return " ".join([shlex.quote(w) for w in launcher()] + [shlex.quote(ROW_TOOL), shlex.quote(plan)])
 
 
 """The lock around a read, change and write of a plan.

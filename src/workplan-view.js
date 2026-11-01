@@ -284,7 +284,7 @@ class WorkPlanProvider {
 
   getTreeItem(element) {
     if (element.kind === 'problem') {
-      const item = new vscode.TreeItem('The plugin that writes work plans is not installed');
+      const item = new vscode.TreeItem(this.problem.title || 'The plugin that writes work plans is not installed');
       item.id = element.key;
       item.description = 'click to try again';
       item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));

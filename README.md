@@ -6,7 +6,7 @@ The plan is stored in a file outside the conversation, and Claude gets its open 
 
 Above the work plan, Waiting on you lists permission prompts, blocked background sessions, and questions in work plans across conversations running on this machine.
 
-Requires Anthropic's Claude Code extension and VS Code 1.94 or later.
+Requires Anthropic's Claude Code extension and VS Code 1.94 or later. The work plan also needs Python 3.7 or later; on Windows, Python from python.org or the Microsoft Store works.
 
 ## What it looks like
 
