@@ -1160,7 +1160,7 @@ function start(context, renamed) {
      * person needs in order to pick the task up, not for the story of how it got here. Whatever was cut is still in the
      * file, which the title bar opens.
      */
-    registerCommand('showWorkPlanDetail', (row) => {
+    registerCommand('showWorkPlanDetail', async (row) => {
       if (!row) return;
       const head = [[row.state, row.note].filter(Boolean).join(' · ')];
       if (row.question) head.push('Question: ' + row.question);
@@ -1168,7 +1168,10 @@ function start(context, renamed) {
       if (row.path && row.path.length) head.push('in: ' + row.path.join(' › '));
       if (row.children) head.push(row.children + ' of its own to finish first');
       const body = row.detail || 'No description was written for this one.';
-      vscode.window.showInformationMessage(row.title, { modal: true, detail: head.concat(['', body]).join('\n') });
+      const go = 'Go to the conversation';
+      const pick = await vscode.window.showInformationMessage(row.title, { modal: true, detail: head.concat(['', body]).join('\n') },
+        ...(row.open ? [go] : []));
+      if (pick === go) await vscode.commands.executeCommand(PREFIX + 'openWaitingConversation', row.open);
     }),
     /*
      * A row of Waiting on you goes to its conversation, if that is open in this window. An extension cannot bring

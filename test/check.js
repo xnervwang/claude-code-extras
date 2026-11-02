@@ -6896,8 +6896,11 @@ console.log('\nwaiting on you');
     const conv = tree.getTreeItem(top[0]);
     if (first && !again && top.length === 2 && top[1].kind === 'old' && conv.label === 'Release work'
       && items.map((i) => i.iconPath.id).join() === 'shield,question,question'
-      && items.every((i) => i.command && i.command.arguments[0].sessionId === S(1))) {
-      ok('Waiting on you draws a conversation with what it waits for under it, each going to the conversation, and the old ones in a group');
+      && items[1].label === '1. Publish 1.0.20 now?' && items[2].label === '3.1. A or B?'
+      && items[0].command.command === 'claudeCodeWorkPlan.openWaitingConversation' && items[0].command.arguments[0].sessionId === S(1)
+      && items.slice(1).every((i) => i.command.command === 'claudeCodeWorkPlan.showWorkPlanDetail'
+        && i.command.arguments[0].open.sessionId === S(1) && /^waiting on you for|^discussing on you/.test(i.command.arguments[0].state))) {
+      ok('Waiting on you numbers a question as the work plan does and opens its row, a prompt goes to the conversation, and old ones are grouped');
     } else bad(`tree ${JSON.stringify([first, again, top.map((t) => t.kind), conv.label, items.map((i) => i.iconPath.id)])}`);
     tree.set({ fresh: [], stale: [], count: 0 });
     if (tree.getChildren().length === 0) ok('with nothing waiting it is empty, so its one-line welcome text is all it shows');

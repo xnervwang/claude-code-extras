@@ -137,7 +137,8 @@ function planQuestions(nodes, prefix = '', out = []) {
   (nodes || []).forEach((n, i) => {
     const num = (prefix ? prefix + '.' : '') + (i + 1);
     if (n.waitingOn === 'user' && (n.state === 'waiting' || n.state === 'discussing')) {
-      out.push({ num, title: n.title, question: n.question || n.title, since: n.since || 0, state: n.state });
+      out.push({ num, title: n.title, question: n.question || n.title, since: n.since || 0, state: n.state,
+        note: n.note || '', detail: n.detail || '' });
     }
     planQuestions(n.children, num, out);
   });
@@ -164,7 +165,8 @@ function collect({ sessions, readPlan, titles, since, now = Date.now() }) {
     }
     const plan = readPlan(s.sessionId);
     for (const q of planQuestions(plan && plan.nodes)) {
-      items.push({ kind: 'question', text: q.question, row: q.num, rowTitle: q.title, since: q.since });
+      items.push({ kind: 'question', text: q.question, row: q.num, rowTitle: q.title, since: q.since, state: q.state,
+        note: q.note, detail: q.detail });
     }
     if (!items.length) continue;
     const t = titles(s);

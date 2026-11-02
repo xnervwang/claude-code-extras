@@ -91,13 +91,19 @@ class WaitingProvider {
       return item;
     }
     const it = element.it;
-    const item = new vscode.TreeItem(it.text);
+    const item = new vscode.TreeItem(it.row ? `${it.row}. ${it.text}` : it.text);
     item.id = 'waiting/' + g.sessionId + (g.stale ? '/old' : '') + '/' + element.i + ':' + it.kind + (it.row || '');
     item.description = ageSince(it.since);
     item.iconPath = new vscode.ThemeIcon(ICON[it.kind] || 'circle-outline', new vscode.ThemeColor('charts.orange'));
     /* Plain text rather than markdown: the title and the question are whatever somebody typed. */
     item.tooltip = it.text + '\n\n' + g.title + ' ' + WORD[it.kind] + (it.row ? ` (row ${it.row}: ${it.rowTitle})` : '');
-    item.command = open;
+    item.command = it.kind !== 'question' ? open : {
+      command: 'claudeCodeWorkPlan.showWorkPlanDetail', title: 'Show the row',
+      arguments: [{
+        title: `${it.row}. ${it.rowTitle}`, state: [it.state + ' on you', ageSince(it.since)].filter(Boolean).join(' for '),
+        note: it.note, detail: it.detail, question: it.text, open: open.arguments[0],
+      }],
+    };
     return item;
   }
 }
