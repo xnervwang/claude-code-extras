@@ -62,6 +62,8 @@ import time
 
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
+# The script's folder on the import path: see inject-work-plan.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from plan_path import (MAX_DETAIL_CHARS, MAX_DETAIL_LINES, TAIL_MAX, WATERMARK_SUFFIX, any_in, latest_reply_matches,
                        listed, open_tail, plan_file, row_command, settings, side_file, usage_of, write_quietly)

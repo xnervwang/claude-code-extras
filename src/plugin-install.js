@@ -100,6 +100,8 @@ async function findPython(run = cp.execFile, candidates = PYTHONS) {
   return null;
 }
 
+/* Where SKILL.md says how to start plan-row.py; fitHooks puts the launcher found here in place of python3. */
+const SKILL_RUN = 'run with `python3`.';
 /* A hook as the plugin ships it: python3, then its script and the data directory, each quoted. */
 const HOOK_COMMAND = /^python3 "([^"]+)" "([^"]+)"$/;
 
@@ -108,7 +110,8 @@ const HOOK_COMMAND = /^python3 "([^"]+)" "([^"]+)"$/;
  *
  * With python3 nothing changes. With another Python each hook is written as an executable and its arguments, which
  * Claude Code starts without a shell, so it runs the same whether its shell is Git Bash or PowerShell; and
- * launcher.json tells the hooks how to start Python in the row command they give Claude.
+ * launcher.json tells the hooks how to start Python in the row command they give Claude. SKILL.md too: the first row
+ * comes before any hook has run.
  *
  * With no Python 3 the copy keeps neither hooks nor skill. Hooks that cannot start would put an error in the
  * conversation every turn, and the skill would have Claude run a command that cannot start; the view says what is
@@ -134,6 +137,13 @@ function fitHooks(dir, python) {
   }
   fs.writeFileSync(hooksFile, JSON.stringify(config, null, 2) + '\n');
   fs.writeFileSync(path.join(plugin, 'hooks', 'launcher.json'), JSON.stringify({ row: python.launcher }) + '\n');
+  const skillFile = path.join(plugin, 'skills', 'maintain', 'SKILL.md');
+  const skill = fs.readFileSync(skillFile, 'utf8');
+  /* shlex.quote's rules, as in plan_path.row_command. */
+  const quote = (w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : "'" + w.replace(/'/g, "'\"'\"'") + "'");
+  const shown = python.launcher.map(quote).join(' ');
+  const amp = quote(python.launcher[0]) !== python.launcher[0] ? ' (in PowerShell, put `&` and a space in front)' : '';
+  fs.writeFileSync(skillFile, skill.replace(SKILL_RUN, () => 'run with `' + shown + '`' + amp + '.'));
 }
 
 /** The first Claude Code install that carries a runnable binary. */
@@ -303,6 +313,6 @@ async function disable(dirs) {
 
 module.exports = {
   install, disable, removeSync, rescuePlans, findClaude, findPython, fitHooks, digest, stage, registrationGone, MARKETPLACE,
-  PLUGIN, REF, BINARY, PYTHONS,
+  PLUGIN, REF, BINARY, PYTHONS, SKILL_RUN,
   DATA_DIR,
 };

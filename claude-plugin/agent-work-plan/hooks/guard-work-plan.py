@@ -25,6 +25,8 @@ import sys
 # Set before the import below: see inject-work-plan.py. A hook that runs on every turn leaves no bytecode behind in the
 # installed plugin directory.
 sys.dont_write_bytecode = True
+# The script's folder on the import path: see inject-work-plan.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, PLAN_NAME, data_dir, settings
 from plan_path import detail_over as over

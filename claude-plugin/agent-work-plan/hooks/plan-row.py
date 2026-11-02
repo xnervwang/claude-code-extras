@@ -28,6 +28,8 @@ import sys
 
 # Set before the import below: see inject-work-plan.py.
 sys.dont_write_bytecode = True
+# The script's folder on the import path: see inject-work-plan.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from plan_path import (CLOSED_STATES, HELD_STATES, MAX_DETAIL_CHARS, MAX_DETAIL_LINES, MAX_QUESTION_CHARS, PLAN_NAME,
                        STATES, WAITING_ON, detail_over, now_stamp, plan_lock, settings, write_atomic)

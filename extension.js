@@ -30,6 +30,7 @@ const { WorkPlanProvider } = require('./src/workplan-view');
 const waiting = require('./src/waiting');
 const { WaitingProvider } = require('./src/waiting-view');
 const pluginInstall = require('./src/plugin-install');
+const pythonRuntime = require('./src/python-runtime');
 const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
 const sessionPins = require('./src/sessionpins');
@@ -1009,14 +1010,50 @@ function start(context, renamed) {
    * Skipped entirely for someone who asked this extension to leave Claude Code alone - that request is about all of it,
    * not only the patched files.
    */
-  /* Shown instead of the plan when no Python 3 answers; the plugin is then staged without its hooks and skill. */
+  /*
+   * Shown instead of the plan when no Python 3 runs; the plugin is then staged without its hooks and skill. On Windows,
+   * clicking the row offers to download Python from python.org (src/python-runtime.js); a downloaded python.exe comes
+   * after the ones on PATH.
+   */
+  const storage = context.globalStorageUri.fsPath;
+  const canDownload = !!pythonRuntime.build();
+  const pythons = () => {
+    const exe = pythonRuntime.executable(storage);
+    return canDownload && fs.existsSync(exe) ? pluginInstall.PYTHONS.concat([[exe.replace(/\\/g, '/')]]) : pluginInstall.PYTHONS;
+  };
   const NO_PYTHON = {
     title: 'Work plans need Python 3',
     step: 'finding Python 3',
-    said: `No Python 3.7 or later was found (tried ${pluginInstall.PYTHONS.map((l) => l.join(' ')).join(', ')}). Install it from `
-      + (process.platform === 'win32' ? 'python.org or the Microsoft Store, or run winget install Python.Python.3.12' : 'python.org')
-      + '. Then reload the window.',
+    said: `No Python 3.7 or later was found (tried ${pluginInstall.PYTHONS.map((l) => l.join(' ')).join(', ')}). `
+      + (canDownload
+        ? 'Click to download it, or install Python and reload the window.'
+        : 'Install it from python.org, then reload the window.'),
+    description: canDownload ? 'click to download it' : 'click to try again',
+    command: canDownload ? PREFIX + 'downloadPython' : '',
   };
+  const PYTHON_OFFER_KEY = 'pythonOffer';
+  /* Once per version. After "Not now" the row in the view is the way to get it. */
+  const offerPython = async () => {
+    if (!canDownload || context.globalState.get(PYTHON_OFFER_KEY, '') === pythonRuntime.VERSION) return;
+    await context.globalState.update(PYTHON_OFFER_KEY, pythonRuntime.VERSION);
+    const pick = await vscode.window.showInformationMessage(
+      'Work plans need Python 3. Download it from python.org (11 MB)?',
+      'Download', 'Not now');
+    if (pick === 'Download') await getPython();
+  };
+  let gettingPython = null;
+  const getPython = () => gettingPython || (gettingPython = vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Downloading Python ${pythonRuntime.VERSION} from python.org` },
+    async () => {
+      const r = await pythonRuntime.download(storage);
+      log.appendLine('python download: ' + r.said);
+      if (!r.ok) {
+        vscode.window.showErrorMessage('Work Plan for Claude Code: downloading Python failed. ' + r.said);
+        return;
+      }
+      await syncPlugin(true);
+      vscode.window.showInformationMessage('Work Plan for Claude Code: Python is installed. Start a new conversation to get a work plan.');
+    }).finally(() => { gettingPython = null; }));
   const syncPlugin = async (retry) => {
     if (removed()) return;
     const state = context.globalState.get(PLUGIN_KEY, {});
@@ -1026,7 +1063,7 @@ function start(context, renamed) {
        running the older file. Nothing said so, because the state recorded agreed with itself. */
     /* The staged copy is fitted to the Python found here (pluginInstall.fitHooks), so which one it was is part of what
        is compared: installing Python, or a different one, stages the copy again. */
-    const python = await pluginInstall.findPython();
+    const python = await pluginInstall.findPython(undefined, pythons());
     const stamp = pluginInstall.digest(from) + '|' + (python ? python.launcher.join(' ') + '|' + python.executable : 'none');
     const to = path.join(context.globalStorageUri.fsPath, 'claude-plugin');
     /* The memory of having registered is kept by the editor and outlives an uninstall of this extension, while the
@@ -1058,7 +1095,10 @@ function start(context, renamed) {
     if (result.ok) {
       await context.globalState.update(PLUGIN_KEY, { registered: true, stamp, staged: pluginInstall.digest(to), error: '' });
       workplan.setProblem(python ? null : NO_PYTHON);
-      if (!python) log.appendLine('work plan plugin: ' + NO_PYTHON.said);
+      if (!python) {
+        log.appendLine('work plan plugin: ' + NO_PYTHON.said);
+        offerPython().catch((e) => log.appendLine('python offer: ' + e.message));
+      }
       refreshPlans();
     } else {
       await context.globalState.update(PLUGIN_KEY,
@@ -1108,6 +1148,13 @@ function start(context, renamed) {
   context.subscriptions.push(
     registerCommand('refreshWorkPlan', () => { workplan.refresh(); paintBadge(); }),
     registerCommand('installWorkPlanPlugin', () => syncPlugin(true)),
+    registerCommand('downloadPython', async () => {
+      const pick = await vscode.window.showInformationMessage(
+        `Download Python ${pythonRuntime.VERSION} from python.org?`,
+        { modal: true, detail: `11 MB, saved in ${pythonRuntime.home(storage)}.` },
+        'Download');
+      if (pick === 'Download') await getPython();
+    }),
     /*
      * Modal, because the description is the thing being read and a notification that slides away is not readable. It is
      * registered without being declared in the manifest, so it stays out of the command palette: it is only ever

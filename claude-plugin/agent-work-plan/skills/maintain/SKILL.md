@@ -25,6 +25,12 @@ Before one exists nothing is injected at all, so for the first row the path has 
 echo "$HOME/.claude/plugins/data/agent-work-plan-claude-code-extras/$CLAUDE_CODE_SESSION_ID.json"
 ```
 
+In PowerShell:
+
+```powershell
+"$HOME\.claude\plugins\data\agent-work-plan-claude-code-extras\$env:CLAUDE_CODE_SESSION_ID.json"
+```
+
 One file per conversation, named by its session id, in the directory the platform gives this plugin. That directory's
 name comes from the plugin and the marketplace it was installed from, so if the injected path ever disagrees with what
 the command prints, **the injected one is right** - it came from the platform rather than from this document.
@@ -242,10 +248,10 @@ python3 <path>/plan-row.py <plan file> set <row> [<state>] [--note TEXT] [--deta
 python3 <path>/plan-row.py <plan file> add <state> <title> [--under <row>] [--note TEXT] [--waiting-on WHO] [--question TEXT]
 ```
 
-Use the command line from the block as given. It starts Python by the name that works here: on Windows that is `py -3`
-or `python`, not `python3`. For the first row, before a plan exists, there is no block: the command is
-`hooks/plan-row.py` in this plugin, two folders above the base directory this skill was loaded from. Start Python the
-same way, or write the file directly.
+Use the command line from the block as given: it starts Python by the name that works on this machine, which is not
+always `python3`. For the first row, before a plan exists, there is no block. The command is then `hooks/plan-row.py`
+in this plugin, two folders above the base directory this skill was loaded from, run with `python3`. You can also write
+the file directly.
 
 `<row>` is the number in front of a row, such as `3` or `2.1`; closed rows count, and `--note ""` removes the note.
 `--detail` replaces the row's description, `--detail ""` removes it, and a description past 12 lines or 900 characters

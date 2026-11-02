@@ -4382,7 +4382,7 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
   /* The staged copy is there or not by its contents: one cut short, or being replaced by another window, is there. Its
      contents are the fitted copy, so they are compared with what was recorded when it was staged. */
   if (/const staged = !!state\.staged && pluginInstall\.digest\(to\) === state\.staged;/.test(body)
-    && /staged: pluginInstall\.digest\(to\)/.test(body) && /findPython\(\)/.test(body)) {
+    && /staged: pluginInstall\.digest\(to\)/.test(body) && /findPython\(/.test(body)) {
     ok('the staged copy counts as in place only when its contents are what was staged for the Python found here');
   } else bad('the staged copy is still taken as in place because its folder exists');
 
@@ -4441,7 +4441,75 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
     try { text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) { text = r.stdout + r.stderr; }
     if (/To change a row: py -3 \S+plan-row\.py \S+ set <row>/.test(text)) ok('the row command in the block starts Python the same way the hooks found it');
     else bad(`row command with a launcher: ${JSON.stringify(text.slice(0, 400))}`);
-    for (const d of [a, b, c, data]) fs.rmSync(d, { recursive: true, force: true });
+    /* The first row is written before any hook has run, so the skill itself names the launcher. */
+    const skillOf = (d) => fs.readFileSync(path.join(d, pi.PLUGIN, 'skills', 'maintain', 'SKILL.md'), 'utf8');
+    const shipped = fs.readFileSync(path.join(src, pi.PLUGIN, 'skills', 'maintain', 'SKILL.md'), 'utf8');
+    const spaced = copy();
+    pi.fitHooks(spaced, { launcher: ['C:/Users/a b/python.exe'], executable: 'C:\\Users\\a b\\python.exe', version: '3.12' });
+    if (shipped.split(pi.SKILL_RUN).length === 2 && skillOf(c) === shipped && skillOf(a).includes('run with `py -3`.')
+      && !skillOf(a).includes(pi.SKILL_RUN)
+      && skillOf(spaced).includes("run with `'C:/Users/a b/python.exe'` (in PowerShell, put `&` and a space in front)."))
+      ok('the skill names the same launcher for the first row, quoted as the row command quotes it');
+    else bad(`skill launcher: ${JSON.stringify((skillOf(a).match(/run with [^\n]*/) || [''])[0])}`);
+    for (const d of [a, b, c, data, spaced]) fs.rmSync(d, { recursive: true, force: true });
+  }
+
+  /* Without any Python on Windows, Python is downloaded from python.org at a pinned version and checked against its hash. */
+  {
+    const rt = require('../src/python-runtime');
+    const b = rt.build('win32', 'x64');
+    if (b && /python-\d+\.\d+\.\d+-embed-amd64\.zip$/.test(b.url) && b.url.startsWith('https://www.python.org/ftp/python/')
+      && /^[0-9a-f]{64}$/.test(b.sha256) && rt.build('win32', 'arm64').name === 'arm64' && rt.build('linux', 'x64') === null
+      && rt.build('darwin', 'arm64') === null) {
+      ok('Python is offered for download only on Windows, from python.org, with a recorded SHA-256 for each processor');
+    } else bad(`python builds: ${JSON.stringify(b)}`);
+    const script = `const rt = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'python-runtime.js'))});
+      const fs = require('fs'), path = require('path'), os = require('os');
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      Object.defineProperty(process, 'arch', { value: 'x64' });
+      const store = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-pyrt-'));
+      const sha = rt.build().sha256;
+      const fetchOk = async (url, file) => { fs.writeFileSync(file, 'zip'); return sha; };
+      const fetchBad = async (url, file) => { fs.writeFileSync(file, 'zip'); return '0'.repeat(64); };
+      const extract = async (zip, dir) => { fs.writeFileSync(path.join(dir, 'python.exe'), 'x'); return true; };
+      (async () => {
+        const bad = await rt.download(store, { fetch: fetchBad, extract });
+        const leftAfterBad = fs.readdirSync(path.join(store, 'python'));
+        const good = await rt.download(store, { fetch: fetchOk, extract });
+        const leftAfterGood = fs.readdirSync(path.join(store, 'python'));
+        console.log(JSON.stringify({ bad, good, leftAfterBad, leftAfterGood, exe: fs.existsSync(rt.executable(store)) }));
+        fs.rmSync(store, { recursive: true, force: true });
+      })();`;
+    const r = cp.spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    let got = null;
+    try { got = JSON.parse(r.stdout); } catch (_) { got = null; }
+    if (got && !got.bad.ok && /SHA-256/.test(got.bad.said) && got.leftAfterBad.length === 0 && got.good.ok && got.exe
+      && got.leftAfterGood.length === 1) {
+      ok('a download that does not match its SHA-256 is thrown away whole, and a matching one is put in place only once unpacked');
+    } else bad(`python download: ${r.stdout} ${r.stderr}`);
+  }
+  {
+    /* The embeddable build runs from a ._pth file, which keeps the script's folder off the import path, as -I does. */
+    const sess = '48000000-0000-0000-0000-000000000000';
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-iso-'));
+    fs.writeFileSync(path.join(data, sess + '.json'), JSON.stringify({ nodes: [{ title: 'a', state: 'todo' }] }));
+    const hooks = path.join(__dirname, '..', 'claude-plugin', 'agent-work-plan', 'hooks');
+    const r = cp.spawnSync('python3', ['-I', path.join(hooks, 'inject-work-plan.py'), data], {
+      encoding: 'utf8', input: JSON.stringify({ session_id: sess, hook_event_name: 'UserPromptSubmit' }) });
+    if (r.status === 0 && r.stdout.includes('To change a row:')) ok('a hook still finds its own modules when Python leaves its folder off the import path');
+    else bad(`hook under python -I: ${r.status} ${r.stderr.slice(0, 300)}`);
+    /* A launcher whose path needs quoting runs in Bash as written, and in PowerShell only after &. */
+    const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-amp-'));
+    fs.cpSync(hooks, copy, { recursive: true });
+    fs.writeFileSync(path.join(copy, 'launcher.json'), JSON.stringify({ row: ['C:/Users/Jo Ann/py/python.exe'] }));
+    const q = cp.spawnSync('python3', [path.join(copy, 'inject-work-plan.py'), data], {
+      encoding: 'utf8', input: JSON.stringify({ session_id: sess, hook_event_name: 'UserPromptSubmit' }) });
+    let text = '';
+    try { text = JSON.parse(q.stdout).hookSpecificOutput.additionalContext; } catch (_) { text = q.stdout + q.stderr; }
+    if (text.includes("To change a row: 'C:/Users/Jo Ann/py/python.exe' ") && text.includes('In PowerShell, put & and a space in front')) {
+      ok('a launcher path with a space is quoted, and the block says PowerShell needs & before it');
+    } else bad(`quoted launcher: ${JSON.stringify(text.slice(0, 600))}`);
+    for (const d of [data, copy]) fs.rmSync(d, { recursive: true, force: true });
   }
 
   /* All windows stage into the same folder; with one shared name for the copy in progress, two windows would delete

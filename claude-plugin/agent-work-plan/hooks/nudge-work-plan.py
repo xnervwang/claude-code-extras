@@ -54,6 +54,8 @@ import sys
 # Set before the import below: see inject-work-plan.py. A hook that runs on every turn leaves no bytecode behind in the
 # installed plugin directory.
 sys.dont_write_bytecode = True
+# The script's folder on the import path: see inject-work-plan.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from changes import changes
 from plan_path import (NUDGED_SUFFIX, OFFERED_SUFFIX, epoch, open_tail, plan_file, settings, side_file, turn_began,

@@ -286,12 +286,12 @@ class WorkPlanProvider {
     if (element.kind === 'problem') {
       const item = new vscode.TreeItem(this.problem.title || 'The plugin that writes work plans is not installed');
       item.id = element.key;
-      item.description = 'click to try again';
+      item.description = this.problem.description || 'click to try again';
       item.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));
       item.tooltip = new vscode.MarkdownString(
         `\`${this.problem.step}\` failed.\n\n${this.problem.said || 'It gave no reason.'}\n\n`
         + 'Until this succeeds nothing writes a work plan, so this view stays empty.');
-      item.command = { command: 'claudeCodeWorkPlan.installWorkPlanPlugin', title: 'Try again' };
+      item.command = { command: this.problem.command || 'claudeCodeWorkPlan.installWorkPlanPlugin', title: 'Try again' };
       return item;
     }
     if (element.kind === 'error') {

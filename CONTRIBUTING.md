@@ -20,6 +20,7 @@
 - `src/bgsessions.js` tells which sessions in the session list are background sessions, so they can be left out.
 - `src/waiting.js` finds what each running conversation is waiting for from the user.
 - `src/waiting-view.js` shows that in the Waiting on you view.
+- `src/python-runtime.js` downloads Python from python.org for a Windows machine that has none.
 - `claude-plugin/` holds the companion plugin: the skill that maintains a plan and the hooks that keep it honest.
 - `test/check.js` is the whole suite. It parses everything and checks every edit against an unpatched bundle. How
   many checks it runs depends on how many Claude Code builds are installed, so the count is not quoted here.

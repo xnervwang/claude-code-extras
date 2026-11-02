@@ -400,6 +400,12 @@ def launcher():
     return ["python3"]
 
 
+def launcher_quoted():
+    """For PowerShell, which wants `&` before a quoted program."""
+    first = launcher()[0]
+    return shlex.quote(first) != first
+
+
 def row_command(plan):
     """The command line that changes a row of `plan`, every word quoted for the shell.
 

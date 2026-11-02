@@ -44,6 +44,8 @@ import sys
 # Set before the import below: see inject-work-plan.py. A hook that runs after every batch of tool calls leaves no
 # bytecode behind in the installed plugin directory.
 sys.dont_write_bytecode = True
+# The script's folder on the import path: see inject-work-plan.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from changes import changes
 from plan_path import any_in, plan_file, read_turn, row_command, settings, write_turn

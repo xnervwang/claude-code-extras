@@ -24,15 +24,19 @@ are all closed injects nothing, but those hooks still need the mark for new work
 with no plan, or one whose plan does not parse, gets no mark.
 """
 import json
+import os
 import sys
 import time
 
 # Set before the import below: importing a module next to this one otherwise leaves compiled bytecode in the installed
 # plugin directory, and a hook that runs on every turn should leave nothing behind in a directory the platform manages.
 sys.dont_write_bytecode = True
+# A Python started from a ._pth file, as the embeddable build for Windows is, does not put the script's folder on
+# the import path, and plan_path is in it.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from plan_path import (OPEN_STATES, WAITING_ON, any_in, children, epoch, listed, plan_file, row_command, settings,
-                       write_turn)
+from plan_path import (OPEN_STATES, WAITING_ON, any_in, children, epoch, listed, launcher_quoted, plan_file, row_command,
+                       settings, write_turn)
 
 GLYPH = {"discussing": "?", "todo": "o", "doing": ">", "waiting": "~", "parked": "=", "done": "+", "dropped": "x"}
 # Row cap for the injected block. Top-level rows are always drawn; only the rows under them are cut (see rows).
@@ -209,8 +213,8 @@ def main():
          "agent you started is still working on it, move it on." if any_in(nodes, "doing")
          else "Nothing is `doing` right now."),
         "To change a row: %s set <row> <state> [--note TEXT] [--waiting-on WHO] [--question TEXT]. To add one: %s add "
-        "<state> TITLE [--under <row>] [--waiting-on WHO] [--question TEXT]. Both read the clock themselves."
-        % (command, command),
+        "<state> TITLE [--under <row>] [--waiting-on WHO] [--question TEXT]. Both read the clock themselves.%s"
+        % (command, command, " In PowerShell, put & and a space in front of either command line." if launcher_quoted() else ""),
     ] + ([("%d waiting row%s %s not say who %s for (shown `on ?`). Give each one --waiting-on when you next touch "
            "it.") % (missing, "" if missing == 1 else "s", "does" if missing == 1 else "do",
                      "it waits" if missing == 1 else "they wait")] if missing else []) + [""] + out)
