@@ -18,7 +18,7 @@
 - `src/sessionpins.js` keeps the conversations pinned in the session list from Claude Code's transcript cleanup, by giving their files a later modification time before they reach its age, and records when each was really last active.
 - `src/sessioncolors.js` stores the text color picked for each conversation in the session list.
 - `src/bgsessions.js` tells which sessions in the session list are background sessions, so they can be left out.
-- `src/waiting.js` finds what each running conversation is waiting for from the user.
+- `src/waiting.js` finds what this workspace's conversations are waiting for from the user.
 - `src/waiting-view.js` shows that in the Waiting on you view.
 - `src/python-runtime.js` downloads Python from python.org for a Windows machine that has none.
 - `claude-plugin/` holds the companion plugin: the skill that maintains a plan and the hooks that keep it honest.

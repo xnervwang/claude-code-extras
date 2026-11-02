@@ -521,8 +521,7 @@ function start(context, renamed) {
   context.subscriptions.push(view);
 
   /*
-   * Waiting on you, above the work plan in the same sidebar: what every running conversation is waiting for from the
-   * reader (src/waiting.js).
+   * Waiting on you (src/waiting.js).
    */
   const waitingTree = new WaitingProvider();
   const waitingView = vscode.window.createTreeView('claudeCodeExtras.waitingOnYou', { treeDataProvider: waitingTree });
@@ -531,8 +530,8 @@ function start(context, renamed) {
 
   /*
    * The editor adds the numbers of every view in a sidebar into the one on its icon, so two counts of different things
-   * would be added together. While Waiting on you is shown, the icon is its count: what waits on the reader across
-   * conversations, leaving out the waits over a week old. The work plan's own count of open rows moves to the
+   * would be added together. While Waiting on you is shown, the icon is its count: the prompts and questions in this
+   * workspace, leaving out the waits over a week old. The work plan's own count of open rows moves to the
    * description beside its title.
    *
    * Each is counted over what its view is showing, not over the machine: a count that takes in what the tree does not
@@ -546,7 +545,7 @@ function start(context, renamed) {
     view.badge = open && !board ? { value: open, tooltip: `${open} still open in this conversation` } : undefined;
     view.description = open && board ? `${open} open` : undefined;
     const waits = board ? waitingTree.data.count : 0;
-    waitingView.badge = waits ? { value: waits, tooltip: `${waits} waiting on you across conversations` } : undefined;
+    waitingView.badge = waits ? { value: waits, tooltip: `${waits} waiting on you in this workspace` } : undefined;
   };
   /* The id of the conversation in front of the reader, or empty. The patched field writes it on every change; before
      anything has, or when the panel has no conversation open, it is not a string and reads as empty - the view shows
@@ -634,13 +633,8 @@ function start(context, renamed) {
         if (waitingTree.set({ fresh: [], stale: [], count: 0 }, error)) paintBadge();
         return;
       }
-      const sessions = waiting.merge(records);
-      /* What a blocked background session asks for is in its job's own record, which Claude Code does not document as
-         an interface; without it the row says the session is blocked, and attaching to it shows the question. */
-      for (const sess of sessions.values()) {
-        if (sess.kind !== 'background' || !(sess.blocked || sess.waitingFor) || !sess.id) continue;
-        try { const st = background.readState(sess.id); if (st && st.needs) sess.needs = st.needs; } catch (_) { /* generic line */ }
-      }
+      const folders = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
+      const sessions = waiting.inFolders(waiting.merge(records), folders);
       const data = waiting.collect({ sessions, readPlan, titles: readTitles.titles, since: readTitles.since });
       if (waitingTree.set(data)) paintBadge();
     } catch (e) {
@@ -1177,24 +1171,12 @@ function start(context, renamed) {
       vscode.window.showInformationMessage(row.title, { modal: true, detail: head.concat(['', body]).join('\n') });
     }),
     /*
-     * A row of Waiting on you goes to its conversation. Only one open in this window can be shown: an extension cannot
-     * bring another window forward, and opening the conversation here as well would put a second process on it - which
-     * is how one conversation comes to be held twice. So for those it says where the conversation is instead. A
-     * background session is reached the way the command line offers, by attaching to it in a terminal.
+     * A row of Waiting on you goes to its conversation, if that is open in this window. An extension cannot bring
+     * another window forward, and opening the conversation here too would start a second process on it, so for any
+     * other conversation it says where it is.
      */
     registerCommand('openWaitingConversation', async (target) => {
       if (!target || !target.sessionId) return;
-      if (target.kind === 'background') {
-        const bin = pluginInstall.findClaude(claudeFolders());
-        if (!bin || !target.id) {
-          vscode.window.showInformationMessage(`"${target.title}" is a background session; attach to it with: claude attach ${target.id || target.sessionId}`);
-          return;
-        }
-        const term = vscode.window.createTerminal({ name: 'claude attach ' + target.id, shellPath: bin,
-          shellArgs: ['attach', target.id], cwd: target.cwd && fs.existsSync(target.cwd) ? target.cwd : undefined });
-        term.show();
-        return;
-      }
       const list = (name) => { try { const f = globalThis[name]; return typeof f === 'function' ? f() || [] : []; } catch (_) { return []; } };
       const elsewhere = list('__cceSessionsElsewhere');
       const here = list('__cceSessionsShown').filter((id) => !elsewhere.includes(id));
@@ -1224,6 +1206,7 @@ function start(context, renamed) {
    */
   const LIVE_SETTINGS = [SETTING, COLOR_SETTING, EDGE_SETTING, PINS_SETTING, PIN_MARGIN_SETTING]
     .concat(webview.SWITCHES.map((k) => PREFIX + 'show.' + k));
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => refreshWaiting(false)));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
     settings = null;
     if (Object.values(HOOK_SETTINGS).some((k) => e.affectsConfiguration(k))) writeHookSettings();

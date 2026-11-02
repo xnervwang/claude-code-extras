@@ -4,7 +4,7 @@ Claude can lose track of unfinished work when you switch topics before the work 
 
 The plan is stored in a file outside the conversation, and Claude gets its open rows every turn. Claude is asked to bring the rows it is working on up to date before automatic compaction and, after compaction, to read the plan file before anything else. You see the plan in its own view next to the Claude Code panel. You answer by row number and can settle several rows in one message, like "2.1: not now". Rows Claude proposes on its own start as `discussing` and become `todo` only when you agree.
 
-Above the work plan, Waiting on you lists permission prompts, blocked background sessions, and questions in work plans across conversations running on this machine.
+Above the work plan, Waiting on you lists every permission prompt and plan question in this workspace.
 
 Requires Anthropic's Claude Code extension and VS Code 1.94 or later. The work plan also needs Python 3.7 or later. On Windows without Python, the extension offers to download it from python.org (11 MB).
 
@@ -65,17 +65,18 @@ See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, th
 
 ### Waiting on you
 
-Waiting on you sits above the work plan in the same sidebar. It lists waits across every conversation running on this machine:
+Waiting on you sits above the work plan in the same sidebar. Only conversations from this workspace appear, subfolders included:
 
 - Conversations Claude Code reports as waiting, such as at a permission prompt.
-- Blocked sessions started with `claude --bg`, with what they asked for.
 - Work plan rows waiting on you, with their questions.
+
+`claude --bg` sessions are left out.
 
 A `discussing` row also appears if Claude has asked you to decide and the row has a question.
 
 Each conversation has one row, titled as in Claude Code's session list. Its waits appear beneath it with elapsed times such as `3h`. Permission prompts come first. Waits older than 7 days go into a collapsed "Waiting over 7 days" group at the bottom.
 
-Clicking a row goes to its conversation if it is open in this window. If it is open in another window or running outside VS Code, the extension says where it is instead of opening it a second time. Clicking a background session opens a terminal attached to it with `claude attach`.
+Clicking a row goes to its conversation if it is open in this window. If it is open in another window or running outside VS Code, the extension says where it is instead of opening it a second time.
 
 The list of running conversations comes from `claude agents --json` and refreshes every 30 seconds. A work plan change appears at once. While the view is on, the sidebar icon counts waits under 7 days old. The work plan's count of open rows appears next to the work plan view's title. Rows written before this version say who they wait on only in their note: the work plan view shows them as waiting on "unknown", and Waiting on you does not list them.
 

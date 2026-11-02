@@ -4,13 +4,13 @@
 
 'use strict';
 /*
- * What is waiting on the reader, across every conversation running on this machine.
- *
- * Three kinds:
+ * Permission prompts and work plan questions waiting for the user, in the conversations started inside one of the
+ * window's workspace folders:
  *
  *   - a row of a conversation's work plan that waits on the user (waitingOn "user"), with the question it asks;
- *   - a conversation Claude Code reports as waiting (status "waiting": a permission prompt, input it needs);
- *   - a background session Claude Code reports as blocked.
+ *   - a conversation Claude Code reports as waiting (status "waiting": a permission prompt, input it needs).
+ *
+ * `claude --bg` sessions are left out. Their questions go through the conversation that started them.
  *
  * The conversations come from `claude agents --json`, which Claude Code documents as the supported way for a script to
  * read session state. Its records are per process, and one conversation can be held by two processes at once - two
@@ -24,8 +24,8 @@ const fs = require('fs');
 const path = require('path');
 const { transcriptOf } = require('./claude-files');
 
-/* Older than this, a wait goes into a group of its own at the bottom, so that a background session blocked for a month
-   does not sit above a question asked a minute ago. */
+/* Waits older than this go into the collapsed group at the bottom, so a month-old question does not sit above one
+   asked a minute ago. */
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENTS_TIMEOUT_MS = 15000;
 /* The end of a transcript, where Claude Code appends the conversation's title again every turn. */
@@ -70,7 +70,7 @@ function merge(records) {
     if (!r || typeof r.sessionId !== 'string' || !r.sessionId) continue;
     let s = by.get(r.sessionId);
     if (!s) {
-      s = { sessionId: r.sessionId, id: '', kind: '', cwd: '', name: '', waitingFor: '', blocked: false, processes: 0 };
+      s = { sessionId: r.sessionId, id: '', kind: '', cwd: '', name: '', waitingFor: '', processes: 0 };
       by.set(r.sessionId, s);
     }
     s.processes++;
@@ -81,9 +81,28 @@ function merge(records) {
     const name = typeof r.name === 'string' ? r.name.trim() : '';
     if (name && (!s.name || (isDefaultName(s.name, s.cwd) && !isDefaultName(name, s.cwd)))) s.name = name;
     if (r.status === 'waiting') s.waitingFor = String(r.waitingFor || '').trim() || s.waitingFor || 'input';
-    if (r.state === 'blocked') s.blocked = true;
   }
   return by;
+}
+
+/* So that /home/x and /local/home/x match when one is a symbolic link to the other. */
+const realPath = (p) => { try { return fs.realpathSync.native(p); } catch (_) { return path.resolve(p); } };
+const caseOf = process.platform === 'win32' ? (s) => s.toLowerCase() : (s) => s;
+
+/** Drops background sessions, and sessions started outside `folders`. */
+function inFolders(sessions, folders) {
+  const roots = (folders || []).filter(Boolean).map((f) => caseOf(realPath(f)));
+  const out = new Map();
+  for (const [id, s] of sessions) {
+    if (s.kind === 'background' || !s.cwd) continue;
+    const cwd = caseOf(realPath(s.cwd));
+    const under = (root) => {
+      const rel = path.relative(root, cwd);
+      return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+    };
+    if (roots.some(under)) out.set(id, s);
+  }
+  return out;
 }
 
 /**
@@ -128,9 +147,7 @@ function planQuestions(nodes, prefix = '', out = []) {
 const OPEN = ['discussing', 'todo', 'doing', 'waiting', 'parked'];
 const firstOpen = (nodes) => (nodes || []).find((n) => OPEN.includes(n.state));
 
-/* Which comes first inside a conversation: a permission prompt is the quickest thing to clear and holds the
-   conversation still until it is, then a blocked background session, then the questions in the plan. */
-const ORDER = { prompt: 0, blocked: 1, question: 2 };
+const ORDER = { prompt: 0, question: 1 };
 
 /**
  * Everything waiting on the reader, grouped by conversation, with the waits older than STALE_MS set apart.
@@ -142,13 +159,9 @@ function collect({ sessions, readPlan, titles, since, now = Date.now() }) {
   const groups = [];
   for (const s of sessions.values()) {
     const items = [];
-    const waitingFor = s.waitingFor ? s.waitingFor.charAt(0).toUpperCase() + s.waitingFor.slice(1) : '';
-    /* A blocked background session that is also at a permission prompt is one wait, not two: what it asks for, when it
-       said, is the more useful line, and the prompt decides where it sorts. */
-    if (s.blocked || (s.kind === 'background' && waitingFor)) {
-      items.push({ kind: waitingFor ? 'prompt' : 'blocked', text: s.needs || waitingFor || 'Blocked, waiting for input',
-        since: since(s) });
-    } else if (waitingFor) items.push({ kind: 'prompt', text: waitingFor, since: since(s) });
+    if (s.waitingFor) {
+      items.push({ kind: 'prompt', text: s.waitingFor.charAt(0).toUpperCase() + s.waitingFor.slice(1), since: since(s) });
+    }
     const plan = readPlan(s.sessionId);
     for (const q of planQuestions(plan && plan.nodes)) {
       items.push({ kind: 'question', text: q.question, row: q.num, rowTitle: q.title, since: q.since });
@@ -209,5 +222,5 @@ function reader() {
 }
 
 module.exports = {
-  parseAgents, listAgents, isDefaultName, merge, transcriptTitles, planQuestions, collect, reader, STALE_MS,
+  parseAgents, listAgents, isDefaultName, merge, inFolders, transcriptTitles, planQuestions, collect, reader, STALE_MS,
 };

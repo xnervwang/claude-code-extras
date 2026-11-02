@@ -4937,7 +4937,8 @@ console.log('\nwhat a tick and a change of setting cost');
         Uri: { file: (p) => ({ fsPath: p }) }, RelativePattern: class {}, ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
         workspace: { workspaceFolders: [], createFileSystemWatcher: () => ({ onDidCreate() {}, onDidChange() {}, onDidDelete() {}, dispose() {} }),
           getConfiguration: () => ({ get: (k, d) => (k in values ? values[k] : d), inspect: () => undefined, update: async (k, v) => { values[k] = v; } }),
-          onDidChangeConfiguration: (fn) => { listeners.config.push(fn); return disposable; } },
+          onDidChangeConfiguration: (fn) => { listeners.config.push(fn); return disposable; },
+          onDidChangeWorkspaceFolders: () => disposable },
         window: { createOutputChannel: () => ({ appendLine() {}, show() {}, dispose() {} }), createTreeView: () => ({ dispose() {} }),
           showInformationMessage: async () => undefined, showWarningMessage: async () => undefined, setStatusBarMessage() {},
           tabGroups: { all: [], activeTabGroup: null }, showTextDocument: async () => {} },
@@ -6749,7 +6750,7 @@ console.log('\nwaiting on you');
   const merged = w.merge([
     { sessionId: S(1), id: 'aaaa1111', kind: 'interactive', cwd: '/x/claude-code-extras', name: 'claude-code-extras-92', status: 'idle' },
     { sessionId: S(1), id: 'aaaa1111', kind: 'interactive', cwd: '/x/claude-code-extras', name: 'Release work', status: 'waiting', waitingFor: 'permission prompt' },
-    { sessionId: S(2), id: 'bbbb2222', kind: 'background', cwd: '/x/y', name: 'overnight run', state: 'blocked' },
+    { sessionId: S(2), id: 'bbbb2222', kind: 'interactive', cwd: '/x/y', name: 'overnight run', status: 'waiting', waitingFor: 'input needed' },
     { sessionId: S(3), id: 'cccc3333', kind: 'interactive', cwd: '/x/z', name: 'z-1f', status: 'busy' },
     { nope: true },
   ]);
@@ -6784,9 +6785,32 @@ console.log('\nwaiting on you');
   if (!JSON.stringify(data).includes('old style') && !JSON.stringify(data).includes('built') && !data.fresh.concat(data.stale).some((x) => x.sessionId === S(3))) {
     ok('a waiting row that does not name the user, one waiting on a build, and a busy conversation are all left out');
   } else bad('something not waiting on the user was listed');
-  if (data.stale.length === 1 && data.stale[0].sessionId === S(2) && data.stale[0].items[0].kind === 'blocked' && data.count === 3) {
+  if (data.stale.length === 1 && data.stale[0].sessionId === S(2) && data.stale[0].items[0].text === 'Input needed' && data.count === 3) {
     ok('a wait over a week old is set apart, and only the newer ones are counted');
   } else bad(`stale ${JSON.stringify(data.stale)}, count ${data.count}`);
+
+  {
+    /* Only this workspace's conversations, by real path, and never a background session. */
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cce-ws-')));
+    const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cce-ws-other-')));
+    fs.mkdirSync(path.join(root, 'sub'));
+    fs.mkdirSync(root + '-sibling');
+    const link = path.join(other, 'link');
+    fs.symlinkSync(root, link);
+    const sessions = w.merge([
+      { sessionId: S(11), kind: 'interactive', cwd: root, status: 'waiting' },
+      { sessionId: S(12), kind: 'interactive', cwd: path.join(root, 'sub'), status: 'idle' },
+      { sessionId: S(13), kind: 'interactive', cwd: other, status: 'waiting' },
+      { sessionId: S(14), kind: 'background', cwd: root, state: 'blocked' },
+      { sessionId: S(15), kind: 'interactive', cwd: path.join(link, 'sub'), status: 'idle' },
+      { sessionId: S(16), kind: 'interactive', cwd: root + '-sibling', status: 'waiting' },
+    ]);
+    const kept = [...w.inFolders(sessions, [root]).keys()].sort().join();
+    if (kept === [S(11), S(12), S(15)].sort().join() && w.inFolders(sessions, []).size === 0) {
+      ok('Waiting on you takes the conversations started in a workspace folder or under one, through links, and no background session');
+    } else bad(`inFolders kept ${kept}`);
+    for (const d of [root, other, root + '-sibling']) fs.rmSync(d, { recursive: true, force: true });
+  }
 
   {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-wait-'));

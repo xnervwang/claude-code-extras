@@ -1,7 +1,7 @@
 {
   "name": "claude-code-extras",
   "displayName": "Work Plan for Claude Code",
-  "description": "Help Claude track open work across topics and compaction. Claude starts and updates a plan as you talk. See it in its own view beside the Claude Code panel and answer by row number, even for several rows in one message: \"2.1: not now\". Rows Claude proposes stay \"discussing\" until you agree to make them \"todo\". Waiting on you shows what every running conversation on this machine needs from you. The Claude Code panel also gets a line under each reply for time, context use, cost, model and effort, plus sound alerts.",
+  "description": "Help Claude track open work across topics and compaction. Claude starts and updates a plan as you talk. See it in its own view beside the Claude Code panel and answer by row number, even for several rows in one message: \"2.1: not now\". Rows Claude proposes stay \"discussing\" until you agree to make them \"todo\". Waiting on you lists every permission prompt and plan question in this workspace. The Claude Code panel also gets a line under each reply for time, context use, cost, model and effort, plus sound alerts.",
   "version": "1.0.19",
   "publisher": "xnervwang",
   "license": "BSD-3-Clause",
@@ -130,7 +130,7 @@
     "viewsWelcome": [
       {
         "view": "claudeCodeExtras.waitingOnYou",
-        "contents": "Nothing is waiting on you."
+        "contents": "Nothing in this workspace is waiting on you."
       },
       {
         "view": "claudeCodeExtras.workPlan",
@@ -345,7 +345,7 @@
         "claudeCodeWorkPlan.waitingOnYou": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Show **Waiting on you** above the work plan. It lists what each running conversation is waiting for from you: a permission prompt, a blocked background session, or a question in its work plan. Takes effect without a reload."
+          "markdownDescription": "Show **Waiting on you** above the work plan. Takes effect without a reload."
         },
         "claudeCodeWorkPlan.tellClaudeYourTimeZone": {
           "type": "boolean",

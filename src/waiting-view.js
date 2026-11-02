@@ -4,8 +4,7 @@
 
 'use strict';
 /*
- * Waiting on you: what every running conversation is waiting for from the reader, as a native tree beside the work plan
- * (src/waiting.js collects it).
+ * Waiting on you as a native tree beside the work plan; src/waiting.js collects the rows.
  *
  * It shows only what waits on the reader. With nothing waiting it is empty, and the view's welcome text says so in one
  * line.
@@ -18,12 +17,10 @@ const { ageSince } = require('./workplan-view');
 /* Different shapes, as in the work plan, so the kinds can be told apart without colour. */
 const ICON = {
   prompt: 'shield',
-  blocked: 'debug-pause',
   question: 'question',
 };
 const WORD = {
   prompt: 'needs you to answer a prompt',
-  blocked: 'blocked until you answer',
   question: 'asks in its work plan',
 };
 
@@ -88,9 +85,8 @@ class WaitingProvider {
       const longest = Math.min(...g.items.map((it) => it.since || Infinity));
       item.description = [String(g.items.length), Number.isFinite(longest) ? ageSince(longest) : '']
         .filter(Boolean).join(' · ');
-      item.iconPath = new vscode.ThemeIcon(g.kind === 'background' ? 'server-process' : 'comment');
-      item.tooltip = g.title + '\n\n' + (g.kind === 'background' ? 'Background session' : 'Conversation')
-        + (g.cwd ? ' in ' + g.cwd : '');
+      item.iconPath = new vscode.ThemeIcon('comment');
+      item.tooltip = g.title + (g.cwd ? '\n\nConversation in ' + g.cwd : '');
       item.command = open;
       return item;
     }
