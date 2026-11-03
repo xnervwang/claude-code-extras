@@ -504,9 +504,21 @@ const EDITS = [
     // meter switch is on; the check that hides it until a real window size has arrived stays, since the figure means
     // nothing without one.
     name: 'context meter always visible',
-    re: /if\(([\w$]+)===null\)\{if\(([\w$]+)===0\)return null;if\(([\w$]+)>=(\d+)\)return null\}/g,
-    to: (m, override, window, free, limit) =>
-      `if(${override}===null){if(${window}===0)return null;if(!${METER_KEPT}&&${free}>=${limit})return null}`,
+    // Two shapes: 2.1.317 dropped the debug override around both checks.
+    shapes: [
+      {
+        note: '2.1.317 and later: the checks stand alone',
+        re: /if\(([\w$]+)===0\)return null;if\(([\w$]+)>=(\d+)\)return null;return ([\w$]+)\(([\w$]+),\{percentageUsed:/g,
+        to: (m, window, free, limit, make, meter) =>
+          `if(${window}===0)return null;if(!${METER_KEPT}&&${free}>=${limit})return null;return ${make}(${meter},{percentageUsed:`,
+      },
+      {
+        note: 'through 2.1.314: the checks sit inside a debug override',
+        re: /if\(([\w$]+)===null\)\{if\(([\w$]+)===0\)return null;if\(([\w$]+)>=(\d+)\)return null\}/g,
+        to: (m, override, window, free, limit) =>
+          `if(${override}===null){if(${window}===0)return null;if(!${METER_KEPT}&&${free}>=${limit})return null}`,
+      },
+    ],
   },
   {
     /*
