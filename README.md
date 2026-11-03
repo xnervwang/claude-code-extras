@@ -85,7 +85,7 @@ The answer is sent through the conversation's message input, as if you had typed
 
 When running conversations' plans ask N questions, the status bar shows "N to decide" on a warning background. Otherwise it shows "Conversations M", where M is the number of running conversations. The tab's badge also counts those questions. The work plan view's activity-bar icon counts the `discussing` and `todo` rows in the plan it shows; the number disappears when there are none.
 
-The tab follows VS Code's display language when it is English or Simplified Chinese, and uses English otherwise; `claudeCodeWorkPlan.conversationsLanguage` overrides this. Row titles, questions and state names such as `doing` appear as written. Rows written before version 1.0.19 name who they wait on only in their note. The work plan view shows them as waiting on "unknown", and Conversations does not list them as questions.
+The tab follows VS Code's display language when it is English or Simplified Chinese, and uses English otherwise. Row titles, questions and state names such as `doing` appear as written. Rows written before version 1.0.19 name who they wait on only in their note. The work plan view shows them as waiting on "unknown", and Conversations does not list them as questions.
 
 ## Install
 
@@ -137,7 +137,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 39 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 38 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 
@@ -145,7 +145,6 @@ Open `Work Plan for Claude Code: Settings` for all 39 settings. Most apply witho
 | --- | --- | --- |
 | `claudeCodeWorkPlan.workPlan` | on | Off removes the view, adds nothing about the plan to turns, and refuses writes to plan files. |
 | `claudeCodeWorkPlan.conversations` | on | Off removes the Conversations tab and its status bar entry. |
-| `claudeCodeWorkPlan.conversationsLanguage` | auto | Set the Conversations tab's language to `auto`, `en` or `zh-cn`. `auto` follows VS Code's display language for English and Simplified Chinese, and uses English otherwise; row titles, questions and state names such as `doing` remain as written. |
 | `claudeCodeWorkPlan.workPlanOfferMinTurns` | 3 | Messages you must have sent before a conversation without a plan is offered one. |
 | `claudeCodeWorkPlan.workPlanOfferMinToolCalls` | 25 | Tool calls one turn must make before that offer. |
 | `claudeCodeWorkPlan.workPlanQuietWhenReplyMatches` | empty | Regular expression tested on the latest reply. A match silences the prompts before and after compaction, for conversations relaying another model's replies word for word. Empty matches nothing. |

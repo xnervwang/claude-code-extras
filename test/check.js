@@ -6934,9 +6934,9 @@ console.log('\nconversations');
     fs.rmSync(root, { recursive: true, force: true });
   }
 
-  if (ctext.language('auto', 'zh-cn') === 'zh-cn' && ctext.language('auto', 'zh-tw') === 'en' && ctext.language('auto', 'de') === 'en'
-    && ctext.language('en', 'zh-cn') === 'en' && ctext.language('zh-cn', 'en') === 'zh-cn' && ctext.language('xx', 'en') === 'en') {
-    ok('the view speaks the editor\'s language when it has words for it, and the setting overrides that');
+  if (ctext.language('zh-cn') === 'zh-cn' && ctext.language('zh-Hans') === 'zh-cn' && ctext.language('zh-tw') === 'en'
+    && ctext.language('de') === 'en' && ctext.language('en') === 'en' && ctext.language(undefined) === 'en') {
+    ok('the view speaks the editor\'s language when it has words for it, and English otherwise');
   } else bad('conversations-text.language chose wrongly');
 
   {
@@ -7075,14 +7075,13 @@ console.log('\nconversations');
     const panel = (c.viewsContainers.panel || []).find((p) => p.id === 'claudeCodeConversations');
     const view = (c.views.claudeCodeConversations || [])[0] || {};
     const setting = c.configuration.properties['claudeCodeWorkPlan.conversations'];
-    const lang = c.configuration.properties['claudeCodeWorkPlan.conversationsLanguage'];
     const button = (c.menus['view/title'] || []).find((m) => m.command === 'claudeCodeWorkPlan.showConversations');
     if (panel && view.id === 'claudeCodeExtras.conversations' && view.when === 'config.claudeCodeWorkPlan.workPlan && config.claudeCodeWorkPlan.conversations'
-      && setting && setting.default === true && lang && lang.default === 'auto' && lang.enum.join() === ['auto'].concat(ctext.LANGUAGES).join()
+      && setting && setting.default === true && !c.configuration.properties['claudeCodeWorkPlan.conversationsLanguage']
       && button && button.when === 'view == claudeCodeExtras.workPlan'
       && !c.views.claudeCodeExtras.some((v) => v.id === 'claudeCodeExtras.waitingOnYou')) {
-      ok('Conversations is a tab of its own in the panel, on by default, opened from the work plan\'s title bar, in a language that can be set');
-    } else bad(`manifest: panel ${JSON.stringify(panel)}, view ${JSON.stringify(view)}, lang ${JSON.stringify(lang && lang.enum)}`);
+      ok('Conversations is a tab of its own in the panel, on by default, opened from the work plan\'s title bar, in VS Code\'s language');
+    } else bad(`manifest: panel ${JSON.stringify(panel)}, view ${JSON.stringify(view)}`);
   }
 }
 
@@ -7171,11 +7170,11 @@ console.log('\nanswering from the Conversations tab');
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  /* What the conversation receives names the row and repeats the question, in the tab's language. */
-  const en = answers.message(ctext.textFor('en'), '3', 'Ship it?', ' Yes, today. ');
-  const zh = answers.message(ctext.textFor('zh-cn'), '3', 'Ship it?', 'Yes');
-  if (en === 'My answer to row 3 ("Ship it?"):\nYes, today.' && zh.startsWith('第 3 行的问题「Ship it?」') && zh.endsWith('\nYes')) {
-    ok('the message sent names the row and its question, then the answer');
+  /* What the conversation receives names the row and repeats the question, in the question's own language. */
+  const en = answers.message('3', 'Ship it?', ' Yes, today. ');
+  const zh = answers.message('3', '这个要发吗？', 'Yes');
+  if (en === 'My answer to row 3 ("Ship it?"):\nYes, today.' && zh.startsWith('第 3 行的问题「这个要发吗？」') && zh.endsWith('\nYes')) {
+    ok('the message sent names the row and its question in the question\'s language, then the answer');
   } else bad(`answer message ${JSON.stringify([en, zh])}`);
 
   /* The host hands an answer only to the panel showing that conversation, and asked without text only says whether it has one. */

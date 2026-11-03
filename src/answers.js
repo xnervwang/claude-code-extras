@@ -18,6 +18,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { languageOf, textFor } = require('./conversations-text');
 
 const FOLDER = 'answers';
 /* How long an answer waits for a window to take it, how long a taken one waits for its panel, and how long any file in
@@ -168,11 +169,9 @@ class Courier {
   }
 }
 
-/**
- * The text that goes into the conversation: the row, its question, and the answer, so the conversation can tell which
- * row it settles without anything else. `t` is the Conversations view's text for the reader's language.
- */
-function message(t, row, question, answer) {
+/** The message sent to the conversation. An agent reads it, so it uses the question's language, not the tab's. */
+function message(row, question, answer) {
+  const t = textFor(languageOf(question));
   return t.answerMessage(row, String(question || '').trim(), String(answer || '').trim());
 }
 

@@ -73,7 +73,6 @@ const REOPEN_SETTING = PREFIX + 'reopenDroppedTabs';
 const RECENT_SETTING = PREFIX + 'recentClosedSessions';
 const HIDE_BG_SETTING = PREFIX + 'hideBackgroundSessions';
 const CONVERSATIONS_SETTING = PREFIX + 'conversations';
-const CONVERSATIONS_LANGUAGE = PREFIX + 'conversationsLanguage';
 /* Read by the plugin's hooks, which are separate processes and cannot see editor settings. Keys match plan_path.py. */
 const HOOK_SETTINGS = {
   enabled: PREFIX + 'workPlan',
@@ -534,7 +533,7 @@ function start(context, renamed) {
   const conversationsView = vscode.window.createTreeView('claudeCodeExtras.conversations', { treeDataProvider: conversationsTree });
   context.subscriptions.push(conversationsView);
   const conversationsOn = () => cfg().get(CONVERSATIONS_SETTING, true) !== false && cfg().get(PREFIX + 'workPlan', true) !== false;
-  const conversationsLang = () => conversationsText.language(cfg().get(CONVERSATIONS_LANGUAGE, 'auto'), vscode.env.language);
+  const conversationsLang = () => conversationsText.language(vscode.env.language);
   const statusEntry = vscode.window.createStatusBarItem('claudeCodeWorkPlan.conversations', vscode.StatusBarAlignment.Right, 100);
   statusEntry.name = 'Conversations';
   statusEntry.command = PREFIX + 'showConversations';
@@ -570,7 +569,7 @@ function start(context, renamed) {
     open: (target) => vscode.commands.executeCommand(PREFIX + 'openWaitingConversation', target),
     send: (q, text) => {
       try {
-        const body = answers.message(conversationsText.textFor(conversationsLang()), q.row, q.question, text);
+        const body = answers.message(q.row, q.question, text);
         answerView.setState(q.key, { kind: 'waiting' });
         courier.send({ sessionId: q.sessionId, row: q.row, text: body }, { key: q.key });
       } catch (e) {
@@ -1420,8 +1419,7 @@ function start(context, renamed) {
     if (e.affectsConfiguration(RECENT_SETTING) || e.affectsConfiguration(SETTING)) {
       try { if (typeof globalThis.__cceSendSessionStates === 'function') globalThis.__cceSendSessionStates(); } catch (_) { /* next update */ }
     }
-    if (e.affectsConfiguration(CONVERSATIONS_SETTING) || e.affectsConfiguration(CONVERSATIONS_LANGUAGE)
-      || e.affectsConfiguration(PREFIX + 'workPlan')) {
+    if (e.affectsConfiguration(CONVERSATIONS_SETTING) || e.affectsConfiguration(PREFIX + 'workPlan')) {
       refreshConversations(true);
     }
     if (e.affectsConfiguration(LIMIT_SETTING) && cfg().get(LIMIT_SETTING, 'ask') === 'raise') {

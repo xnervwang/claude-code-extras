@@ -48,12 +48,17 @@ const TEXT = {
 
 const LANGUAGES = Object.keys(TEXT);
 
-/** The setting first, then VS Code's display language, then English. */
-function language(setting, editor) {
-  if (LANGUAGES.includes(setting)) return setting;
+/** zh-cn when VS Code runs in Simplified Chinese, en otherwise. */
+function language(editor) {
   return /^zh(-cn|-hans|-sg)?$/i.test(String(editor || '')) ? 'zh-cn' : 'en';
 }
 
+/* Chinese, Japanese and Korean script, written as escapes because shipped source files contain only English. */
+const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
+
+/** zh-cn for text with CJK characters, en otherwise. */
+const languageOf = (text) => (CJK.test(String(text || '')) ? 'zh-cn' : 'en');
+
 const textFor = (lang) => TEXT[lang] || TEXT.en;
 
-module.exports = { TEXT, LANGUAGES, language, textFor };
+module.exports = { TEXT, LANGUAGES, language, languageOf, textFor };

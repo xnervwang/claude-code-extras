@@ -381,21 +381,6 @@
           "default": true,
           "markdownDescription": "Show the **Conversations** tab in the panel, and the status bar entry that opens it. Takes effect without a reload."
         },
-        "claudeCodeWorkPlan.conversationsLanguage": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "en",
-            "zh-cn"
-          ],
-          "enumDescriptions": [
-            "VS Code's display language, if it is English or Simplified Chinese; otherwise English",
-            "English",
-            "Simplified Chinese"
-          ],
-          "default": "auto",
-          "markdownDescription": "Language of the Conversations tab and its status bar entry. Plan text and state names like `doing` are not translated."
-        },
         "claudeCodeWorkPlan.webviewRequestLimit": {
           "type": "string",
           "enum": [
