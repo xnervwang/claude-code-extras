@@ -138,6 +138,12 @@
           "id": "claudeCodeExtras.conversations",
           "name": "%conversations.title%",
           "when": "config.claudeCodeWorkPlan.workPlan && config.claudeCodeWorkPlan.conversations"
+        },
+        {
+          "type": "webview",
+          "id": "claudeCodeExtras.answer",
+          "name": "%answer.title%",
+          "when": "config.claudeCodeWorkPlan.workPlan && config.claudeCodeWorkPlan.conversations"
         }
       ]
     },

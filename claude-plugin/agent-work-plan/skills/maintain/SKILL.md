@@ -154,6 +154,9 @@ text would get the list wrong. So a row with no
 `waitingOn` is shown as waiting on someone unknown and is not listed, and one with `user` but no answerable question
 gives the user nothing to act on.
 
+The user can answer a question from that tab. The answer arrives as their own message, naming the row number and
+repeating the question, and settles the row like any other answer: move it on.
+
 When it is required:
 
 - **Moving a row into `waiting`** needs `--waiting-on`; the row command refuses without it, and refuses `user` without

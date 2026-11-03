@@ -103,10 +103,10 @@ class ConversationsProvider {
       item.description = t.asked(ageSince(q.since));
       item.tooltip = `${q.question}\n\n${q.row}. ${q.title}`;
       item.command = {
-        command: 'claudeCodeWorkPlan.showWorkPlanDetail', title: 'Show the row',
+        command: 'claudeCodeWorkPlan.answerQuestion', title: 'Answer it',
         arguments: [{
-          title: `${q.row}. ${q.title}`, state: `${q.state} · ${t.asked(ageSince(q.since))}`,
-          note: q.note, detail: q.detail, question: q.question, open: target,
+          sessionId: c.sessionId, row: q.row, rowTitle: q.title, question: q.question, note: q.note, detail: q.detail,
+          since: q.since, conversation: c.title, running: c.running, open: target,
         }],
       };
       return item;

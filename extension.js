@@ -26,7 +26,9 @@ const background = require('./src/background');
 const efforts = require('./src/efforts');
 const { countOpen, sweepOrphans, planDir, readPlan, DATA_ROOT, PLAN_DIR } = require('./src/workplan');
 const { transcriptOf, writeAtomic } = require('./src/claude-files');
-const { WorkPlanProvider } = require('./src/workplan-view');
+const { WorkPlanProvider, ageSince } = require('./src/workplan-view');
+const answers = require('./src/answers');
+const { AnswerView } = require('./src/answer-view');
 const waiting = require('./src/waiting');
 const conversations = require('./src/conversations');
 const { ConversationsProvider } = require('./src/conversations-view');
@@ -548,6 +550,38 @@ function start(context, renamed) {
     statusEntry.show();
   };
 
+  /*
+   * Answering from the Conversations tab (src/answer-view.js, src/answers.js). An answer goes into the folder every window
+   * on this machine reads; whichever window shows the conversation takes it and has the panel send it (src/host.js,
+   * src/page/91-answer.js). So this window does both halves: it takes the answers meant for conversations it shows, and
+   * it follows the ones it sent until a result comes back or nobody takes them. One not sent goes to the clipboard, so
+   * nothing typed is lost.
+   */
+  const answersDir = () => answers.folder(context.globalStorageUri.fsPath);
+  const localClock = (ms) => {
+    try {
+      return new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: clientZone() || undefined });
+    } catch (_) { return new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
+  };
+  const answerView = new AnswerView({
+    age: (since) => ageSince(since),
+    clock: localClock,
+    open: (target) => vscode.commands.executeCommand(PREFIX + 'openWaitingConversation', target),
+    send: (q, text) => {
+      try {
+        const body = answers.message(conversationsText.textFor(conversationsLang()), q.row, q.question, text);
+        answerView.setState(q.key, { kind: 'waiting' });
+        courier.send({ sessionId: q.sessionId, row: q.row, text: body }, { key: q.key });
+      } catch (e) {
+        log.appendLine('answer: ' + (e && e.message));
+        answerView.setState(q.key, { kind: 'error' });
+      }
+    },
+  });
+  answerView.setLanguage(conversationsLang());
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider('claudeCodeExtras.answer', answerView,
+    { webviewOptions: { retainContextWhenHidden: true } }));
+
   /* Badge: the discussing and todo rows of the plan shown. */
   const paintBadge = () => {
     const plan = workplan.shown();
@@ -651,6 +685,7 @@ function start(context, renamed) {
       const data = conversations.build({ sessions, stopped: stoppedLast, readPlan, titles: readTitles.titles,
         since: readTitles.since, live: liveStates, unread: unreadKeys });
       conversationsTree.set(data, records ? '' : error, conversationsLang());
+      answerView.setLanguage(conversationsLang());
       paintConversations();
     } catch (e) {
       log.appendLine('conversations: ' + (e && e.message));
@@ -670,6 +705,45 @@ function start(context, renamed) {
   context.subscriptions.push({ dispose: () => {
     if (statesTimer) clearTimeout(statesTimer);
     if (globalThis.__cceStatesHook) delete globalThis.__cceStatesHook;
+  } });
+
+  const courier = new answers.Courier({
+    dir: answersDir(),
+    canShow: (sessionId) => {
+      try { return typeof globalThis.__cceAnswer === 'function' && globalThis.__cceAnswer(sessionId) === true; } catch (_) { return false; }
+    },
+    hand: (sessionId, text, id) => globalThis.__cceAnswer(sessionId, text, id) === true,
+    finish: (sent, result) => {
+      if (result.kind !== 'sent' && result.kind !== 'lost') {
+        Promise.resolve(vscode.env.clipboard.writeText(sent.text)).catch(() => {});
+      }
+      answerView.setState(sent.key, result);
+      log.appendLine('answer: ' + result.kind);
+    },
+  });
+  const pumpAnswers = () => courier.pump();
+  globalThis.__cceAnswerHook = (id, sent, reason) => courier.handed(id, sent, reason);
+  /* The folder is watched rather than polled: answers are rare, and a window shows the result as soon as the file lands.
+     The half-minute tick below reads it too, in case a change is not heard. */
+  let answersWatch = null, answersSoon = 0;
+  const pumpSoon = () => {
+    if (answersSoon) return;
+    answersSoon = setTimeout(() => {
+      answersSoon = 0;
+      try { pumpAnswers(); } catch (e) { log.appendLine('answer: ' + (e && e.message)); }
+    }, 50);
+  };
+  try {
+    fs.mkdirSync(answersDir(), { recursive: true });
+    answers.sweep(answersDir());
+    answersWatch = fs.watch(answersDir(), pumpSoon);
+    answersWatch.on('error', () => { try { answersWatch.close(); } catch (_) { /* closed */ } answersWatch = null; });
+  } catch (e) { log.appendLine('answer: ' + (e && e.message)); }
+  context.subscriptions.push({ dispose: () => {
+    if (answersWatch) try { answersWatch.close(); } catch (_) { /* closed */ }
+    if (answersSoon) clearTimeout(answersSoon);
+    courier.dispose();
+    if (globalThis.__cceAnswerHook) delete globalThis.__cceAnswerHook;
   } });
   /*
    * Following the conversation has to be immediate, so the patched field calls this the moment it is written. Waiting
@@ -1153,6 +1227,7 @@ function start(context, renamed) {
   const tick = setInterval(() => {
     agentsAt = 0;
     refreshPlans();
+    try { pumpAnswers(); } catch (e) { log.appendLine('answer: ' + (e && e.message)); }
     if (removed() || !enabled() || uninstalling() || replaced()) { unwatchEffort(); return; }
     scanBackground();
     scanEffort();
@@ -1199,6 +1274,12 @@ function start(context, renamed) {
       const pick = await vscode.window.showInformationMessage(row.title, { modal: true, detail: head.concat(['', body]).join('\n') },
         ...(row.open ? [go] : []));
       if (pick === go) await vscode.commands.executeCommand(PREFIX + 'openWaitingConversation', row.open);
+    }),
+    /* A question clicked in the Conversations view, shown in the Answer view beside it. */
+    registerCommand('answerQuestion', async (q) => {
+      if (!q) return;
+      answerView.show(q);
+      await vscode.commands.executeCommand('claudeCodeExtras.answer.focus');
     }),
     /* VS Code has one Conversations view per window; this focuses it. */
     registerCommand('showConversations', () => vscode.commands.executeCommand('claudeCodeExtras.conversations.focus')),

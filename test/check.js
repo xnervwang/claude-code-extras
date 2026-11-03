@@ -5050,7 +5050,7 @@ console.log('\nwhat a tick and a change of setting cost');
           onDidChangeConfiguration: (fn) => { listeners.config.push(fn); return disposable; },
           onDidChangeWorkspaceFolders: () => disposable },
         window: { createOutputChannel: () => ({ appendLine() {}, show() {}, dispose() {} }), createTreeView: () => ({ dispose() {} }),
-          createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
+          createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }), registerWebviewViewProvider: () => disposable,
           showInformationMessage: async () => undefined, showWarningMessage: async () => undefined, setStatusBarMessage() {},
           tabGroups: { all: [], activeTabGroup: null }, showTextDocument: async () => {} },
         commands: { registerCommand: () => disposable, executeCommand: async () => {} },
@@ -7050,7 +7050,8 @@ console.log('\nconversations');
     if (first && !again && top.length === 6 && top[5].kind === 'stopped' && head.label === asking.c.title
       && head.iconPath.id === 'question' && head.description === 'needs you · 2 questions · 4 open'
       && rows.map((r) => r.label).join('|') === '1. Publish 1.0.20 now?|3.1. A or B?|3. parent'
-      && rows[0].command.command === 'claudeCodeWorkPlan.showWorkPlanDetail' && rows[0].command.arguments[0].open.sessionId === S(2)
+      && rows[0].command.command === 'claudeCodeWorkPlan.answerQuestion' && rows[0].command.arguments[0].open.sessionId === S(2)
+      && rows[0].command.arguments[0].row === '1' && rows[0].command.arguments[0].running === true
       && rows[2].description.startsWith('doing (conversation idle') && busy.description === 'doing for 10m'
       && head.command.command === 'claudeCodeWorkPlan.openWaitingConversation') {
       ok('a conversation is drawn with its state, its questions numbered as in its plan, and the rows it is doing');
@@ -7082,6 +7083,205 @@ console.log('\nconversations');
       && !c.views.claudeCodeExtras.some((v) => v.id === 'claudeCodeExtras.waitingOnYou')) {
       ok('Conversations is a tab of its own in the panel, on by default, opened from the work plan\'s title bar, in a language that can be set');
     } else bad(`manifest: panel ${JSON.stringify(panel)}, view ${JSON.stringify(view)}, lang ${JSON.stringify(lang && lang.enum)}`);
+  }
+}
+
+console.log('\nanswering from the Conversations tab');
+{
+  const answers = require('../src/answers');
+  const ctext = require('../src/conversations-text');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-answers-'));
+  /* Two or three windows on one machine, sharing the folder. Time and timers are faked, so a wait is a function call. */
+  let clock = 1_000_000;
+  const timers = [];
+  const window = (shows, panel) => {
+    const finished = [], handed = [];
+    const w = new answers.Courier({
+      dir, now: () => clock,
+      later: (fn, ms) => { timers.push({ at: clock + ms, fn, live: true }); return timers.length; },
+      cancel: (n) => { if (timers[n - 1]) timers[n - 1].live = false; },
+      canShow: (id) => shows.includes(id),
+      hand: (id, text, key) => { handed.push({ id, text, key }); if (panel) panel(w, key); return true; },
+      finish: (sent, result) => finished.push([sent.key, result.kind]),
+    });
+    return { w, finished, handed };
+  };
+  const advance = (ms) => {
+    clock += ms;
+    for (const t of timers) if (t.live && t.at <= clock) { t.live = false; t.fn(); }
+  };
+  const sender = window([]), shower = window(['S'], (w, key) => w.handed(key, true, ''));
+  const id = sender.w.send({ sessionId: 'S', row: '2', text: 'My answer' }, { key: 'S/2' });
+  shower.w.pump();
+  const handedOnce = shower.handed.length === 1 && shower.handed[0].text === 'My answer' && shower.handed[0].key === id;
+  sender.w.pump();
+  {
+    if (handedOnce && JSON.stringify(sender.finished) === JSON.stringify([['S/2', 'sent']])) {
+      ok('an answer reaches the window showing its conversation, which sends it, and the sending window hears it was sent');
+    } else bad(`answer round trip: handed ${JSON.stringify(shower.handed)}, finished ${JSON.stringify(sender.finished)}`);
+
+    /* Nobody shows the conversation: once the wait is over the sender takes it back, so it cannot arrive later. */
+    const lonely = window([]);
+    lonely.w.send({ sessionId: 'T', row: '1', text: 'x' }, { key: 'T/1' });
+    advance(answers.TAKE_MS + 200);
+    const late = window(['T']);
+    late.w.pump();
+    if (JSON.stringify(lonely.finished) === JSON.stringify([['T/1', 'nobody']]) && late.handed.length === 0) {
+      ok('an answer no window takes in time is taken back, and a window opening the conversation later does not send it');
+    } else bad(`nobody: ${JSON.stringify(lonely.finished)}, later handed ${late.handed.length}`);
+
+    /* The panel's input already had text in it, so the panel did not send. */
+    const s2 = window([]), w2 = window(['U'], (w, key) => w.handed(key, false, 'draft'));
+    s2.w.send({ sessionId: 'U', row: '1', text: 'y' }, { key: 'U/1' });
+    w2.w.pump();
+    s2.w.pump();
+    if (JSON.stringify(s2.finished) === JSON.stringify([['U/1', 'draft']])) ok('a panel that could not send says why, and the sender hears it');
+    else bad(`draft: ${JSON.stringify(s2.finished)}`);
+
+    /* Taken, and the panel never reports: the window that took it gives up after its own timeout. */
+    const s3 = window([]), w3 = window(['V']);
+    s3.w.send({ sessionId: 'V', row: '1', text: 'z' }, { key: 'V/1' });
+    w3.w.pump();
+    advance(answers.SEND_MS + 10);
+    s3.w.pump();
+    if (JSON.stringify(s3.finished) === JSON.stringify([['V/1', 'no-reply']])) ok('a panel that never reports is given up on, and the sender hears so');
+    else bad(`no reply: ${JSON.stringify(s3.finished)}`);
+
+    /* Two windows show the same conversation: only one of them sends it. */
+    const s4 = window([]), a = window(['W']), b = window(['W']);
+    s4.w.send({ sessionId: 'W', row: '1', text: 'once' }, { key: 'W/1' });
+    a.w.pump(); b.w.pump();
+    if (a.handed.length + b.handed.length === 1) ok('when two windows show the conversation, one of them sends the answer');
+    else bad(`two windows sent it ${a.handed.length + b.handed.length} times`);
+
+    /* Taken by a window that then closed: no result ever comes, and the sender stops waiting. */
+    const s5 = window([]);
+    const id5 = s5.w.send({ sessionId: 'X', row: '1', text: 'gone' }, { key: 'X/1' });
+    answers.take(dir, id5);
+    advance(answers.TAKE_MS + answers.SEND_MS + 5200);
+    if (JSON.stringify(s5.finished) === JSON.stringify([['X/1', 'lost']])) ok('an answer taken by a window that never reports is reported as lost, not as sent');
+    else bad(`lost: ${JSON.stringify(s5.finished)}`);
+
+    const old = path.join(dir, 'zz-00000000.result');
+    fs.writeFileSync(old, '{}');
+    const back = (Date.now() - answers.KEEP_MS - 60e3) / 1000;
+    fs.utimesSync(old, back, back);
+    if (answers.sweep(dir) >= 1 && !fs.existsSync(old)) ok('files left in the folder for over an hour are removed');
+    else bad('old answer files were not removed');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  /* What the conversation receives names the row and repeats the question, in the tab's language. */
+  const en = answers.message(ctext.textFor('en'), '3', 'Ship it?', ' Yes, today. ');
+  const zh = answers.message(ctext.textFor('zh-cn'), '3', 'Ship it?', 'Yes');
+  if (en === 'My answer to row 3 ("Ship it?"):\nYes, today.' && zh.startsWith('第 3 行的问题「Ship it?」') && zh.endsWith('\nYes')) {
+    ok('the message sent names the row and its question, then the answer');
+  } else bad(`answer message ${JSON.stringify([en, zh])}`);
+
+  /* The host hands an answer only to the panel showing that conversation, and asked without text only says whether it has one. */
+  {
+    const host = require('../src/host');
+    const edit = host.EDITS.find((e) => e.name === 'tab record at start');
+    const code = edit.to('', 'settings');
+    const m = /globalThis\.__cceAnswer=(\(cceId,cceText,cceKey\)=>\{.*?return!0\}),/.exec(code);
+    const sentTo = [];
+    const comm = (name) => ({ send: (msg) => sentTo.push([name, msg]) });
+    const tab = {}, fake = { sessionPanels: new Map([['A', tab]]), panelComms: new Map([[tab, comm('tab')]]), sidebarComms: comm('sidebar'),
+      sidebarChatShows: () => 'B' };
+    let fn = null;
+    try { fn = m && new Function('return function(){ return ' + m[1] + '; }')().call(fake); } catch (_) { fn = null; }
+    const results = fn ? [fn('A'), fn('B'), fn('C'), fn('A', 'hi', 'k1'), fn('B', 'yo', 'k2'), fn('C', 'no', 'k3')] : [];
+    if (fn && JSON.stringify(results) === JSON.stringify([true, true, false, true, true, false])
+      && JSON.stringify(sentTo) === JSON.stringify([['tab', { type: 'cce_answer', sessionId: 'A', text: 'hi', id: 'k1' }],
+        ['sidebar', { type: 'cce_answer', sessionId: 'B', text: 'yo', id: 'k2' }]])) {
+      ok('the host gives an answer to the tab or the sidebar showing that conversation, and to nothing else');
+    } else bad(`host answer hand-off: ${JSON.stringify([!!m, results, sentTo])}`);
+  }
+
+  /* The Answer view: a question shown with its draft, Ctrl+Enter's message sending it, and a sent one clearing the box. */
+  {
+    const { AnswerView } = require('../src/answer-view');
+    const posted = [], sent = [];
+    const v = new AnswerView({ send: (q, text) => sent.push([q.key, text]), open: () => {}, age: () => '3m', clock: () => '19:52' });
+    let onMessage = null;
+    v.resolveWebviewView({ webview: { set options(_) {}, set html(h) { this.htmlText = h; }, get html() { return this.htmlText; },
+      onDidReceiveMessage: (fn) => { onMessage = fn; }, postMessage: (m) => { posted.push(m); return Promise.resolve(true); } },
+      onDidDispose: () => {} });
+    const html = v.view.webview.html;
+    v.show({ sessionId: 'S', row: '4', rowTitle: 'Pick one', question: 'A or B?', conversation: 'Plugin work', running: true, since: 1 });
+    onMessage({ type: 'draft', key: 'S/4', text: 'B, because' });
+    v.show({ sessionId: 'S', row: '5', question: 'Other?', running: true });
+    v.show({ sessionId: 'S', row: '4', question: 'A or B?', running: true });
+    const shown = posted.filter((m) => m.type === 'show');
+    onMessage({ type: 'send', key: 'S/4', text: 'B, because it is smaller' });
+    onMessage({ type: 'send', key: 'S/5', text: 'not the one shown' });
+    v.setState('S/4', { kind: 'sent' });
+    const last = posted.filter((m) => m.type === 'show').pop();
+    v.show({ sessionId: 'T', row: '1', question: 'Q?', running: false });
+    onMessage({ type: 'send', key: 'T/1', text: 'cannot' });
+    if (/Content-Security-Policy/.test(html) && /script-src 'nonce-/.test(html) && /<textarea/.test(html)
+      && shown[0].row === 'Row 4: Pick one · asked 3m ago' && shown[0].focus === true
+      && shown[2].draft === 'B, because' && JSON.stringify(sent) === JSON.stringify([['S/4', 'B, because it is smaller']])
+      && posted.some((m) => m.type === 'clear' && m.key === 'S/4') && last.status === 'Sent at 19:52.' && last.draft === '') {
+      ok('the Answer view keeps a draft per question, sends only the question shown, and clears the box once sent');
+    } else bad(`answer view: ${JSON.stringify({ shown: shown.map((m) => [m.row, m.draft]), sent, last })}`);
+  }
+
+  /* In a browser, against an input built like Claude Code's: an editable box whose Enter sends, or with Ctrl+Enter
+     only when set so, and Shift+Enter a new line. The script under test is the one that ships. */
+  {
+    const harness = require('./page-harness');
+    const browser = harness.findBrowser();
+    if (!browser) {
+      if (process.env.CCE_REQUIRE_BROWSER) bad('no Chrome or Chromium found, and this run requires one (CCE_REQUIRE_BROWSER)');
+      else note('skipped: no Chrome or Chromium here for the answer test');
+    } else {
+      const mark = ['CCE', 'ANSWER:'].join('-');
+      const html = '<!doctype html><html><body><pre id="out"></pre>'
+        + '<div id="box" role="textbox" aria-label="Message input" contenteditable="plaintext-only"></div><script>'
+        + 'var posted = [], sent = [], ctrlOnly = false, deaf = false, leftover = null;'
+        + 'window.acquireVsCodeApi = function(){ return { postMessage: function(m){ posted.push(m); } }; };'
+        + 'document.getElementById("box").addEventListener("keydown", function(e){'
+        + '  if (deaf || e.key !== "Enter" || e.shiftKey) return;'
+        + '  if (ctrlOnly && !(e.ctrlKey || e.metaKey)) return;'
+        + '  e.preventDefault(); sent.push(this.innerText); this.textContent = ""; });'
+        + '</script><script>' + require('../src/webview').SCRIPT + '</script><script>'
+        + 'var host = function(text, id){ window.postMessage({ type: "from-extension", message: { type: "cce_answer", sessionId: "S", text: text, id: id } }, "*"); };'
+        + 'setTimeout(function(){ host("Row 1, my answer:\\nline two", "a1"); }, 2500);'
+        + 'setTimeout(function(){ document.getElementById("box").textContent = "mine"; host("not now", "a2"); }, 4500);'
+        + 'setTimeout(function(){ document.getElementById("box").textContent = ""; ctrlOnly = true; host("with ctrl", "a3"); }, 6500);'
+        + 'setTimeout(function(){ deaf = true; host("ignored", "a4"); }, 8500);'
+        + 'setTimeout(function(){ var b = document.getElementById("box"); leftover = b.textContent; b.remove(); host("nowhere", "a5");'
+        + '  setTimeout(function(){ document.getElementById("out").textContent = "' + mark + '" + JSON.stringify({ posted: posted, sent: sent, leftover: leftover }); }, 1500); }, 10500);'
+        + '</script></body></html>';
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-answer-page-'));
+      const file = path.join(dir, 'panel.html');
+      fs.writeFileSync(file, html);
+      const r = cp.spawnSync(browser, ['--headless=new', '--no-sandbox', '--disable-gpu', '--virtual-time-budget=16000', '--dump-dom',
+        'file://' + file], { encoding: 'utf8', timeout: 120000 });
+      fs.rmSync(dir, { recursive: true, force: true });
+      const at = (r.stdout || '').indexOf(mark);
+      let got = null;
+      try {
+        got = JSON.parse(r.stdout.slice(at + mark.length, r.stdout.indexOf('<', at)).replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&').replace(/&quot;/g, '"'));
+      } catch (_) { got = null; }
+      const results = got ? got.posted.filter((m) => m.type === 'cce_answer_result').map((m) => [m.id, m.sent, m.reason]) : [];
+      if (got && JSON.stringify(results) === JSON.stringify([['a1', true, ''], ['a2', false, 'draft'], ['a3', true, ''],
+        ['a4', false, 'left-in-input'], ['a5', false, 'no-input']]) && got.leftover === ''
+        && got.sent.length === 2 && got.sent[0].replace(/\s+/g, ' ').trim() === 'Row 1, my answer: line two' && got.sent[1].trim() === 'with ctrl') {
+        ok('in a browser the panel types an answer into an empty input and sends it, Ctrl+Enter mode included, leaves text of yours alone, and takes back one it could not send');
+      } else bad(`answer in the page: ${at === -1 ? 'no result (exit ' + r.status + ')' : JSON.stringify(got)}`);
+    }
+  }
+
+  {
+    const pkg = require('../package.json');
+    const views = pkg.contributes.views.claudeCodeConversations || [];
+    const answer = views.find((x) => x.id === 'claudeCodeExtras.answer');
+    if (answer && answer.type === 'webview' && answer.when === views[0].when && views[0].id === 'claudeCodeExtras.conversations') {
+      ok('the Answer view sits beside the Conversations tree in the same panel tab, shown and hidden with it');
+    } else bad(`answer view manifest ${JSON.stringify(views)}`);
   }
 }
 

@@ -21,6 +21,8 @@
 - `src/waiting.js` lists the running conversations with `claude agents --json`, merged by session, and reads their plans' questions.
 - `src/conversations.js` puts together the Conversations tab: each conversation's state, questions and `doing` rows.
 - `src/conversations-view.js` draws that tab; `src/conversations-text.js` and `src/l10n/` hold its words in each language.
+- `src/answer-view.js` is the Answer view beside it. `src/answers.js` carries an answer to the window showing its conversation,
+  through a folder all windows on the machine read, and `src/page/91-answer.js` types it into that conversation's input.
 - `build/plan-health.js` counts how current the plans on this machine are: stale `doing` rows, `waiting` rows that name nobody.
 - `src/python-runtime.js` downloads Python from python.org for a Windows machine that has none.
 - `claude-plugin/` holds the companion plugin: the skill that maintains a plan and the hooks that keep it honest.
