@@ -3,7 +3,8 @@
 # Copyright (c) 2026, Xnerv Wang
 # All rights reserved.
 
-"""Refuse a write to the work plan that carries a description longer than the view will show.
+"""Refuse a write to the work plan that carries a description longer than the view will show, or a question that asks
+more than one thing.
 
 The limit itself is explained in the skill: a description is what the next person needs in order to pick the task up,
 not the story of how the task got there, and given room the story is what gets written. Until now the limit lived in two
@@ -28,23 +29,29 @@ sys.dont_write_bytecode = True
 # The script's folder on the import path: see inject-work-plan.py.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, PLAN_NAME, data_dir, settings
+from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, PLAN_NAME, data_dir, questions_in, settings
 from plan_path import detail_over as over
 
 # Enough of a title to recognise the row by; a rejection has to say which description, not merely that there was one.
 TITLE_SHOWN = 60
 
 
+def several(question):
+    n = questions_in(question) if isinstance(question, str) else 0
+    return "%d questions in one" % n if n > 1 else ""
+
+
 def walk(nodes, found, depth=0):
-    """Every description in the tree that breaks the limit, as (title, how)."""
+    """(title, how) for every row whose description is too long or whose question has several question marks."""
     if depth > 16 or not isinstance(nodes, list):
         return
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        how = over(node.get("detail") or "")
-        if how:
-            found.append((str(node.get("title") or "(untitled)")[:TITLE_SHOWN], how))
+        title = str(node.get("title") or "(untitled)")[:TITLE_SHOWN]
+        for how in (over(node.get("detail") or ""), several(node.get("question"))):
+            if how:
+                found.append((title, how))
         walk(node.get("children"), found, depth + 1)
 
 
@@ -73,13 +80,14 @@ def from_fragment(body):
     here even though the document around it is not; what is lost is the title next to it, hence the placeholder.
     """
     found = []
-    for raw in re.findall(r'"detail"\s*:\s*("(?:[^"\\]|\\.)*")', body):
-        try:
-            how = over(json.loads(raw))
-        except Exception:
-            continue
-        if how:
-            found.append(("(a row in this edit)", how))
+    for key, rule in (("detail", over), ("question", several)):
+        for raw in re.findall(r'"%s"\s*:\s*("(?:[^"\\]|\\.)*")' % key, body):
+            try:
+                how = rule(json.loads(raw))
+            except Exception:
+                continue
+            if how:
+                found.append(("(a row in this edit)", how))
     return found
 
 
@@ -167,15 +175,22 @@ def main():
     rows = "\n".join("  - %s  (%s)" % (title, how) for title, how in found[:8])
     if len(found) > 8:
         rows += "\n  - ... and %d more" % (len(found) - 8)
+    asks = any(how.endswith("questions in one") for _, how in found)
+    long_ = any(not how.endswith("questions in one") for _, how in found)
+    reason = "These rows break the work plan's limits:\n%s\n\n" % rows
+    if long_:
+        reason += ("A description is limited to %d lines and %d characters, and the view cuts it there. It is what "
+                   "the next person needs in order to pick the task up - the user's own words, what is already "
+                   "settled, the trap to avoid - not how the task got here. The reasoning belongs in the commit "
+                   "message, a rule that came out of it in that rule, a measurement where the measurement lives. "
+                   % (MAX_DETAIL_LINES, MAX_DETAIL_CHARS))
+    if asks:
+        reason += ("Each question needs a row of its own: keep one here and move the others to new rows under this "
+                   "one, waiting on the user. ")
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": payload.get("hook_event_name", "PreToolUse"),
         "permissionDecision": "deny",
-        "permissionDecisionReason": (
-            "A work plan description is limited to %d lines and %d characters, and the view cuts it there. These are "
-            "over:\n%s\n\nShorten them and write again. A description is what the next person needs in order to pick "
-            "the task up - the user's own words, what is already settled, the trap to avoid - not how the task got "
-            "here. The reasoning belongs in the commit message, a rule that came out of it in that rule, a "
-            "measurement where the measurement lives." % (MAX_DETAIL_LINES, MAX_DETAIL_CHARS, rows)),
+        "permissionDecisionReason": reason + "Then write again.",
     }}))
     return 0
 

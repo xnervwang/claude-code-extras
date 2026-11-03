@@ -32,7 +32,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from plan_path import (CLOSED_STATES, HELD_STATES, MAX_DETAIL_CHARS, MAX_DETAIL_LINES, MAX_QUESTION_CHARS, PLAN_NAME,
-                       STATES, WAITING_ON, detail_over, now_stamp, plan_lock, settings, write_atomic)
+                       STATES, WAITING_ON, detail_over, now_stamp, plan_lock, questions_in, settings, write_atomic)
 
 
 class Refused(Exception):
@@ -121,6 +121,10 @@ def hold(node, changed, who, question):
         if len(asked) > MAX_QUESTION_CHARS:
             raise Refused("That question is %d characters; keep it to one sentence of at most %d that the user can answer "
                           "as it stands. Anything longer belongs in --detail." % (len(asked), MAX_QUESTION_CHARS))
+        if questions_in(asked) > 1:
+            raise Refused("That has %d question marks; a row carries one question. Keep one here and add a row under "
+                          "this one for each of the others: add waiting TITLE --under ROW --waiting-on user --question "
+                          "TEXT." % questions_in(asked))
         if asked:
             node["question"] = asked
         else:

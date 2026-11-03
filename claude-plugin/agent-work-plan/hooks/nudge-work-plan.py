@@ -58,8 +58,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from changes import changes
-from plan_path import (NUDGED_SUFFIX, OFFERED_SUFFIX, epoch, open_tail, plan_file, settings, side_file, turn_began,
-                       write_quietly)
+from plan_path import (NUDGED_SUFFIX, OFFERED_SUFFIX, SETTLED_SUFFIX, children, epoch, listed, open_tail, plan_file,
+                       row_command, settings, side_file, turn_began, write_quietly)
 
 # Every threshold this uses is in plan_path.DEFAULTS, where the editor's settings can override it.
 
@@ -203,6 +203,52 @@ def said_already(path, touched):
     return False
 
 
+def doing_rows(nodes, prefix=""):
+    """The plan's `doing` rows at any depth, as (number, title, since)."""
+    out = []
+    for i, node in enumerate(listed(nodes)):
+        if not isinstance(node, dict):
+            continue
+        num = (prefix + "." if prefix else "") + str(i + 1)
+        if node.get("state") == "doing":
+            out.append((num, str(node.get("title") or ""), str(node.get("since") or "")))
+        out.extend(doing_rows(children(node), num))
+    return out
+
+
+def settle(payload, path):
+    """One reminder per set of rows still `doing` at the end of a turn; none when this Stop follows one that kept the
+    turn going (stop_hook_active)."""
+    if payload.get("stop_hook_active"):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            plan = json.load(fh)
+    except Exception:
+        return None
+    rows = doing_rows(plan.get("nodes") if isinstance(plan, dict) else None)
+    if not rows:
+        return None
+    seen = repr(sorted(rows))
+    marker = side_file(path, SETTLED_SUFFIX)
+    try:
+        with open(marker, encoding="utf-8") as fh:
+            if fh.read().strip() == seen:
+                return None
+    except Exception:
+        pass
+    # If the marker cannot be written, say nothing; otherwise this would repeat at the end of every turn.
+    if not write_quietly(marker, seen):
+        return None
+    shown = "; ".join("%s. %s" % (num, title[:60]) for num, title, _ in rows[:6]) + ("; ..." if len(rows) > 6 else "")
+    return ("This turn is ending with %d row%s still `doing`: %s. `doing` is shown as work in progress, so move each one "
+            "on now: `done` if finished; `waiting` with --waiting-on (and --question for the user) if it waits on someone; "
+            "or keep it `doing` and say in --note what is still running for it. To change a row: %s set <row> <state> "
+            "[--note TEXT] "
+            "[--waiting-on WHO] [--question TEXT]. You will not be asked about these rows again."
+            % (len(rows), "" if len(rows) == 1 else "s", shown, row_command(path)))
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -225,26 +271,31 @@ def main():
         if started is None:
             return 0
         return offer_once(payload, path, tools, turns, limits)
+    texts = [t for t in (reconcile(payload, path, tail, limits), settle(payload, path)) if t]
+    return speak(payload, "\n\n".join(texts)) if texts else 0
+
+
+def reconcile(payload, path, tail, limits):
     started, tools, changes, turns, reached = turn_shape(tail, path, turn_began(path, payload))
     if started is None:
-        return 0
+        return None
     if changes < limits["nudgeMinChanges"]:
-        return 0
+        return None
     # Reading the plan settles it as much as writing does. Reconciling begins by looking, and a turn that looked and
     # found nothing owed has reconciled - there is nothing else it could do. Without this the reminder had no way to
     # be answered: reading leaves no mark on the file, so it repeated on every working turn for the rest of a
     # conversation whose plan was already correct, which is precisely how a reminder stops being read.
     if reached:
-        return 0
+        return None
     try:
         touched = os.stat(path).st_mtime
     except Exception:
-        return 0
+        return None
     if touched >= started:
-        return 0
+        return None
     if said_already(path, touched):
-        return 0
-    return speak(payload, (
+        return None
+    return ((
         "This turn changed %d things and neither read nor updated the work plan (%s). Reconcile it before finishing: "
         "add what this turn opened, close what it finished, and leave the rest alone. Reading it and finding nothing "
         "owed is a complete answer, but read it in the turn so this can tell. Only the user's word moves a row to "

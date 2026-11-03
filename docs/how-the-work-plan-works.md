@@ -9,20 +9,20 @@ The extension registers a Claude Code plugin the first time it activates. Its `m
 | `UserPromptSubmit` | Puts up to 40 open rows in front of Claude. A finished row stays when a row under it is open; each `doing` or `waiting` row says how long it has been in that state. A `waiting` row also says who it waits on, or `on ?` when the row does not name anyone, and the question it asks when it waits on you. A closing line counts the rows that show `on ?`. Includes the two command lines for changing and adding rows. Says nothing without a plan. |
 | `PostToolBatch` | Once per turn, reminds Claude to mark the row it is working on if no row is `doing` and the main thread has made at least three tool calls or changed at least two things besides the plan. Also checks context size. |
 | `PostToolBatch` and `Stop` | Read context size from the transcript. At 170k, 180k or 195k tokens in a 200K window, or 960k, 970k or 995k in a 1M window, ask Claude to write the exact next step, what not to do and anything you said that is written nowhere else into every `doing` row. Repeat at the end of each turn while context stays above the mark and the plan has not been written. The marks move down when `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` lowers the compaction line. |
-| `Stop` | At the end of a turn that changed at least two things without touching the plan, says so once for a plan in that state. Without a plan, says once that it could keep one after you have sent at least 3 messages and a turn made at least 25 tool calls. |
+| `Stop` | At the end of a turn that changed at least two things without touching the plan, says so once for a plan in that state. If the turn leaves rows `doing`, asks once to move each on: to `done`, to `waiting` with who it waits on, or to stay `doing` with a note on what is still running. It asks once for a given set of rows. Without a plan, says once that it could keep one after you have sent at least 3 messages and a turn made at least 25 tool calls. |
 | `SessionStart` after compaction | Tells Claude that context is at its smallest, gives the plan file's path and asks it to read the file before anything else. |
 | `UserPromptSubmit`, and `SessionStart` after compaction | When the time zone the panel reported differs from this machine's, tells Claude the user's zone, its offset and the time there, and that `date`, file times and log lines here are in the machine's zone. Said on a conversation's first message and after every compaction, then again only when either side's date turns over, the offset changes, or the context has grown by 100k tokens since; what was said last is kept in `<session ID>.tz`. Says nothing when the zones agree or `claudeCodeWorkPlan.tellClaudeYourTimeZone` is off. |
-| `PreToolUse` on file writes and edits | Refuses a write to a plan file when a row's description exceeds what the view shows: 12 lines or 900 characters. |
+| `PreToolUse` on file writes and edits | Refuses a write to a plan file when a row's description exceeds what the view shows: 12 lines or 900 characters. Also refuses a question with more than one question mark. |
 
 `claudeCodeWorkPlan.workPlanQuietWhenReplyMatches` silences only the compaction prompts: the context-size hook and the two `SessionStart` hooks.
 
 ## Changing a row
 
-Claude uses `plan-row.py`, a small command shipped with the plugin, to add rows and to set a row's state, note, description, who it waits on and its question. It refuses a move to `waiting` that does not name who the row waits on, and a row waiting on you that has no question. The command reads the time from the clock itself. You can edit the file by hand too.
+Claude uses `plan-row.py`, a small command shipped with the plugin, to add rows and to set a row's state, note, description, who it waits on and its question. It refuses a move to `waiting` that does not name who the row waits on or a row waiting on you that has no question. A question may hold only one question mark. Several questions go on separate rows under the row they belong to. The command reads the time from the clock itself. You can edit the file by hand too.
 
 ## The view
 
-Rows that are not finished come first. The view counts `discussing` and `todo` rows beside its title. With Waiting on you turned off, that count is the activity-bar badge instead, which disappears when there are none. Row times use the time zone in which the Claude Code panel runs.
+Rows that are not finished come first. The view counts `discussing` and `todo` rows of the plan it shows on its activity-bar icon; the number disappears when there are none. Row times use the time zone in which the Claude Code panel runs. The Conversations tab is described in the README.
 
 ## Files and cleanup
 

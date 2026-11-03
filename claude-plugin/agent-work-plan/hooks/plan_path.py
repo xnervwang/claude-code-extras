@@ -38,6 +38,12 @@ HELD_STATES = ("waiting", "discussing")
 # A row waiting on the user carries the one question they have to answer, in `question`, on one line. Long enough for
 # a real question and short enough to read in a list of them across conversations.
 MAX_QUESTION_CHARS = 200
+# A row carries one question; questions_in counts question marks, ASCII or full-width.
+QUESTION_MARK = re.compile(u"[?\uff1f]")
+
+
+def questions_in(text):
+    return len(QUESTION_MARK.findall(text or ""))
 
 
 def data_dir():
@@ -308,6 +314,7 @@ PLAN_NAME = re.compile(r"^%s\.json$" % SESSION_ID)
 
 TURN_SUFFIX = ".turn"            # the turn now running (see below)
 NUDGED_SUFFIX = ".nudged"        # what the end-of-turn reminder last spoke about (nudge-work-plan.py)
+SETTLED_SUFFIX = ".settled"      # which `doing` rows the end of a turn last asked to move on (nudge-work-plan.py)
 OFFERED_SUFFIX = ".offered"      # that a conversation with no plan was offered one (nudge-work-plan.py)
 WATERMARK_SUFFIX = ".watermark"  # which context marks have asked (refresh-work-plan.py)
 TOLD_SUFFIX = ".tz"              # what the user's time zone was last told as (tell-time-zone.py)

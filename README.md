@@ -4,7 +4,7 @@ Claude can lose track of unfinished work when you switch topics before the work 
 
 The plan is stored in a file outside the conversation, and Claude gets its open rows every turn. Claude is asked to bring the rows it is working on up to date before automatic compaction and, after compaction, to read the plan file before anything else. You see the plan in its own view next to the Claude Code panel. You answer by row number and can settle several rows in one message, like "2.1: not now". Rows Claude proposes on its own start as `discussing` and become `todo` only when you agree.
 
-Above the work plan, Waiting on you lists every permission prompt and plan question in this workspace.
+The Conversations tab shows running conversations, their plan questions and the rows they are working on in this window's workspace.
 
 Requires Anthropic's Claude Code extension and VS Code 1.94 or later. The work plan also needs Python 3.7 or later. On Windows without Python, the extension offers to download it from python.org (11 MB).
 
@@ -63,22 +63,27 @@ Claude writes the file through a small command shipped with the plugin. To corre
 
 See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, thresholds and measurements.
 
-### Waiting on you
+### Conversations
 
-Waiting on you sits above the work plan in the same sidebar. Only conversations from this workspace appear, subfolders included:
+Conversations is a tab in VS Code's panel, where the Terminal lives. VS Code keeps one tab per window, and you can drag it elsewhere like any view. Open it from the status bar, the work plan view's title-bar button, or the command "Work Plan for Claude Code: Show Conversations".
 
-- Conversations Claude Code reports as waiting, such as at a permission prompt.
-- Work plan rows waiting on you, with their questions.
+The tab lists running conversations started in this window's workspace folders or folders under them. It does not list sessions started with `claude --bg`. Below the running conversations, a collapsed "Not running, with open rows" group holds stopped conversations whose plans were written in the last 7 days and still have open rows.
 
-`claude --bg` sessions are left out.
+Each conversation has one row, titled as in Claude Code's session list. Its icon and first word show its state:
 
-A `discussing` row also appears if Claude has asked you to decide and the row has a question.
+- At a permission prompt
+- Needs you (its plan asks a question)
+- Working (a turn is running)
+- Replied, not read
+- Idle
 
-Each conversation has one row, titled as in Claude Code's session list. Its waits appear beneath it with elapsed times such as `3h`. Permission prompts come first. Waits older than 7 days go into a collapsed "Waiting over 7 days" group at the bottom.
+The rest of the row shows its question and open-row counts, or "no work plan". These states come from Claude Code, not the plan. Under the conversation are its questions, each numbered as in the plan and showing how long ago it was asked. Its `doing` rows follow, with how long they have been `doing`. When the conversation is idle, a `doing` row says so, for example "doing (conversation idle 3h)".
 
-Clicking a row goes to its conversation if it is open in this window. If it is open in another window or running outside VS Code, the extension says where it is instead of opening it a second time.
+Click a question to open its row details, which include a button to go to the conversation. Click a conversation or a `doing` row to go there if it is open in this window. If it is open in another window or running outside VS Code, the extension says where it is instead. The list of running conversations comes from `claude agents --json` every 30 seconds. Changes to conversations open in this window, and changes to plans, appear at once.
 
-The list of running conversations comes from `claude agents --json` and refreshes every 30 seconds. A work plan change appears at once. While the view is on, the sidebar icon counts waits under 7 days old. The work plan's count of open rows appears next to the work plan view's title. Rows written before this version say who they wait on only in their note: the work plan view shows them as waiting on "unknown", and Waiting on you does not list them.
+When running conversations' plans ask N questions, the status bar shows "N to decide" on a warning background. Otherwise it shows "Conversations M", where M is the number of running conversations. The tab's badge also counts those questions. The work plan view's activity-bar icon counts the `discussing` and `todo` rows in the plan it shows; the number disappears when there are none.
+
+The tab follows VS Code's display language when it is English or Simplified Chinese, and uses English otherwise; `claudeCodeWorkPlan.conversationsLanguage` overrides this. Row titles, questions and state names such as `doing` appear as written. Rows written before version 1.0.19 name who they wait on only in their note. The work plan view shows them as waiting on "unknown", and Conversations does not list them as questions.
 
 ## Install
 
@@ -129,14 +134,15 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 37 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 38 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `claudeCodeWorkPlan.workPlan` | on | Off removes the view, adds nothing about the plan to turns, and refuses writes to plan files. |
-| `claudeCodeWorkPlan.waitingOnYou` | on | Off removes Waiting on you and puts the work plan's count of open rows back on the sidebar icon. |
+| `claudeCodeWorkPlan.conversations` | on | Off removes the Conversations tab and its status bar entry. |
+| `claudeCodeWorkPlan.conversationsLanguage` | auto | Set the Conversations tab's language to `auto`, `en` or `zh-cn`. `auto` follows VS Code's display language for English and Simplified Chinese, and uses English otherwise; row titles, questions and state names such as `doing` remain as written. |
 | `claudeCodeWorkPlan.workPlanOfferMinTurns` | 3 | Messages you must have sent before a conversation without a plan is offered one. |
 | `claudeCodeWorkPlan.workPlanOfferMinToolCalls` | 25 | Tool calls one turn must make before that offer. |
 | `claudeCodeWorkPlan.workPlanQuietWhenReplyMatches` | empty | Regular expression tested on the latest reply. A match silences the prompts before and after compaction, for conversations relaying another model's replies word for word. Empty matches nothing. |

@@ -55,13 +55,14 @@ const { DATA_ROOT, PLAN_DIR, planDir, projectsDir, liveSessions } = require('./c
  *   .offered     the Stop hook offered once to start a plan where none existed; otherwise the only trace of a
  *                conversation that declined would accumulate for ever
  *   .nudged      the Stop hook has reminded the conversation to reconcile its plan, so it does not say it again
+ *   .settled     which `doing` rows the Stop hook last asked to move on, so it does not ask about them again
  *   .background  which detached sessions the conversation started (src/background.js)
  *   .turn        which turn the conversation is in and how far it has got, left by the injection hook
  *   .watermark   which context marks have asked it to bring the plan up to date before a compaction
  *   .tz          what the time-zone hook last told it
  *   .effort      where each reply's effort changed (src/efforts.js)
  */
-const SIDE_SUFFIXES = ['.json', '.offered', '.nudged', require('./background').SUFFIX, '.turn', '.watermark', '.tz',
+const SIDE_SUFFIXES = ['.json', '.offered', '.nudged', '.settled', require('./background').SUFFIX, '.turn', '.watermark', '.tz',
   require('./efforts').SUFFIX];
 const SIDE_FILE = new RegExp('^[0-9a-f][0-9a-f-]{7,}(?:' + SIDE_SUFFIXES.map((s) => s.replace('.', '\\.')).join('|') + ')$', 'i');
 const PLAN_FILE = /^[0-9a-f][0-9a-f-]{7,}\.json$/i;

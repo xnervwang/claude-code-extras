@@ -155,11 +155,16 @@ const EDITS = [
    * keeps its conversation loaded, so the host still lists it among the sidebar's; OPEN SESSIONS leaves it out while the
    * sidebar is hidden (src/page/84-open-sessions.js). The state goes out with every update of the open conversations,
    * and the sidebar showing or hiding sends one.
+   *
+   * The same update also reaches this extension: each conversation's state as the host knows it and the replies not read
+   * yet, for the Conversations view. It comes the moment something changes, where `claude agents` is asked every half
+   * minute.
    */
   {
     name: 'session states say whether the sidebar is shown',
     re: /for\(let ([\w$]+) of this\.allComms\)\1\.sendSessionStates\(([^;]*?),\1===([\w$]+)\?void 0:([\w$]+)\)/g,
-    to: (m, c, args, side, ids) => `for(let ${c} of this.allComms)${c}.sendSessionStates(${args},${c}===${side}?void 0:${ids},`
+    to: (m, c, args, side, ids) => `(()=>{try{globalThis.__cceStatesHook&&globalThis.__cceStatesHook(${args})}catch(cceE){}})();`
+      + `for(let ${c} of this.allComms)${c}.sendSessionStates(${args},${c}===${side}?void 0:${ids},`
       + `${side}!==void 0&&[...this.webviews].some((cceV)=>cceV.comms===${side}&&cceV.isVisible()))`,
   },
   {

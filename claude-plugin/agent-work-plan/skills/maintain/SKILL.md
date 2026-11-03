@@ -144,8 +144,12 @@ they can answer as it stands, without scrolling back through this conversation. 
 confirmation" and "See above" cannot. It is in the conversation's language, like the title, and at most 200 characters
 on one line; anything longer belongs in `detail`.
 
-These are fields rather than words in `note` because the extension lists, across every open conversation, what is
-waiting on the user, and it builds that list from these two fields only. Nothing reads `note` for it: a guess from free
+**One question to a row.** If the user has three things to decide, add three rows under the row they belong to, each
+waiting on the user with one question. The user can then answer each by its number. A question with more than one
+question mark is refused.
+
+These are fields rather than words in `note` because the extension's Conversations tab lists, for each conversation of
+the workspace, what waits on the user, and it builds that list from these two fields only. Nothing reads `note` for it: a guess from free
 text would get the list wrong. So a row with no
 `waitingOn` is shown as waiting on someone unknown and is not listed, and one with `user` but no answerable question
 gives the user nothing to act on.
@@ -201,6 +205,7 @@ undo.
 | An agreed, started row is held up by someone or something outside this conversation | Move it to `waiting` when that happens, with `--waiting-on`, and `--question` when it waits on the user |
 | You put a decision on a `discussing` row to the user and cannot go on without it | Give it `--waiting-on user` and the `--question` you asked |
 | You pick up a `waiting` row again | Move it to `doing` when you resume work |
+| The turn is ending and a row is still `doing` | Move it on: `done`, `waiting` with who it waits on, or keep it `doing` with a note saying what is still running for it |
 | The work is finished, or the user says it is | Move it to `done` and set `closed` |
 | The user decides against it | Move it to `dropped` and set `closed`, with the reason in `detail` |
 | Doing A turns out to need B finished first | Add B as a child of A, with its own `opened` |
@@ -232,6 +237,9 @@ it. After each batch of tool calls, a hook can remind the main thread to mark th
 per turn when the turn has made at least three tool calls or changed at least two things besides the plan, and no row is
 `doing`. Reading counts, because looking into something is work to mark; writing the plan does not excuse a turn that
 still has nothing `doing`. It refuses nothing.
+
+When a turn ends with rows still `doing`, the Stop hook asks once to move them on, and not again about the same rows:
+beside the conversation, `doing` means being worked on now.
 
 **For other changes, do it before writing the last paragraph of the turn**, not after. Once the closing summary is written the turn feels
 finished and the plan is what gets left out; and the turn that most needed recording is the one that wandered furthest,

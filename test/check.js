@@ -2013,7 +2013,10 @@ if (explicit.length) {
 
    Content is exempt by construction rather than by rule: a work plan's own words live in a file this extension only
    reads, so they never enter these files. The scan covers what build/pack.sh copies and nothing else - test/ is not
-   shipped, and its fixtures carry non-ASCII on purpose to prove the encoding survives a round trip. */
+   shipped, and its fixtures carry non-ASCII on purpose to prove the encoding survives a round trip.
+
+   Translations are the one place another language belongs, and they are kept where the scan can tell them apart:
+   package.nls.<language>.json and src/l10n/. Each must carry exactly the entries its English does. */
 console.log('\nshipped text');
 {
   const CJK = /[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯！-｠]/;
@@ -2026,17 +2029,31 @@ console.log('\nshipped text');
   if (!line) bad('build/pack.sh no longer has a recognisable copy line, so what ships cannot be determined');
   else {
     const walk = (rel) => {
+      if (rel.includes('*')) {
+        const glob = new RegExp('^' + rel.replace(/[.]/g, '\\.').replace(/\*/g, '[^/]*') + '$');
+        return fs.readdirSync(root).filter((f) => glob.test(f)).sort().flatMap(walk);
+      }
       if (!fs.statSync(path.join(root, rel)).isDirectory()) return TEXT.test(rel) ? [rel] : [];
       return fs.readdirSync(path.join(root, rel)).sort().flatMap((f) => walk(path.join(rel, f)));
     };
+    const TRANSLATION = /^(package\.nls\.[a-z]{2}(-[a-z]+)?\.json|src\/l10n\/.+)$/i;
     const files = line.trim().split(/\s+/).flatMap(walk);
     const hits = [];
-    for (const rel of files) {
+    for (const rel of files.filter((f) => !TRANSLATION.test(f.split(path.sep).join('/')))) {
       fs.readFileSync(path.join(root, rel), 'utf8').split('\n')
         .forEach((l, i) => { if (CJK.test(l)) hits.push(`${rel}:${i + 1}`); });
     }
-    if (!hits.length) ok(`no CJK in any of the ${files.length} text files build/pack.sh ships`);
+    if (!hits.length) ok(`no CJK in any of the ${files.length} text files build/pack.sh ships, translations aside`);
     else bad(`shipped files carry CJK, which reaches whoever installs this: ${hits.slice(0, 8).join(', ')}`);
+    const shape = (o) => Object.keys(o).sort().map((k) => (o[k] && typeof o[k] === 'object' ? k + '{' + shape(o[k]) + '}' : k)).join();
+    const nls = JSON.parse(fs.readFileSync(path.join(root, 'package.nls.json'), 'utf8'));
+    const nlsZh = JSON.parse(fs.readFileSync(path.join(root, 'package.nls.zh-cn.json'), 'utf8'));
+    const text = require('../src/conversations-text').TEXT;
+    const used = (fs.readFileSync(path.join(root, 'package.json'), 'utf8').match(/"%([\w.]+)%"/g) || []).map((k) => k.slice(2, -2));
+    if (shape(nls) === shape(nlsZh) && shape(text.en) === shape(text['zh-cn']) && used.every((k) => k in nls)
+      && Object.keys(nls).every((k) => used.includes(k))) {
+      ok('each translation carries exactly the entries of its English, and every label the manifest names has one');
+    } else bad(`translation entries: nls ${shape(nls)} / ${shape(nlsZh)}, view ${shape(text.en)} / ${shape(text['zh-cn'])}, used ${used}`);
   }
 
   /* Commit messages are not in the .vsix, so the scan above never sees them - and they travel anyway, because history
@@ -3353,6 +3370,47 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
     if (decision === 'deny' && denied.includes('switched off')) ok('off: a write to a plan is refused, and says why');
     else bad(`off: the guard said ${JSON.stringify(denied.slice(0, 80))}`);
 
+    /* A turn that ends with rows still `doing` is asked once to move them on; the same rows again, or a Stop that
+       follows one that kept the turn going, say nothing. */
+    {
+      const d = stage(true);
+      const planPath = path.join(d.dir, session + '.json');
+      const writePlan = (nodes) => fs.writeFileSync(planPath, JSON.stringify({ nodes }));
+      const stop = (extra) => run('nudge-work-plan.py', d.dir,
+        Object.assign({ session_id: session, transcript_path: d.transcript, hook_event_name: 'Stop' }, extra || {}));
+      const text = (out) => { try { return JSON.parse(out).hookSpecificOutput.additionalContext; } catch (_) { return ''; } };
+      writePlan([{ title: 'ship', state: 'todo', children: [{ title: 'build it', state: 'doing', since: '2026-11-01T00:00:00Z' }] }]);
+      const back = (Date.now() - 3600e3) / 1000;
+      fs.utimesSync(planPath, back, back);
+      const first = text(stop()), again = text(stop());
+      writePlan([{ title: 'ship', state: 'doing', since: '2026-11-02T00:00:00Z' }]);
+      const looped = text(stop({ stop_hook_active: true }));
+      writePlan([{ title: 'ship', state: 'done' }]);
+      const none = text(stop());
+      if (first.includes('1 row still `doing`: 1.1. build it') && first.includes('plan-row.py') && first.includes('neither read nor updated')
+        && !again.includes('still `doing`') && !looped.includes('still `doing`') && !none.includes('still `doing`')) {
+        ok('the end of a turn asks once to move on the rows it leaves doing, beside the reconcile reminder, and not in a loop');
+      } else bad(`settle: first ${JSON.stringify(first.slice(0, 160))}, again ${JSON.stringify(again.slice(0, 80))}, looped ${JSON.stringify(looped.slice(0, 80))}`);
+      fs.rmSync(d.dir, { recursive: true, force: true });
+    }
+
+    /* Switched on, a direct write gets the same limits as the row command: one question to a row, and a description
+       the view can show whole. */
+    const on = stage(true);
+    const write = (nodes) => run('guard-work-plan.py', on.dir, {
+      tool_name: 'Write', hook_event_name: 'PreToolUse',
+      tool_input: { file_path: path.join(on.dir, session + '.json'), content: JSON.stringify({ nodes }) },
+    });
+    const two = write([{ title: 'ask', state: 'waiting', waitingOn: 'user', question: 'Ship it? Tag it?' }]);
+    const one = write([{ title: 'ask', state: 'waiting', waitingOn: 'user', question: 'Ship it now?' }]);
+    const long = write([{ title: 'long', state: 'todo', detail: 'x'.repeat(901) }]);
+    const says = (out, what) => { try { const o = JSON.parse(out).hookSpecificOutput; return o.permissionDecision === 'deny' && o.permissionDecisionReason.includes(what); } catch (_) { return false; } };
+    if (says(two, 'Each question needs a row of its own') && says(two, '2 questions in one') && !one && says(long, 'limited to 12 lines')
+      && !says(long, 'needs a row of its own')) {
+      ok('a direct write is refused for a row that asks several questions, as for an over-long description, and each says why');
+    } else bad(`guard: two ${JSON.stringify(two.slice(0, 120))}, one ${JSON.stringify(one)}, long ${JSON.stringify(long.slice(0, 120))}`);
+    fs.rmSync(on.dir, { recursive: true, force: true });
+
     /* A write somewhere else is none of this plugin's business, switched off or on. */
     const other = run('guard-work-plan.py', t.dir, {
       tool_name: 'Write', hook_event_name: 'PreToolUse',
@@ -3814,6 +3872,8 @@ console.log('\nthe row command');
       ['a party that is not one of the five', ['set', '1', 'waiting', '--waiting-on', 'robots']],
       ['a question for anyone but the user', ['set', '1', 'waiting', '--waiting-on', 'build', '--question', 'x']],
       ['a question past the limit', ['set', '1', 'waiting', '--waiting-on', 'user', '--question', 'q'.repeat(201)]],
+      ['a question that asks two things', ['set', '1', 'waiting', '--waiting-on', 'user', '--question', 'Ship it? Tag it too?']],
+      ['two questions with full-width marks', ['set', '1', 'waiting', '--waiting-on', 'user', '--question', '发吗？打标签吗？']],
       ['a todo row waiting on someone', ['set', '1', '--waiting-on', 'user', '--question', 'x']],
       ['a discussing row waiting on a build', ['add', 'discussing', 'z', '--waiting-on', 'build']],
     ];
@@ -4933,6 +4993,7 @@ console.log('\nwhat a tick and a change of setting cost');
       class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
       module.exports = { listeners, values, TreeItem, TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
         ThemeIcon: class {}, ThemeColor: class {}, MarkdownString: class {}, TabInputWebview: class {}, version: '1.120.0',
+        StatusBarAlignment: { Left: 1, Right: 2 }, env: { language: 'en' },
         EventEmitter: class { constructor() { this.event = () => disposable; } fire() {} },
         Uri: { file: (p) => ({ fsPath: p }) }, RelativePattern: class {}, ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
         workspace: { workspaceFolders: [], createFileSystemWatcher: () => ({ onDidCreate() {}, onDidChange() {}, onDidDelete() {}, dispose() {} }),
@@ -4940,6 +5001,7 @@ console.log('\nwhat a tick and a change of setting cost');
           onDidChangeConfiguration: (fn) => { listeners.config.push(fn); return disposable; },
           onDidChangeWorkspaceFolders: () => disposable },
         window: { createOutputChannel: () => ({ appendLine() {}, show() {}, dispose() {} }), createTreeView: () => ({ dispose() {} }),
+          createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
           showInformationMessage: async () => undefined, showWarningMessage: async () => undefined, setStatusBarMessage() {},
           tabGroups: { all: [], activeTabGroup: null }, showTextDocument: async () => {} },
         commands: { registerCommand: () => disposable, executeCommand: async () => {} },
@@ -6734,12 +6796,16 @@ console.log('\nthe patch markers follow the code');
   }
 }
 
-/* ── waiting on you ──
-   The list is built from two fields only: a plan row's waitingOn, and the state Claude Code reports for a session. */
-console.log('\nwaiting on you');
+/* ── conversations ──
+   The Conversations view: this workspace's running conversations from `claude agents --json`, their state as Claude Code
+   reports it, and from each plan only what it is doing and what it asks the user. */
+console.log('\nconversations');
 {
   const w = require('../src/waiting');
-  const DAY = 24 * 3600 * 1000, now = Date.parse('2026-11-01T12:00:00Z');
+  const conv = require('../src/conversations');
+  const ctext = require('../src/conversations-text');
+  /* Ages are drawn against the clock, so the times are set against it too. */
+  const DAY = 24 * 3600 * 1000, now = Date.now();
   const S = (n) => '9' + String(n).padStart(7, '0') + '-0000-0000-0000-000000000000';
 
   if (w.isDefaultName('claude-code-extras-92', '/x/claude-code-extras') && w.isDefaultName('manfredstoredevtool-dev-db', '/a/ManfredStoreDevTool-dev')
@@ -6748,46 +6814,80 @@ console.log('\nwaiting on you');
   } else bad('isDefaultName misjudged a name');
 
   const merged = w.merge([
-    { sessionId: S(1), id: 'aaaa1111', kind: 'interactive', cwd: '/x/claude-code-extras', name: 'claude-code-extras-92', status: 'idle' },
-    { sessionId: S(1), id: 'aaaa1111', kind: 'interactive', cwd: '/x/claude-code-extras', name: 'Release work', status: 'waiting', waitingFor: 'permission prompt' },
-    { sessionId: S(2), id: 'bbbb2222', kind: 'interactive', cwd: '/x/y', name: 'overnight run', status: 'waiting', waitingFor: 'input needed' },
-    { sessionId: S(3), id: 'cccc3333', kind: 'interactive', cwd: '/x/z', name: 'z-1f', status: 'busy' },
+    { sessionId: S(1), id: 'aaaa1111', kind: 'interactive', cwd: '/x/c', name: 'c-92', status: 'idle' },
+    { sessionId: S(1), id: 'aaaa1111', kind: 'interactive', cwd: '/x/c', name: 'Release work', status: 'waiting', waitingFor: 'permission prompt' },
+    { sessionId: S(2), id: 'bbbb2222', kind: 'interactive', cwd: '/x/c', name: 'asks', status: 'idle' },
+    { sessionId: S(3), id: 'cccc3333', kind: 'interactive', cwd: '/x/c', name: 'busy one', status: 'busy' },
+    { sessionId: S(4), id: 'dddd4444', kind: 'interactive', cwd: '/x/c', name: 'unread one', status: 'idle' },
+    { sessionId: S(5), id: 'eeee5555', kind: 'interactive', cwd: '/x/c', name: 'c-5f', status: 'idle' },
     { nope: true },
   ]);
   const one = merged.get(S(1));
-  if (merged.size === 3 && one.processes === 2 && one.name === 'Release work' && one.waitingFor === 'permission prompt') {
-    ok('two processes holding one conversation are one conversation, waiting if either is, under the name somebody gave');
+  if (merged.size === 5 && one.processes === 2 && one.name === 'Release work' && one.waitingFor === 'permission prompt'
+    && merged.get(S(3)).busy === true && merged.get(S(2)).busy === false) {
+    ok('two processes holding one conversation are one conversation, waiting if either is, busy if either is running a turn');
   } else bad(`merged ${JSON.stringify([...merged.values()])}`);
 
   const plans = {
-    [S(1)]: { title: '', nodes: [
-      { title: 'publish', state: 'waiting', since: now - 3600e3, waitingOn: 'user', question: 'Publish 1.0.20 now?', children: [] },
+    [S(2)]: { title: '', nodes: [
+      { title: 'publish', state: 'waiting', since: now - 3600e3, waitingOn: 'user', question: 'Publish 1.0.20 now?', note: 'n', detail: 'd', children: [] },
       { title: 'old style', state: 'waiting', since: now - 7200e3, waitingOn: '', question: '', children: [] },
-      { title: 'parent', state: 'doing', children: [
+      { title: 'parent', state: 'doing', since: now - 7200e3, children: [
         { title: 'pick', state: 'discussing', since: now - 60e3, waitingOn: 'user', question: 'A or B?', children: [] },
       ] },
-      { title: 'built', state: 'waiting', since: now - 60e3, waitingOn: 'build', question: '', children: [] },
+      { title: 'built', state: 'done', children: [] },
     ] },
+    [S(3)]: { title: '', nodes: [{ title: 'build it', state: 'doing', since: now - 600e3, children: [] }] },
   };
-  const since = { [S(1)]: now - 120e3, [S(2)]: now - 30 * DAY };
-  const data = w.collect({
-    sessions: merged, now,
-    readPlan: (id) => plans[id] || null,
-    titles: (sess) => (sess.sessionId === S(2) ? { custom: '', ai: '' } : { custom: '', ai: 'AI title' }),
+  const since = { [S(1)]: now - 120e3, [S(2)]: now - 60e3, [S(3)]: now - 30e3, [S(4)]: now - 3000e3, [S(5)]: now - 9000e3 };
+  const data = conv.build({
+    sessions: merged, now, readPlan: (id) => plans[id] || null,
+    titles: (sess) => ({ custom: '', ai: sess.sessionId === S(5) ? 'AI title' : '' }),
     since: (sess) => since[sess.sessionId] || 0,
+    live: new Map([[S(5), 'running']]), unread: new Set([S(4)]),
   });
-  const g = data.fresh[0];
-  const shape = g && g.items.map((it) => it.kind + ':' + (it.row || '') + ':' + it.text).join('|');
-  if (data.fresh.length === 1 && g.sessionId === S(1) && g.title === 'Release work'
-    && shape === 'prompt::Permission prompt|question:1:Publish 1.0.20 now?|question:3.1:A or B?') {
-    ok('a conversation lists its prompt first, then the plan rows that wait on the user, by number, oldest first');
-  } else bad(`fresh ${JSON.stringify(data.fresh)}`);
-  if (!JSON.stringify(data).includes('old style') && !JSON.stringify(data).includes('built') && !data.fresh.concat(data.stale).some((x) => x.sessionId === S(3))) {
-    ok('a waiting row that does not name the user, one waiting on a build, and a busy conversation are all left out');
-  } else bad('something not waiting on the user was listed');
-  if (data.stale.length === 1 && data.stale[0].sessionId === S(2) && data.stale[0].items[0].text === 'Input needed' && data.count === 3) {
-    ok('a wait over a week old is set apart, and only the newer ones are counted');
-  } else bad(`stale ${JSON.stringify(data.stale)}, count ${data.count}`);
+  const shape = data.running.map((c) => c.sessionId.slice(7, 8) + ':' + c.state).join(' ');
+  const asks = data.running.find((c) => c.sessionId === S(2));
+  if (shape === '1:prompt 2:needs 3:working 5:working 4:unread' && data.asks === 2
+    && asks.questions.map((q) => q.row + ':' + q.question).join('|') === '1:Publish 1.0.20 now?|3.1:A or B?'
+    && asks.doing.map((d) => d.row).join() === '3' && asks.open === 4 && asks.hasPlan
+    && data.running.find((c) => c.sessionId === S(5)).title === 'AI title' && !data.running.find((c) => c.sessionId === S(4)).hasPlan) {
+    ok('each conversation takes its state from Claude Code, needs you when its plan asks something, and sorts by what needs looking at');
+  } else bad(`conversations ${shape}, asks ${data.asks}, ${JSON.stringify(asks)}`);
+
+  {
+    /* Stopped conversations: listed when the plan was written in the last week, still has open rows, and the transcript
+       was started in a workspace folder; never when the conversation is still running. */
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cce-stopped-')));
+    const dir = path.join(root, 'plans'), ws = path.join(root, 'ws'), elsewhere = path.join(root, 'other');
+    for (const d of [dir, ws, elsewhere]) fs.mkdirSync(d);
+    const transcripts = {};
+    const put = (n, cwd, nodes, age) => {
+      fs.writeFileSync(path.join(dir, S(n) + '.json'), JSON.stringify({ nodes }));
+      const back = (Date.now() - age) / 1000;
+      fs.utimesSync(path.join(dir, S(n) + '.json'), back, back);
+      const t = path.join(root, S(n) + '.jsonl');
+      fs.writeFileSync(t, JSON.stringify({ type: 'user', cwd, sessionId: S(n) }) + '\n');
+      transcripts[S(n)] = t;
+    };
+    const openRow = [{ title: 'x', state: 'todo' }];
+    put(21, ws, openRow, DAY);
+    put(22, elsewhere, openRow, DAY);
+    put(23, ws, openRow, 9 * DAY);
+    put(24, ws, [{ title: 'x', state: 'done' }], DAY);
+    put(25, ws, openRow, DAY);
+    const readPlan = (id) => { try { return JSON.parse(fs.readFileSync(path.join(dir, id + '.json'), 'utf8')); } catch (_) { return null; } };
+    const got = conv.stoppedWithOpenRows([ws], new Set([S(25)]), { dir, readPlan, find: (id) => transcripts[id] || '' });
+    if ([...got.keys()].join() === S(21) && conv.transcriptCwd(transcripts[S(21)]) === ws) {
+      ok('a stopped conversation is listed when its plan is recent, has open rows and it was started in this workspace');
+    } else bad(`stopped ${[...got.keys()]}`);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  if (ctext.language('auto', 'zh-cn') === 'zh-cn' && ctext.language('auto', 'zh-tw') === 'en' && ctext.language('auto', 'de') === 'en'
+    && ctext.language('en', 'zh-cn') === 'en' && ctext.language('zh-cn', 'en') === 'zh-cn' && ctext.language('xx', 'en') === 'en') {
+    ok('the view speaks the editor\'s language when it has words for it, and the setting overrides that');
+  } else bad('conversations-text.language chose wrongly');
 
   {
     /* Only this workspace's conversations, by real path, and never a background session. */
@@ -6867,7 +6967,7 @@ console.log('\nwaiting on you');
   }
 
   {
-    const stub = path.join(os.tmpdir(), 'cce-vscode-stub-waiting.js');
+    const stub = path.join(os.tmpdir(), 'cce-vscode-stub-conversations.js');
     fs.writeFileSync(stub, `
       class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
       class MarkdownString { constructor(v) { this.value = v || ''; } appendText(t) { this.value += t; return this; } appendMarkdown(t) { this.value += t; return this; } }
@@ -6882,29 +6982,36 @@ console.log('\nwaiting on you');
     const Module = require('module');
     const realResolve = Module._resolveFilename;
     Module._resolveFilename = function (request, ...rest) { return request === 'vscode' ? stub : realResolve.call(this, request, ...rest); };
-    let WaitingProvider, views;
+    let ConversationsProvider, views;
     try {
       delete require.cache[require.resolve('../src/workplan-view')];
-      delete require.cache[require.resolve('../src/waiting-view')];
-      ({ WaitingProvider } = require('../src/waiting-view'));
+      delete require.cache[require.resolve('../src/conversations-view')];
+      ({ ConversationsProvider } = require('../src/conversations-view'));
       views = require('../src/workplan-view');
     } finally { Module._resolveFilename = realResolve; }
-    const tree = new WaitingProvider();
-    const first = tree.set(data, '', now), again = tree.set(data, '', now);
+    const withStopped = Object.assign({}, data, { stopped: [Object.assign({}, data.running[1], { sessionId: S(9), running: false, state: 'needs' })] });
+    const tree = new ConversationsProvider();
+    const first = tree.set(withStopped, '', 'en', now), again = tree.set(withStopped, '', 'en', now);
     const top = tree.getChildren();
-    const items = tree.getChildren(top[0]).map((e) => tree.getTreeItem(e));
-    const conv = tree.getTreeItem(top[0]);
-    if (first && !again && top.length === 2 && top[1].kind === 'old' && conv.label === 'Release work'
-      && items.map((i) => i.iconPath.id).join() === 'shield,question,question'
-      && items[1].label === '1. Publish 1.0.20 now?' && items[2].label === '3.1. A or B?'
-      && items[0].command.command === 'claudeCodeWorkPlan.openWaitingConversation' && items[0].command.arguments[0].sessionId === S(1)
-      && items.slice(1).every((i) => i.command.command === 'claudeCodeWorkPlan.showWorkPlanDetail'
-        && i.command.arguments[0].open.sessionId === S(1) && /^waiting on you for|^discussing on you/.test(i.command.arguments[0].state))) {
-      ok('Waiting on you numbers a question as the work plan does and opens its row, a prompt goes to the conversation, and old ones are grouped');
-    } else bad(`tree ${JSON.stringify([first, again, top.map((t) => t.kind), conv.label, items.map((i) => i.iconPath.id)])}`);
-    tree.set({ fresh: [], stale: [], count: 0 });
-    if (tree.getChildren().length === 0) ok('with nothing waiting it is empty, so its one-line welcome text is all it shows');
-    else bad('an empty Waiting on you drew rows');
+    const asking = top.find((e) => e.c && e.c.sessionId === S(2));
+    const rows = tree.getChildren(asking).map((e) => tree.getTreeItem(e));
+    const head = tree.getTreeItem(asking);
+    const busy = tree.getTreeItem(tree.getChildren(top.find((e) => e.c && e.c.sessionId === S(3)))[0]);
+    if (first && !again && top.length === 6 && top[5].kind === 'stopped' && head.label === asking.c.title
+      && head.iconPath.id === 'question' && head.description === 'needs you · 2 questions · 4 open'
+      && rows.map((r) => r.label).join('|') === '1. Publish 1.0.20 now?|3.1. A or B?|3. parent'
+      && rows[0].command.command === 'claudeCodeWorkPlan.showWorkPlanDetail' && rows[0].command.arguments[0].open.sessionId === S(2)
+      && rows[2].description.startsWith('doing (conversation idle') && busy.description === 'doing for 10m'
+      && head.command.command === 'claudeCodeWorkPlan.openWaitingConversation') {
+      ok('a conversation is drawn with its state, its questions numbered as in its plan, and the rows it is doing');
+    } else bad(`tree ${JSON.stringify([first, again, top.map((t) => t.kind), head.description, rows.map((r) => [r.label, r.description])])}`);
+    tree.set(withStopped, '', 'zh-cn', now);
+    const zh = tree.getTreeItem(tree.getChildren().find((e) => e.c && e.c.sessionId === S(2)));
+    if (zh.description === '要你定 · 2 个问题 · 4 项未完成') ok('the same rows in Simplified Chinese, state names of the plan left as written');
+    else bad(`zh-cn description ${JSON.stringify(zh.description)}`);
+    tree.set({ running: [], stopped: [], asks: 0 });
+    if (tree.getChildren().length === 0) ok('with no conversation running it is empty, so its welcome line is all it shows');
+    else bad('an empty Conversations view drew rows');
     const legacy = views.waitsOn({ state: 'waiting', waitingOn: '' }), user = views.waitsOn({ state: 'waiting', waitingOn: 'user' });
     if (legacy && !legacy.known && legacy.words === 'on: unknown' && user.words === 'on you' && views.waitsOn({ state: 'todo' }) === null) {
       ok('the work plan says who a row waits on, and "unknown" for a waiting row written before the field');
@@ -6913,12 +7020,18 @@ console.log('\nwaiting on you');
 
   {
     const pkg = require('../package.json');
-    const ids = pkg.contributes.views.claudeCodeExtras.map((v) => v.id);
-    const setting = pkg.contributes.configuration.properties['claudeCodeWorkPlan.waitingOnYou'];
-    const welcome = pkg.contributes.viewsWelcome.find((v) => v.view === 'claudeCodeExtras.waitingOnYou');
-    if (ids[0] === 'claudeCodeExtras.waitingOnYou' && ids[1] === 'claudeCodeExtras.workPlan' && setting && setting.default === true && welcome) {
-      ok('Waiting on you sits above the work plan, on by default, with a welcome line for when nothing waits');
-    } else bad(`views ${ids.join()}, setting ${JSON.stringify(setting)}`);
+    const c = pkg.contributes;
+    const panel = (c.viewsContainers.panel || []).find((p) => p.id === 'claudeCodeConversations');
+    const view = (c.views.claudeCodeConversations || [])[0] || {};
+    const setting = c.configuration.properties['claudeCodeWorkPlan.conversations'];
+    const lang = c.configuration.properties['claudeCodeWorkPlan.conversationsLanguage'];
+    const button = (c.menus['view/title'] || []).find((m) => m.command === 'claudeCodeWorkPlan.showConversations');
+    if (panel && view.id === 'claudeCodeExtras.conversations' && view.when === 'config.claudeCodeWorkPlan.workPlan && config.claudeCodeWorkPlan.conversations'
+      && setting && setting.default === true && lang && lang.default === 'auto' && lang.enum.join() === ['auto'].concat(ctext.LANGUAGES).join()
+      && button && button.when === 'view == claudeCodeExtras.workPlan'
+      && !c.views.claudeCodeExtras.some((v) => v.id === 'claudeCodeExtras.waitingOnYou')) {
+      ok('Conversations is a tab of its own in the panel, on by default, opened from the work plan\'s title bar, in a language that can be set');
+    } else bad(`manifest: panel ${JSON.stringify(panel)}, view ${JSON.stringify(view)}, lang ${JSON.stringify(lang && lang.enum)}`);
   }
 }
 

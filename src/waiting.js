@@ -4,11 +4,8 @@
 
 'use strict';
 /*
- * Permission prompts and work plan questions waiting for the user, in the conversations started inside one of the
- * window's workspace folders:
- *
- *   - a row of a conversation's work plan that waits on the user (waitingOn "user"), with the question it asks;
- *   - a conversation Claude Code reports as waiting (status "waiting": a permission prompt, input it needs).
+ * The running conversations of this workspace, read from `claude agents --json`, and the questions in their plans
+ * (src/conversations.js puts them together).
  *
  * `claude --bg` sessions are left out. Their questions go through the conversation that started them.
  *
@@ -24,9 +21,6 @@ const fs = require('fs');
 const path = require('path');
 const { transcriptOf } = require('./claude-files');
 
-/* Waits older than this go into the collapsed group at the bottom, so a month-old question does not sit above one
-   asked a minute ago. */
-const STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENTS_TIMEOUT_MS = 15000;
 /* The end of a transcript, where Claude Code appends the conversation's title again every turn. */
 const TAIL_BYTES = 256 * 1024;
@@ -70,7 +64,7 @@ function merge(records) {
     if (!r || typeof r.sessionId !== 'string' || !r.sessionId) continue;
     let s = by.get(r.sessionId);
     if (!s) {
-      s = { sessionId: r.sessionId, id: '', kind: '', cwd: '', name: '', waitingFor: '', processes: 0 };
+      s = { sessionId: r.sessionId, id: '', kind: '', cwd: '', name: '', waitingFor: '', busy: false, processes: 0 };
       by.set(r.sessionId, s);
     }
     s.processes++;
@@ -81,6 +75,7 @@ function merge(records) {
     const name = typeof r.name === 'string' ? r.name.trim() : '';
     if (name && (!s.name || (isDefaultName(s.name, s.cwd) && !isDefaultName(name, s.cwd)))) s.name = name;
     if (r.status === 'waiting') s.waitingFor = String(r.waitingFor || '').trim() || s.waitingFor || 'input';
+    if (r.status === 'busy') s.busy = true;
   }
   return by;
 }
@@ -145,51 +140,6 @@ function planQuestions(nodes, prefix = '', out = []) {
   return out;
 }
 
-const OPEN = ['discussing', 'todo', 'doing', 'waiting', 'parked'];
-const firstOpen = (nodes) => (nodes || []).find((n) => OPEN.includes(n.state));
-
-const ORDER = { prompt: 0, question: 1 };
-
-/**
- * Everything waiting on the reader, grouped by conversation, with the waits older than STALE_MS set apart.
- *
- * `sessions` is merge()'s map. `readPlan(sessionId)` gives a plan as src/workplan.js reads it, or null. `titles(session)`
- * gives { custom, ai } for its transcript, and `since(session)` when it last wrote to it, in milliseconds or 0.
- */
-function collect({ sessions, readPlan, titles, since, now = Date.now() }) {
-  const groups = [];
-  for (const s of sessions.values()) {
-    const items = [];
-    if (s.waitingFor) {
-      items.push({ kind: 'prompt', text: s.waitingFor.charAt(0).toUpperCase() + s.waitingFor.slice(1), since: since(s) });
-    }
-    const plan = readPlan(s.sessionId);
-    for (const q of planQuestions(plan && plan.nodes)) {
-      items.push({ kind: 'question', text: q.question, row: q.num, rowTitle: q.title, since: q.since, state: q.state,
-        note: q.note, detail: q.detail });
-    }
-    if (!items.length) continue;
-    const t = titles(s);
-    const named = s.name && !isDefaultName(s.name, s.cwd) ? s.name : '';
-    const top = plan && firstOpen(plan.nodes);
-    const title = t.custom || named || t.ai || (plan && plan.title) || (top && top.title) || s.name || s.id || s.sessionId;
-    for (const it of items) it.stale = !!it.since && now - it.since > STALE_MS;
-    const fresh = items.filter((it) => !it.stale), stale = items.filter((it) => it.stale);
-    const base = { sessionId: s.sessionId, id: s.id, kind: s.kind, cwd: s.cwd, title };
-    if (fresh.length) groups.push(Object.assign({ stale: false, items: sortItems(fresh) }, base));
-    if (stale.length) groups.push(Object.assign({ stale: true, items: sortItems(stale) }, base));
-  }
-  const oldest = (g) => Math.min(...g.items.map((it) => it.since || now));
-  const urgent = (g) => g.items.some((it) => it.kind === 'prompt');
-  groups.sort((a, b) => (urgent(b) - urgent(a)) || (oldest(a) - oldest(b)));
-  const fresh = groups.filter((g) => !g.stale), stale = groups.filter((g) => g.stale);
-  return { fresh, stale, count: fresh.reduce((n, g) => n + g.items.length, 0) };
-}
-
-function sortItems(items) {
-  return items.slice().sort((a, b) => (ORDER[a.kind] - ORDER[b.kind]) || ((a.since || Infinity) - (b.since || Infinity)));
-}
-
 /**
  * Transcript lookups, kept between calls: a transcript's path, and the titles near its end, which are read again only
  * when the file has changed.
@@ -224,5 +174,5 @@ function reader() {
 }
 
 module.exports = {
-  parseAgents, listAgents, isDefaultName, merge, inFolders, transcriptTitles, planQuestions, collect, reader, STALE_MS,
+  parseAgents, listAgents, isDefaultName, merge, inFolders, transcriptTitles, planQuestions, reader,
 };
