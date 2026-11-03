@@ -242,6 +242,9 @@ still has nothing `doing`. It refuses nothing.
 When a turn ends with rows still `doing`, the Stop hook asks once to move them on, and not again about the same rows:
 beside the conversation, `doing` means being worked on now.
 
+When your last reply in a turn seems to ask the user something and no question was recorded, the Stop hook asks you to
+record it. When nothing is owed, just end the turn.
+
 **For other changes, do it before writing the last paragraph of the turn**, not after. Once the closing summary is written the turn feels
 finished and the plan is what gets left out; and the turn that most needed recording is the one that wandered furthest,
 which is exactly the turn with the longest summary to write.

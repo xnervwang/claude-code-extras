@@ -3394,6 +3394,40 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
       fs.rmSync(d.dir, { recursive: true, force: true });
     }
 
+    /* A turn whose reply asks the user something gets one reminder, unless the turn wrote a question to a row. */
+    {
+      const d = stage(true);
+      const planPath = path.join(d.dir, session + '.json');
+      const writePlan = (nodes) => fs.writeFileSync(planPath, JSON.stringify({ nodes }));
+      const stop = (reply, extra) => run('nudge-work-plan.py', d.dir, Object.assign({
+        session_id: session, transcript_path: d.transcript, hook_event_name: 'Stop', last_assistant_message: reply,
+      }, extra || {}));
+      const reminder = (out) => { try { return JSON.parse(out).hookSpecificOutput.additionalContext; } catch (_) { return ''; } };
+      const asks = (out) => reminder(out).includes('may be asking the user something');
+      const stamp = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, '+00:00');
+      const question = 'Built and tested.\n\nShip it to both markets now?';
+      writePlan([{ title: 'ship', state: 'discussing' }]);
+      const first = reminder(stop(question));
+      const cases = {
+        statement: asks(stop('Built and tested.\n\nNext I will list what you need to decide.')),
+        code: asks(stop('Run this:\n\n```\nwhy?\n```')),
+        mention: asks(stop('到时把要你定的事一起列出来。')),
+        handOver: asks(stop('JIRA 要不要改到 Accepted，还等你一句话。')),
+        looped: asks(stop(question, { stop_hook_active: true })),
+        noReply: asks(stop(undefined)),
+      };
+      writePlan([{ title: 'ship', state: 'discussing', waitingOn: 'user', question: 'Ship it now?', asked: stamp(Date.now()) }]);
+      cases.recorded = asks(stop(question));
+      writePlan([{ title: 'ship', state: 'discussing', waitingOn: 'user', question: 'Ship it now?', asked: stamp(Date.now() - 86400e3) }]);
+      cases.earlier = asks(stop(question));
+      const want = { statement: false, code: false, mention: false, handOver: true, looped: false, noReply: false, recorded: false, earlier: true };
+      const wrong = Object.keys(want).filter((k) => cases[k] !== want[k]);
+      if (first.includes('may be asking the user') && first.includes('plan-row.py') && !wrong.length) {
+        ok('a reply that ends by asking the user, in a turn that recorded no question, is reminded to record it');
+      } else bad(`unrecorded question: first ${JSON.stringify(first.slice(0, 120))}, wrong for ${wrong.join(', ')}`);
+      fs.rmSync(d.dir, { recursive: true, force: true });
+    }
+
     /* Switched on, a direct write gets the same limits as the row command: one question to a row, and a description
        the view can show whole. */
     const on = stage(true);

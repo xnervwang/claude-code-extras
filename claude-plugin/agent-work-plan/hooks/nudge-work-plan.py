@@ -49,6 +49,7 @@ for a signal that happens to correlate is how a check starts passing for the wro
 """
 import json
 import os
+import re
 import sys
 
 # Set before the import below: see inject-work-plan.py. A hook that runs on every turn leaves no bytecode behind in the
@@ -249,6 +250,80 @@ def settle(payload, path):
             % (len(rows), "" if len(rows) == 1 else "s", shown, row_command(path)))
 
 
+# A reply asks the user something when its last paragraph, without code and quoted lines, has a line ending in a
+# question mark or one of the phrases below, which hand over a decision with no question mark. They are escapes because
+# everything the plugin ships is in English. In order: "waiting for you to decide", "yours to decide", "you decide",
+# "you decide", "still waiting for you", "waiting for you to say / answer / reply / confirm / give a word", "needs you
+# to decide / confirm / sign off / judge", "only you can decide", "say ... and I will", "one word from you and". Words
+# like "which" and "whether" are not on it: they turn up in statements as often as in questions.
+CODE_BLOCK = re.compile(r"```.*?```", re.S)
+INLINE_CODE = re.compile(r"`[^`\n]*`")
+ENDS_IN_QUESTION = re.compile(u"[?\uff1f][)\uff09\u300d\"'*]*[ \t]*$", re.M)
+HANDS_OVER = re.compile(
+    u"\u7b49\u4f60\u5b9a|\u7531\u4f60\u5b9a|\u4f60\u6765\u5b9a|\u4f60\u5b9a\u5427|\u8fd8\u7b49\u4f60"
+    u"|\u7b49\u4f60(?:\u8bf4|\u7b54|\u56de|\u786e\u8ba4|\u4e00\u53e5)"
+    u"|\u9700\u8981\u4f60(?:\u51b3\u5b9a|\u786e\u8ba4|\u62cd\u677f|\u5224\u65ad)"
+    u"|\u53ea\u6709\u4f60\u80fd\u5b9a"
+    u"|\u4f60\u8bf4[^\u3002\n]{0,12}\u6211\u5c31|\u4f60\u4e00\u53e5\u8bdd\u5c31"
+    u"|your call|you decide|let me know|waiting (?:for|on) you", re.I)
+
+
+def asks_user(reply):
+    text = INLINE_CODE.sub(" ", CODE_BLOCK.sub(" ", reply))
+    text = "\n".join(line for line in text.split("\n") if not line.lstrip().startswith(">"))
+    paragraphs = [p for p in re.split(r"\n[ \t]*\n", text) if p.strip()]
+    last = paragraphs[-1] if paragraphs else ""
+    return bool(ENDS_IN_QUESTION.search(last) or HANDS_OVER.search(last))
+
+
+def asked_since(nodes, began):
+    """Whether some row's `asked` is at or after `began` (epoch seconds). `asked` is written to the second, so the
+    comparison is too."""
+    for node in listed(nodes):
+        if not isinstance(node, dict):
+            continue
+        at = epoch(node.get("asked")) if node.get("question") else None
+        if at is not None and at >= int(began):
+            return True
+        if asked_since(children(node), began):
+            return True
+    return False
+
+
+def unrecorded_question(payload, path, tail):
+    """Speaks when the last reply asks the user something and the plan has no record of it.
+
+    The Conversations view lists only the questions written on rows. Measured over one day, conversations that had been
+    told to put their questions there still left about four in ten in the reply only.
+
+    The reply comes from the Stop event's `last_assistant_message`. A question counts as recorded when the row command
+    stamped its `asked` during the turn; one written straight into the file has no `asked`, so it draws the reminder
+    once. It stays quiet on a Stop that follows one that kept the turn going (stop_hook_active), or it would ask again
+    after its own reminder.
+    """
+    if payload.get("stop_hook_active"):
+        return None
+    reply = payload.get("last_assistant_message")
+    if not isinstance(reply, str) or not asks_user(reply):
+        return None
+    began = turn_began(path, payload)
+    if began is None:
+        began = turn_shape(tail)[0]
+    if began is None:
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            plan = json.load(fh)
+    except Exception:
+        return None
+    if asked_since(plan.get("nodes") if isinstance(plan, dict) else None, began):
+        return None
+    return ("Your last reply may be asking the user something, but no row got a question this turn. Put each thing "
+            "you need from the user on a row of its own: %s set <row> <state> --waiting-on user --question TEXT, or "
+            "`add` for a new row. Offers to carry on do not count. If it is already on a row, or needs no answer, stop "
+            "here without writing more." % row_command(path))
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -271,7 +346,8 @@ def main():
         if started is None:
             return 0
         return offer_once(payload, path, tools, turns, limits)
-    texts = [t for t in (reconcile(payload, path, tail, limits), settle(payload, path)) if t]
+    texts = [t for t in (reconcile(payload, path, tail, limits), settle(payload, path),
+                         unrecorded_question(payload, path, tail)) if t]
     return speak(payload, "\n\n".join(texts)) if texts else 0
 
 

@@ -77,7 +77,7 @@ Each conversation has one row, titled as in Claude Code's session list. Its icon
 - Replied, not read
 - Idle
 
-The rest of the row shows its question and open-row counts, or "no work plan". These states come from Claude Code, not the plan. Under the conversation are its questions, each numbered as in the plan and showing how long ago it was asked. Its `doing` rows follow, with how long they have been `doing`. When the conversation is idle, a `doing` row says so, for example "doing (conversation idle 3h)".
+The rest of the row shows its question and open-row counts, or "no work plan". These states come from Claude Code, not the plan. Under the conversation are its questions, each numbered as in the plan and showing how long ago it was asked. Its `doing` rows follow, with how long they have been `doing`. When the conversation is idle, a `doing` row says so, for example "doing (conversation idle 3h)". Only questions written on plan rows are listed. When a reply ends by asking you something and the turn wrote no question, Claude is reminded to write it.
 
 Click a question to open its row details, which include a button to go to the conversation. Click a conversation or a `doing` row to go there if it is open in this window. If it is open in another window or running outside VS Code, the extension says where it is instead. The list of running conversations comes from `claude agents --json` every 30 seconds. Changes to conversations open in this window, and changes to plans, appear at once.
 
