@@ -6852,6 +6852,7 @@ console.log('\nconversations');
 {
   const w = require('../src/waiting');
   const conv = require('../src/conversations');
+  const bgs = require('../src/bgsessions');
   const ctext = require('../src/conversations-text');
   /* Ages are drawn against the clock, so the times are set against it too. */
   const DAY = 24 * 3600 * 1000, now = Date.now();
@@ -6959,7 +6960,24 @@ console.log('\nconversations');
     if (kept === [S(11), S(12), S(15)].sort().join() && w.inFolders(sessions, []).size === 0) {
       ok('Waiting on you takes the conversations started in a workspace folder or under one, through links, and no background session');
     } else bad(`inFolders kept ${kept}`);
-    for (const d of [root, other, root + '-sibling']) fs.rmSync(d, { recursive: true, force: true });
+    /* claude agents calls both of these interactive; only S(17)'s transcript says bg. */
+    const projects = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cce-ws-projects-')));
+    const resumed = w.merge([
+      { sessionId: S(17), kind: 'interactive', cwd: root, status: 'busy' },
+      { sessionId: S(18), kind: 'interactive', cwd: root, status: 'busy' },
+    ]);
+    for (const [n, kind] of [[17, 'bg'], [18, '']]) {
+      const dir = path.join(projects, bgs.folderName(root));
+      fs.mkdirSync(dir, { recursive: true });
+      const first = { parentUuid: null, type: 'user', cwd: root, sessionId: S(n), entrypoint: 'cli' };
+      if (kind) first.sessionKind = kind;
+      fs.writeFileSync(path.join(dir, S(n) + '.jsonl'), JSON.stringify({ type: 'mode' }) + '\n' + JSON.stringify(first) + '\n');
+    }
+    const isBackground = (id, cwd) => bgs.isBackground(id, cwd, projects);
+    const left = [...w.inFolders(resumed, [root], { isBackground }).keys()].join();
+    if (left === S(18)) ok('a background session resumed with claude -p is left out, by the kind its transcript records');
+    else bad(`inFolders kept ${left} of the resumed sessions`);
+    for (const d of [root, other, root + '-sibling', projects]) fs.rmSync(d, { recursive: true, force: true });
   }
 
   {

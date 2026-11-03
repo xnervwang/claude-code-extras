@@ -7,7 +7,8 @@
  * The running conversations of this workspace, read from `claude agents --json`, and the questions in their plans
  * (src/conversations.js puts them together).
  *
- * `claude --bg` sessions are left out. Their questions go through the conversation that started them.
+ * `claude --bg` sessions are left out. Their questions go through the conversation that started them. `claude agents`
+ * reports one resumed with `claude -p --resume` as interactive, so inFolders also reads the sessionKind in its transcript.
  *
  * The conversations come from `claude agents --json`, which Claude Code documents as the supported way for a script to
  * read session state. Its records are per process, and one conversation can be held by two processes at once - two
@@ -20,6 +21,7 @@ const cp = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { transcriptOf } = require('./claude-files');
+const bgSessions = require('./bgsessions');
 
 const AGENTS_TIMEOUT_MS = 15000;
 /* The end of a transcript, where Claude Code appends the conversation's title again every turn. */
@@ -85,7 +87,7 @@ const realPath = (p) => { try { return fs.realpathSync.native(p); } catch (_) { 
 const caseOf = process.platform === 'win32' ? (s) => s.toLowerCase() : (s) => s;
 
 /** Drops background sessions, and sessions started outside `folders`. */
-function inFolders(sessions, folders) {
+function inFolders(sessions, folders, { isBackground = bgSessions.isBackground } = {}) {
   const roots = (folders || []).filter(Boolean).map((f) => caseOf(realPath(f)));
   const out = new Map();
   for (const [id, s] of sessions) {
@@ -95,7 +97,7 @@ function inFolders(sessions, folders) {
       const rel = path.relative(root, cwd);
       return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
     };
-    if (roots.some(under)) out.set(id, s);
+    if (roots.some(under) && !isBackground(id, s.cwd)) out.set(id, s);
   }
   return out;
 }
