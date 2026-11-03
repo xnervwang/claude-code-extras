@@ -152,6 +152,10 @@ def hold(node, changed, who, question, now):
                       "can answer as it stands without reading the conversation.")
 
 
+# A `claude --bg` agent has a session of its own.
+SESSION_HINT = "If an agent you started with claude --bg or claude -p --resume is working on it, set the row to doing."
+
+
 def load(path, may_create):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -241,6 +245,8 @@ def change(path, args):
         if node.get("waitingOn"):
             said += ", on %s" % node["waitingOn"]
     save(path, plan)
+    if (args.waiting_on or "").strip() == "session":
+        said += ". " + SESSION_HINT
     return said
 
 

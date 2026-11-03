@@ -135,7 +135,7 @@ A `waiting` row says who it waits on in `waitingOn`, one of five fixed keywords:
 | `user` | the person in this conversation |
 | `build` | CI or a build |
 | `someone` | a reviewer, a colleague, anyone else |
-| `session` | another conversation |
+| `session` | another conversation, not an agent this one started |
 | `other` | anything that is none of these |
 
 **When it is `user`, the row also carries `question`.** Write it as one sentence

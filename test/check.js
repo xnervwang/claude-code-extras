@@ -3943,6 +3943,12 @@ console.log('\nthe row command');
     const q = row(t, 'set', '1', '--waiting-on', 'user', '--question', 'Line one\n  line two?');
     if (q.status === 0 && read(t).nodes[0].question === 'Line one line two?') ok('a question is kept to one line');
     else bad(`question with a newline: ${JSON.stringify(q.stderr)}, ${JSON.stringify(read(t).nodes[0])}`);
+    const onSession = row(t, 'set', '1', '--waiting-on', 'session', '--question', '');
+    const onSomeone = row(t, 'set', '1', '--waiting-on', 'someone');
+    if (onSession.status === 0 && /claude --bg.*set the row to doing/.test(onSession.stdout)
+        && onSomeone.status === 0 && !/claude --bg/.test(onSomeone.stdout)) {
+      ok('only waiting on a session prints the hint about background agents');
+    } else bad(`waiting on a session said ${JSON.stringify(onSession.stdout)}, on someone ${JSON.stringify(onSomeone.stdout)}`);
     done(t);
   }
   {
