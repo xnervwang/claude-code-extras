@@ -132,7 +132,7 @@ function planQuestions(nodes, prefix = '', out = []) {
   (nodes || []).forEach((n, i) => {
     const num = (prefix ? prefix + '.' : '') + (i + 1);
     if (n.waitingOn === 'user' && (n.state === 'waiting' || n.state === 'discussing')) {
-      out.push({ num, title: n.title, question: n.question || n.title, since: n.since || 0, state: n.state,
+      out.push({ num, title: n.title, question: n.question || n.title, since: n.asked || n.since || 0, state: n.state,
         note: n.note || '', detail: n.detail || '' });
     }
     planQuestions(n.children, num, out);

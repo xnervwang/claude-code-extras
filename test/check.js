@@ -3860,9 +3860,24 @@ console.log('\nthe row command');
     const cleared = read(t).nodes[0];
     if (held.note === 'on the user' && !('note' in cleared)) ok('a note is set with the state, and an empty one removes it');
     else bad(`note was ${JSON.stringify(held.note)}, then ${JSON.stringify(cleared.note)}`);
-    if (held.waitingOn === 'user' && held.question === 'Ship it?' && !('waitingOn' in cleared) && !('question' in cleared)) {
+    if (held.waitingOn === 'user' && held.question === 'Ship it?' && !('waitingOn' in cleared) && !('question' in cleared)
+      && held.asked && !('asked' in cleared)) {
       ok('who a row waits on and its question are set with the state, and leaving the state takes both away');
     } else bad(`held ${JSON.stringify(held)}, then ${JSON.stringify(cleared)}`);
+    done(t);
+  }
+  {
+    /* `asked` is the age of the question, not of the waiting: a new question restarts it, the same one does not. */
+    const t = stage({ nodes: [{ title: 'w', state: 'waiting', since: '2026-10-01T00:00:00Z', waitingOn: 'user',
+      question: 'Old?', asked: '2026-10-01T00:00:00Z' }] });
+    row(t, 'set', '1', '--question', 'Old?', '--note', 'n');
+    const same = read(t).nodes[0];
+    row(t, 'set', '1', '--question', 'New?');
+    const fresh = read(t).nodes[0];
+    if (same.asked === '2026-10-01T00:00:00Z' && fresh.question === 'New?' && fresh.asked !== same.asked
+      && Date.now() - Date.parse(fresh.asked) < 60e3 && fresh.since === '2026-10-01T00:00:00Z') {
+      ok('a new question on a waiting row gets its own time, and the time the row has waited is left alone');
+    } else bad(`asked: same ${JSON.stringify(same)}, new ${JSON.stringify(fresh)}`);
     done(t);
   }
   {
@@ -6830,7 +6845,7 @@ console.log('\nconversations');
 
   const plans = {
     [S(2)]: { title: '', nodes: [
-      { title: 'publish', state: 'waiting', since: now - 3600e3, waitingOn: 'user', question: 'Publish 1.0.20 now?', note: 'n', detail: 'd', children: [] },
+      { title: 'publish', state: 'waiting', since: now - 3 * DAY, asked: now - 3600e3, waitingOn: 'user', question: 'Publish 1.0.20 now?', note: 'n', detail: 'd', children: [] },
       { title: 'old style', state: 'waiting', since: now - 7200e3, waitingOn: '', question: '', children: [] },
       { title: 'parent', state: 'doing', since: now - 7200e3, children: [
         { title: 'pick', state: 'discussing', since: now - 60e3, waitingOn: 'user', question: 'A or B?', children: [] },
@@ -6850,6 +6865,7 @@ console.log('\nconversations');
   const asks = data.running.find((c) => c.sessionId === S(2));
   if (shape === '1:prompt 2:needs 3:working 5:working 4:unread' && data.asks === 2
     && asks.questions.map((q) => q.row + ':' + q.question).join('|') === '1:Publish 1.0.20 now?|3.1:A or B?'
+    && asks.questions[0].since === now - 3600e3
     && asks.doing.map((d) => d.row).join() === '3' && asks.open === 4 && asks.hasPlan
     && data.running.find((c) => c.sessionId === S(5)).title === 'AI title' && !data.running.find((c) => c.sessionId === S(4)).hasPlan) {
     ok('each conversation takes its state from Claude Code, needs you when its plan asks something, and sorts by what needs looking at');

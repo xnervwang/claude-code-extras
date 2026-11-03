@@ -169,7 +169,8 @@ When it is required:
 
 `opened` goes on a row when you add it. `since` is an ISO 8601 time for when the row entered its current state; the row
 command writes it on every change of state. `closed` goes on when you move it to `done` or `dropped`, and only then - a
-`parked` row is still open and has no end yet. Moving a closed row back to an open state removes `closed`.
+`parked` row is still open and has no end yet. Moving a closed row back to an open state removes `closed`. `asked` is
+when the row's current question was put; the row command writes it whenever the question changes.
 
 The injected rows and the tree view show how long a `doing` or `waiting` row has been in that state, using `since` -
 for example, `doing for 2h`. A row without `since` shows no duration.

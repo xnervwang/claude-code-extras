@@ -32,6 +32,7 @@
  *                  "closed": "optional ISO 8601; when it reached done or dropped",
  *                  "waitingOn": "optional, on a waiting or discussing row: user|build|someone|session|other",
  *                  "question": "optional, with waitingOn user: the one question the user has to answer",
+ *                  "asked": "optional ISO 8601; when that question was put",
  *                  "children": [ ... ] } ] }
  *
  * A child is something that has to be finished before its parent can be, whether that was planned or discovered on the
@@ -138,7 +139,8 @@ function node(raw, depth, budget) {
   const question = waitingOn === 'user' ? text(raw.question, MAX_QUESTION_CHARS * 2).replace(/\s+/g, ' ') : '';
   return {
     title, state, note: text(raw.note, 120), detail: detail(raw.detail),
-    opened: when(raw.opened), since: when(raw.since), closed: when(raw.closed), waitingOn, question, children,
+    opened: when(raw.opened), since: when(raw.since), closed: when(raw.closed), waitingOn, question,
+    asked: question ? when(raw.asked) : 0, children,
   };
 }
 

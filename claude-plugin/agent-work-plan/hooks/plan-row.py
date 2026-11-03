@@ -94,7 +94,7 @@ def detail(node, text):
         node.pop("detail", None)
 
 
-def hold(node, changed, who, question):
+def hold(node, changed, who, question, now):
     """Say who a held-up row waits on and, when that is the user, the question they have to answer.
 
     These are fields rather than words in the note because the list of what waits on the user, across conversations, is
@@ -103,10 +103,13 @@ def hold(node, changed, who, question):
     A change of state drops both unless the same command gives them again: a row moved on from `waiting` that still said
     it waited on the user would go on asking a question nobody needs answered. Raises Refused before anything is
     written.
+
+    `asked` dates the question and `since` the waiting: a row can wait for days and then be given a new question.
     """
     if changed:
         node.pop("waitingOn", None)
         node.pop("question", None)
+        node.pop("asked", None)
     if who is not None:
         who = who.strip()
         if who and who not in WAITING_ON:
@@ -116,6 +119,7 @@ def hold(node, changed, who, question):
         else:
             node.pop("waitingOn", None)
             node.pop("question", None)
+            node.pop("asked", None)
     if question is not None:
         asked = " ".join(question.split())
         if len(asked) > MAX_QUESTION_CHARS:
@@ -125,10 +129,12 @@ def hold(node, changed, who, question):
             raise Refused("That has %d question marks; a row carries one question. Keep one here and add a row under "
                           "this one for each of the others: add waiting TITLE --under ROW --waiting-on user --question "
                           "TEXT." % questions_in(asked))
-        if asked:
+        if asked and asked != node.get("question"):
             node["question"] = asked
-        else:
+            node["asked"] = now
+        elif not asked:
             node.pop("question", None)
+            node.pop("asked", None)
     state = node.get("state", "todo")
     on = node.get("waitingOn")
     if on and state not in HELD_STATES:
@@ -205,7 +211,7 @@ def change(path, args):
             said = "row %s: %s -> %s" % (args.row, was, args.state)
         else:
             said = "row %s: still %s" % (args.row, was)
-        hold(node, changed, args.waiting_on, args.question)
+        hold(node, changed, args.waiting_on, args.question, now)
         if node.get("waitingOn"):
             said += ", on %s" % node["waitingOn"]
         note(node, args.note)
@@ -228,7 +234,7 @@ def change(path, args):
         note(node, args.note)
         node["opened"] = now
         enter(node, args.state, now)
-        hold(node, True, args.waiting_on, args.question)
+        hold(node, True, args.waiting_on, args.question, now)
         node["children"] = []
         siblings.append(node)
         said = "row %s%d added: %s" % (prefix, len(siblings), args.state)
