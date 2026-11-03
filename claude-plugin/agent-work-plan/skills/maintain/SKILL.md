@@ -118,7 +118,8 @@ The seven `state` values are fixed keywords and are always these:
 `doing` sits between `todo` and `done`, and it is a state rather than a mark alongside one: a row being worked on is
 still agreed and still unfinished, which is what `todo` used to cover on its own. Several rows can be `doing` at once -
 each row carries its own state, and one turn can have work going in more than one place. Who is doing it, when that is
-worth saying, goes in `note`: the main thread, a sub-agent, a detached one.
+worth saying, goes in `note`: the main thread, a sub-agent, a detached one. A row stays `doing` while an
+agent this conversation started works on it, since the row is what the user watches.
 
 **A `doing` row found at the start of a turn is stale unless this turn carries on with it or an agent this conversation
 started with `claude --bg` is still working on it.** Between turns, nothing else in this conversation runs. Move a stale
