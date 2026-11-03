@@ -129,6 +129,7 @@ Verified against Claude Code 2.1.314 and 2.1.317.
 | **Tabs back after a restart:** Claude Code tabs that were open when the window closed but that VS Code did not restore, as can happen after the window lost its remote connection, are opened again when it starts. Tabs you closed while connected stay closed. | Editor tabs |
 | **Marks on tabs:** 🔹 after a Claude Code tab's title while Claude waits for your permission or answer, 🔸 when it finished and you have not looked yet, in the colours of the dot on the tab's icon. | Editor tab titles |
 | **Session information:** See the session ID, starting directory, transcript location and size; click a value to copy it. | Footer button |
+| **Request limit for Claude Code tabs:** VS Code allows 32 requests in flight at once across all Claude Code tabs, and a tab can stay blank while it waits. If you agree, it is raised to 1000000 in VS Code's `service-worker.js`, including after updates; restart VS Code afterwards. On Linux, where VS Code added the limit, it asks every time. | VS Code's own files |
 
 With Claude Code's Focus view on, the tool calls are folded:
 
@@ -136,7 +137,7 @@ With Claude Code's Focus view on, the tool calls are folded:
 
 ## Settings
 
-Open `Work Plan for Claude Code: Settings` for all 38 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
+Open `Work Plan for Claude Code: Settings` for all 39 settings. Most apply without a reload; installing or upgrading the patch needs a reload.
 
 **Work plan settings**
 
@@ -158,6 +159,7 @@ Open `Work Plan for Claude Code: Settings` for all 38 settings. Most apply witho
 | Work plan plugin, skill description included | Run `Work Plan for Claude Code: Stop Loading the Work Plan Plugin`. |
 | Reopening Claude Code tabs VS Code did not restore | Set `claudeCodeWorkPlan.reopenDroppedTabs` to off. |
 | Pins on the session list | Set `claudeCodeWorkPlan.sessionPins` to off. Pinned conversations are then cleaned up and archived as usual. |
+| Raising VS Code's request limit | Set `claudeCodeWorkPlan.webviewRequestLimit` to `leave`. To also set it back to 32, run `Work Plan for Claude Code: Put Back VS Code's Request Limit`. |
 | Patch and restore Claude Code's files | Run `Work Plan for Claude Code: Remove from Claude Code (restore original files)`, or uninstall. |
 
 Message appearance: `claudeCodeWorkPlan.userMessageColor` and `claudeCodeWorkPlan.userMessageEdge`.
@@ -191,6 +193,7 @@ Settings named `claudeCodeExtras.*` by earlier versions are copied to the same n
 | `Work Plan for Claude Code: Remove from Claude Code (restore original files)` | Restore Claude Code's files. |
 | `Work Plan for Claude Code: Show Status` | Show patch status and what was patched. |
 | `Work Plan for Claude Code: Show How Long Opening a Panel Took` | Show recorded panel-opening times. |
+| `Work Plan for Claude Code: Put Back VS Code's Request Limit` | Restore VS Code's request limit to 32 and stop raising it. |
 
 ## Known limits
 

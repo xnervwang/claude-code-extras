@@ -100,6 +100,10 @@
         "title": "Work Plan for Claude Code: Show How Long Opening a Panel Took"
       },
       {
+        "command": "claudeCodeWorkPlan.restoreWebviewRequestLimit",
+        "title": "Work Plan for Claude Code: Put Back VS Code's Request Limit"
+      },
+      {
         "command": "claudeCodeWorkPlan.disableWorkPlanPlugin",
         "title": "Work Plan for Claude Code: Stop Loading the Work Plan Plugin"
       },
@@ -391,6 +395,21 @@
           ],
           "default": "auto",
           "markdownDescription": "Language of the Conversations tab and its status bar entry. Plan text and state names like `doing` are not translated."
+        },
+        "claudeCodeWorkPlan.webviewRequestLimit": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "raise",
+            "leave"
+          ],
+          "enumDescriptions": [
+            "Ask once per VS Code version",
+            "Raise it without asking, again after each update. On Linux it still asks",
+            "Do not change it"
+          ],
+          "default": "ask",
+          "markdownDescription": "VS Code lets Claude Code tabs have only 32 requests in flight at once, across all windows, and a tab can stay blank waiting for one. The extension can raise the limit to 1000000 in VS Code's `service-worker.js`. It takes effect after a restart, and VS Code updates reset it. To return to 32, run `Work Plan for Claude Code: Put Back VS Code's Request Limit`."
         }
       }
     }

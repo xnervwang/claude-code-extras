@@ -7285,6 +7285,16 @@ console.log('\nanswering from the Conversations tab');
   }
 }
 
+console.log('\nVS Code\'s request limit for webview tabs');
+{
+  /* test/webview-limit-check.js works through an asynchronous file system, so it runs as a child and reports back. */
+  const r = cp.spawnSync(process.execPath, [path.join(__dirname, 'webview-limit-check.js')], { encoding: 'utf8', timeout: 60000 });
+  let verdicts = null;
+  try { verdicts = JSON.parse(r.stdout); } catch (_) { verdicts = null; }
+  if (!Array.isArray(verdicts) || !verdicts.length) bad(`webview limit checks did not report: ${(r.stderr || r.stdout || '').slice(0, 300)}`);
+  else for (const [kind, msg] of verdicts) (kind === 'ok' ? ok : bad)(msg);
+}
+
 const ran = `${passed} passed` + (skipped ? `, ${skipped} skipped for want of an install here` : '');
 console.log(failures ? `\n${failures} check(s) failed (${ran})` : `\nall checks passed (${ran})`);
 process.exit(failures ? 1 : 0);

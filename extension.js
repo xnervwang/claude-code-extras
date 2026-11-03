@@ -35,6 +35,7 @@ const { ConversationsProvider } = require('./src/conversations-view');
 const conversationsText = require('./src/conversations-text');
 const pluginInstall = require('./src/plugin-install');
 const pythonRuntime = require('./src/python-runtime');
+const webviewLimit = require('./src/webview-limit');
 const latency = require('./src/openlatency');
 const tabdot = require('./src/tabdot');
 const sessionPins = require('./src/sessionpins');
@@ -1126,6 +1127,94 @@ function start(context, renamed) {
     description: canDownload ? 'click to download it' : 'click to try again',
     command: canDownload ? PREFIX + 'downloadPython' : '',
   };
+  /*
+   * VS Code's limit on the requests Claude Code tabs can have in flight (src/webview-limit.js), looked at a few seconds
+   * after each start so the window is not held up. It asks again once for each new VS Code build or, if the setting
+   * says so, raises the limit again without asking. On Linux it never raises on its own: the limit was added there
+   * because too many open files can crash a window, and the prompt there has no "after updates" choice.
+   */
+  const LIMIT_SETTING = PREFIX + 'webviewRequestLimit';
+  const LIMIT_ASKED_KEY = 'webviewLimitAsked';
+  const limitPlace = () => {
+    const local = !vscode.env.remoteName;
+    let commit = '';
+    try { commit = String(JSON.parse(fs.readFileSync(path.join(vscode.env.appRoot, 'product.json'), 'utf8')).commit || ''); } catch (_) { /* unknown */ }
+    return {
+      fs: vscode.workspace.fs, local, appRoot: vscode.env.appRoot, commit,
+      at: local ? (p) => vscode.Uri.file(p) : (p) => vscode.Uri.from({ scheme: 'vscode-local', path: p }),
+    };
+  };
+  const changeLimit = async (place, installs, from, to) => {
+    const failed = [];
+    for (const i of installs) {
+      const why = await webviewLimit.setLimit(place.fs, i, from, to);
+      log.appendLine(`webview request limit: ${i.root} ${from} -> ${to}: ${why || 'done'}`);
+      if (why) failed.push({ install: i, why });
+    }
+    return failed;
+  };
+  const reportStuck = async (failed) => {
+    const how = webviewLimit.byHand(failed[0].install, process.platform);
+    const copy = 'Copy the command';
+    const why = /NoPermissions|EACCES|EPERM/.test(failed[0].why) ? 'no permission to write the file' : failed[0].why;
+    const pick = await vscode.window.showWarningMessage(
+      `Work Plan for Claude Code: could not change VS Code's request limit (${why}). To change it yourself: ${how}`, copy);
+    if (pick === copy) await vscode.env.clipboard.writeText(how);
+  };
+  /* One check at a time: choosing "after updates" writes the setting, and the setting's listener would start a second one
+     that finds the file already changed. */
+  let limitBusy = false;
+  const checkWebviewLimit = async () => {
+    if (limitBusy) return;
+    limitBusy = true;
+    try { await checkWebviewLimitOnce(); } finally { limitBusy = false; }
+  };
+  const checkWebviewLimitOnce = async () => {
+    const mode = cfg().get(LIMIT_SETTING, 'ask');
+    if (mode === 'leave' || !vscode.workspace.fs || !vscode.env.appRoot) return;
+    const place = limitPlace();
+    const installs = await webviewLimit.find(place);
+    log.appendLine('webview request limit: ' + (installs.map((i) => `${i.root} = ${i.limit}`).join('; ') || 'no installation found'));
+    const low = installs.filter((i) => i.limit === webviewLimit.OLD);
+    if (!low.length) return;
+    const linux = low.every((i) => webviewLimit.platformOf(i.root, process.platform) === 'linux');
+    if (mode !== 'raise' || linux) {
+      if (context.globalState.get(LIMIT_ASKED_KEY, '') === place.commit) return;
+      await context.globalState.update(LIMIT_ASKED_KEY, place.commit);
+      const always = 'Raise it, now and after updates', once = 'Raise it this time', no = 'Leave it';
+      const pick = await vscode.window.showInformationMessage(
+        'Work Plan for Claude Code: VS Code lets Claude Code tabs have 32 requests in flight at once, across all windows, '
+        + 'and a tab can stay blank waiting for one. Raise the limit to 1000000 in VS Code\'s own files?'
+        + (linux ? ' VS Code added the limit for Linux, where too many open files can crash a window.' : ''),
+        ...(linux ? [once, no] : [always, once, no]));
+      if (pick === no) { await cfg().update(LIMIT_SETTING, 'leave', vscode.ConfigurationTarget.Global); return; }
+      if (pick !== always && pick !== once) return;
+      if (pick === always) await cfg().update(LIMIT_SETTING, 'raise', vscode.ConfigurationTarget.Global);
+    }
+    const failed = await changeLimit(place, low, webviewLimit.OLD, webviewLimit.NEW);
+    if (failed.length < low.length) {
+      vscode.window.showInformationMessage('Work Plan for Claude Code: VS Code\'s request limit for Claude Code tabs is now 1000000. '
+        + 'Quit and reopen VS Code for this to apply.');
+    }
+    if (failed.length) await reportStuck(failed);
+  };
+  const putBackWebviewLimit = async () => {
+    if (!vscode.workspace.fs || !vscode.env.appRoot) return;
+    const place = limitPlace();
+    const high = (await webviewLimit.find(place)).filter((i) => i.limit === webviewLimit.NEW);
+    await cfg().update(LIMIT_SETTING, 'leave', vscode.ConfigurationTarget.Global);
+    if (!high.length) {
+      vscode.window.showInformationMessage('Work Plan for Claude Code: VS Code\'s request limit is already 32.');
+      return;
+    }
+    const failed = await changeLimit(place, high, webviewLimit.NEW, webviewLimit.OLD);
+    if (failed.length < high.length) {
+      vscode.window.showInformationMessage('Work Plan for Claude Code: VS Code\'s request limit is back to 32 and will stay there. '
+        + 'Quit and reopen VS Code for this to apply.');
+    }
+    if (failed.length) await reportStuck(failed);
+  };
+  setTimeout(() => checkWebviewLimit().catch((e) => log.appendLine('webview request limit: ' + e.message)), 8000);
   const PYTHON_OFFER_KEY = 'pythonOffer';
   /* Once per version. After "Not now" the row in the view is the way to get it. */
   const offerPython = async () => {
@@ -1244,6 +1333,8 @@ function start(context, renamed) {
   context.subscriptions.push(
     registerCommand('refreshWorkPlan', () => { workplan.refresh(); paintBadge(); }),
     registerCommand('installWorkPlanPlugin', () => syncPlugin(true)),
+    registerCommand('restoreWebviewRequestLimit', () => putBackWebviewLimit()
+      .catch((e) => log.appendLine('webview request limit: ' + e.message))),
     registerCommand('downloadPython', async () => {
       const pick = await vscode.window.showInformationMessage(
         `Download Python ${pythonRuntime.VERSION} from python.org?`,
@@ -1332,6 +1423,9 @@ function start(context, renamed) {
     if (e.affectsConfiguration(CONVERSATIONS_SETTING) || e.affectsConfiguration(CONVERSATIONS_LANGUAGE)
       || e.affectsConfiguration(PREFIX + 'workPlan')) {
       refreshConversations(true);
+    }
+    if (e.affectsConfiguration(LIMIT_SETTING) && cfg().get(LIMIT_SETTING, 'ask') === 'raise') {
+      checkWebviewLimit().catch((err) => log.appendLine('webview request limit: ' + err.message));
     }
     if (e.affectsConfiguration(HIDE_BG_SETTING)) {
       try { if (typeof globalThis.__cceSessionsChanged === 'function') globalThis.__cceSessionsChanged(); } catch (_) { /* the list catches up on its next read */ }

@@ -39,6 +39,7 @@ const TEXT = {
       draft: 'Not sent: the conversation\'s input already has text in it. Copied to the clipboard.',
       'no-input': 'Not sent: the conversation is not taking messages, maybe at a permission prompt. Copied to the clipboard.',
       lost: 'Handed to another window, which never confirmed it. Check the conversation.',
+      'no-reply': 'Not sent: the window showing this conversation did not respond. Reload that window and try again. Copied to the clipboard.',
     }[kind] || 'Not sent: it could not be typed into the conversation. Copied to the clipboard.'),
     answerMessage: (row, question, answer) => `My answer to row ${row} ("${question}"):\n${answer}`,
   },

@@ -25,6 +25,7 @@
   through a folder all windows on the machine read, and `src/page/91-answer.js` types it into that conversation's input.
 - `build/plan-health.js` counts how current the plans on this machine are: stale `doing` rows, `waiting` rows that name nobody.
 - `src/python-runtime.js` downloads Python from python.org for a Windows machine that has none.
+- `src/webview-limit.js` finds the client's VS Code installation and changes its webview request limit.
 - `claude-plugin/` holds the companion plugin: the skill that maintains a plan and the hooks that keep it honest.
 - `test/check.js` is the whole suite. It parses everything and checks every edit against an unpatched bundle. How
   many checks it runs depends on how many Claude Code builds are installed, so the count is not quoted here.
