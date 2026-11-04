@@ -48,7 +48,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from changes import changes
-from plan_path import any_in, plan_file, read_turn, row_command, settings, write_turn
+from plan_path import any_in, plan_file, read_payload, read_turn, row_command, settings, write_turn
 
 
 def count(value):
@@ -57,7 +57,7 @@ def count(value):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = read_payload()
     except Exception:
         return 0
     if not isinstance(payload, dict) or payload.get("agent_id"):

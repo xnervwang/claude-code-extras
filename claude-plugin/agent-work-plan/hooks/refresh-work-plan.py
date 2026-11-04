@@ -66,7 +66,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from plan_path import (MAX_DETAIL_CHARS, MAX_DETAIL_LINES, TAIL_MAX, WATERMARK_SUFFIX, any_in, latest_reply_matches,
-                       listed, open_tail, plan_file, row_command, settings, side_file, usage_of, write_quietly)
+                       listed, open_tail, plan_file, read_payload, row_command, settings, side_file, usage_of, write_quietly)
 
 # Three marks per window size, arranged around that window's compaction line:
 #
@@ -401,12 +401,12 @@ def nag(mark, ctx, plan, urgent):
 
 
 def emit(event, text):
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}, ensure_ascii=False))
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}))
 
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = read_payload()
     except Exception:
         return 0
     if not isinstance(payload, dict):

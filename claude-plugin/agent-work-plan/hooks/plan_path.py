@@ -366,6 +366,12 @@ def write_quietly(path, text):
         return False
 
 
+def read_payload():
+    """Read the hook's event from standard input as UTF-8. On Windows sys.stdin uses the console's code page and fails on
+    anything outside ASCII."""
+    return json.loads(sys.stdin.buffer.read().decode("utf-8"))
+
+
 """How a plan's rows are walked.
 
 The file is hand-edited, so anything can appear where a list of rows is expected; a walk that trusted it would raise on

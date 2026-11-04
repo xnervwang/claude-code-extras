@@ -29,7 +29,7 @@ sys.dont_write_bytecode = True
 # The script's folder on the import path: see inject-work-plan.py.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, PLAN_NAME, data_dir, questions_in, settings
+from plan_path import MAX_DETAIL_CHARS, MAX_DETAIL_LINES, PLAN_NAME, data_dir, questions_in, read_payload, settings
 from plan_path import detail_over as over
 
 # Enough of a title to recognise the row by; a rejection has to say which description, not merely that there was one.
@@ -125,7 +125,7 @@ def guarded(path):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = read_payload()
     except Exception:
         return 0
     # Valid JSON that is not an object parses without complaint, so the guard above does not cover it. A hook that ends

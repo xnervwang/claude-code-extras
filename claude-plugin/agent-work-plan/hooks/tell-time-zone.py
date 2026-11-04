@@ -31,8 +31,8 @@ sys.dont_write_bytecode = True
 # The script's folder on the import path: see inject-work-plan.py.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from plan_path import (TOLD_SUFFIX, current_context, data_dir, latest_reply_matches, open_tail, plan_file, settings,
-                       side_file, write_quietly)
+from plan_path import (TOLD_SUFFIX, current_context, data_dir, latest_reply_matches, open_tail, plan_file, read_payload,
+                       settings, side_file, write_quietly)
 
 ZONE_FILE = "client-time-zone.json"
 # An IANA name as Intl reports it. It becomes a path under the zone database, so nothing that could climb out of it.
@@ -195,7 +195,7 @@ def respond(payload, now, directory=None):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = read_payload()
     except Exception:
         return 0
     if not isinstance(payload, dict):
@@ -217,6 +217,16 @@ def selftest():
         print(("PASS " if cond else "FAIL ") + label)
         if not cond:
             failures.append(label)
+
+    # Windows has no time.tzset.
+    if not hasattr(time, "tzset"):
+        check("without time.tzset nothing is said", describe("America/Los_Angeles", time.time()) == "")
+        print("SKIP the rest: this Python has no time.tzset")
+        if failures:
+            print("%d checks failed" % len(failures))
+            return 1
+        print("all checks pass")
+        return 0
 
     # 2026-10-18 16:41 UTC: summer time in Los Angeles.
     summer = 1792341660

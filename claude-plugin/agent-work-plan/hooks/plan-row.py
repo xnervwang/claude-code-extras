@@ -272,6 +272,10 @@ def main(argv=None):
     add.add_argument("--waiting-on", metavar="WHO", help="who a waiting row waits on: %s" % ", ".join(WAITING_ON))
     add.add_argument("--question", help="with --waiting-on user: the one question the user has to answer")
     args = parser.parse_args(argv)
+    # Python on Windows encodes a pipe in the console's code page; titles need UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     try:
         print(run(args))
     except Refused as e:

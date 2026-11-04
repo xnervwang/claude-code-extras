@@ -40,6 +40,12 @@ let passed = 0;
 const ok = (msg) => { passed++; console.log('  ok    ' + msg); };
 const bad = (msg) => { failures++; console.log('  FAIL  ' + msg); };
 const note = (msg) => { skipped++; console.log('  note  ' + msg); };
+/* One argument of a command line the hooks print. shlex.quote puts it in ' when it needs quoting, as a Windows path always
+   does. */
+const ARG = "('[^']*'|\\S+)";
+const unquote = (s) => (/^'.*'$/.test(s) ? s.slice(1, -1).replace(/'"'"'/g, "'") : s);
+/* chmod 0 does not lock a folder for root, and on Windows it only sets the read-only flag. */
+const CANNOT_LOCK = process.platform === 'win32' || !!(process.getuid && process.getuid() === 0);
 
 /* ── 1. everything parses ── */
 // Discovered rather than listed, so a new fragment is covered the moment it is added.
@@ -1579,7 +1585,7 @@ console.log("\nClaude Code's directory, read the same way everywhere");
     fs.chmodSync(locked, 0);
     const blind = cf.liveSessions(projects);
     fs.chmodSync(locked, 0o755);
-    if (process.getuid && process.getuid() === 0) note('running as root, so a folder cannot be made unreadable to check that');
+    if (CANNOT_LOCK) note('chmod cannot make a folder unreadable for root or on Windows');
     else if (blind === null) ok('a project folder that cannot be listed makes the conversations still on disk unknown, not fewer');
     else bad(`with a project folder unreadable the live set was ${JSON.stringify([...blind])}`);
 
@@ -2279,7 +2285,7 @@ console.log('\nabandoned work plans');
         t.restore = () => fs.chmodSync(locked, 0o755);
         return t;
       },
-      (t, r) => (process.getuid && process.getuid() === 0) || (r.deleted === 0 && !!r.why && left(t.dir).length === 1)],
+      (t, r) => CANNOT_LOCK || (r.deleted === 0 && !!r.why && left(t.dir).length === 1)],
   ];
 
   for (const [what, make, want] of cases) {
@@ -3319,8 +3325,8 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
     fs.utimesSync(path.join(dir, session + '.json'), back, back);
     return { dir, transcript };
   };
-  const run = (script, dir, payload) => (cp.spawnSync('python3', [path.join(hooks, script), dir], {
-    encoding: 'utf8', input: JSON.stringify(payload),
+  const run = (script, dir, payload, env) => (cp.spawnSync('python3', [path.join(hooks, script), dir], {
+    encoding: 'utf8', input: JSON.stringify(payload), env: env && Object.assign({}, process.env, env),
   }).stdout || '').trim();
 
   /* Two changes in one batch, which is enough for the reminder at the start of the work to say something. */
@@ -3399,9 +3405,9 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
       const d = stage(true);
       const planPath = path.join(d.dir, session + '.json');
       const writePlan = (nodes) => fs.writeFileSync(planPath, JSON.stringify({ nodes }));
-      const stop = (reply, extra) => run('nudge-work-plan.py', d.dir, Object.assign({
+      const stop = (reply, extra, env) => run('nudge-work-plan.py', d.dir, Object.assign({
         session_id: session, transcript_path: d.transcript, hook_event_name: 'Stop', last_assistant_message: reply,
-      }, extra || {}));
+      }, extra || {}), env);
       const reminder = (out) => { try { return JSON.parse(out).hookSpecificOutput.additionalContext; } catch (_) { return ''; } };
       const asks = (out) => reminder(out).includes('may be asking the user something');
       const stamp = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, '+00:00');
@@ -3413,6 +3419,8 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
         code: asks(stop('Run this:\n\n```\nwhy?\n```')),
         mention: asks(stop('到时把要你定的事一起列出来。')),
         handOver: asks(stop('JIRA 要不要改到 Accepted，还等你一句话。')),
+        // What Python on Windows reads from a pipe unless told otherwise.
+        codePage: asks(stop('JIRA 要不要改到 Accepted，还等你一句话。', undefined, { PYTHONIOENCODING: 'cp1252' })),
         looped: asks(stop(question, { stop_hook_active: true })),
         noReply: asks(stop(undefined)),
       };
@@ -3420,7 +3428,8 @@ console.log('\nswitched off, the work plan costs nothing and keeps nothing');
       cases.recorded = asks(stop(question));
       writePlan([{ title: 'ship', state: 'discussing', waitingOn: 'user', question: 'Ship it now?', asked: stamp(Date.now() - 86400e3) }]);
       cases.earlier = asks(stop(question));
-      const want = { statement: false, code: false, mention: false, handOver: true, looped: false, noReply: false, recorded: false, earlier: true };
+      const want = { statement: false, code: false, mention: false, handOver: true, codePage: true, looped: false, noReply: false,
+        recorded: false, earlier: true };
       const wrong = Object.keys(want).filter((k) => cases[k] !== want[k]);
       if (first.includes('may be asking the user') && first.includes('plan-row.py') && !wrong.length) {
         ok('a reply that ends by asking the user, in a turn that recorded no question, is reminded to record it');
@@ -3647,8 +3656,8 @@ console.log('\nwhat the injected block says about the work in hand');
   }
   {
     const text = inject([{ title: 'a', state: 'todo' }]).text;
-    const m = /To change a row: python3 (\S+) (\S+) set <row> <state>/.exec(text);
-    if (m && fs.existsSync(m[1]) && path.basename(m[1]) === 'plan-row.py' && m[2].endsWith(session + '.json')) {
+    const m = new RegExp(`To change a row: python3 ${ARG} ${ARG} set <row> <state>`).exec(text);
+    if (m && fs.existsSync(unquote(m[1])) && path.basename(unquote(m[1])) === 'plan-row.py' && unquote(m[2]).endsWith(session + '.json')) {
       ok('the command that changes a row is given with a path that exists, against this plan');
     } else bad(`the command line is ${JSON.stringify(m && m[0])}`);
   }
@@ -3813,8 +3822,8 @@ console.log('\nthe reminder when a turn starts working');
     begin(t, 'p1');
     let said = '';
     try { said = JSON.parse(batch(t, 'p1', [E, E])).hookSpecificOutput.additionalContext; } catch (_) {}
-    const m = /\n {2}python3 (\S+) (\S+) set <row> doing\n/.exec(said);
-    if (m && fs.existsSync(m[1]) && m[2] === t.plan) ok('what it says names the row command with its full path');
+    const m = new RegExp(`\n {2}python3 ${ARG} ${ARG} set <row> doing\n`).exec(said);
+    if (m && fs.existsSync(unquote(m[1])) && unquote(m[2]) === t.plan) ok('what it says names the row command with its full path');
     else bad(`it said ${JSON.stringify(said.slice(0, 300))}`);
     done(t);
   }
@@ -4140,40 +4149,43 @@ console.log("\nthe reader's time zone, told to the model");
   if (runs('UserPromptSubmit') && runs('SessionStart', 'compact')) ok('it runs on every message and after a compaction, handed the data directory');
   else bad('hooks.json does not run tell-time-zone.py on UserPromptSubmit and on SessionStart after a compaction');
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-tz-'));
-  try {
-    const run = (tz, payload) => {
-      const r = cp.spawnSync('python3', [hook, dir], { input: JSON.stringify(payload), encoding: 'utf8',
-        env: Object.assign({}, process.env, { TZ: tz }) });
-      try { return JSON.parse(r.stdout).hookSpecificOutput; } catch (e) { return r.stdout.trim() || null; }
-    };
-    const prompt = { hook_event_name: 'UserPromptSubmit', session_id: '19c00000-0000-0000-0000-000000000000' };
-    const none = run('UTC', prompt);
-    fs.writeFileSync(path.join(dir, 'client-time-zone.json'), JSON.stringify({ timeZone: 'Asia/Tokyo' }) + '\n');
-    const told = run('UTC', prompt);
-    const again = run('UTC', prompt);
-    const same = run('Asia/Tokyo', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000001' }));
-    const transcript = path.join(dir, 't.jsonl');
-    fs.writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { role: 'assistant',
-      content: [{ type: 'text', text: '[relayed] hello' }] } }) + '\n');
-    const compacted = run('UTC', { hook_event_name: 'SessionStart', source: 'compact', transcript_path: transcript });
-    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ quietWhenReplyMatches: '^\\[relayed\\]' }));
-    const relayed = run('UTC', { hook_event_name: 'SessionStart', source: 'compact', transcript_path: transcript });
-    const stillPrompt = run('UTC', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000002' }));
-    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ tellTimeZone: false }));
-    const off = run('UTC', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000003' }));
-    const text = told && told.additionalContext || '';
-    if (none === null && told && told.hookEventName === 'UserPromptSubmit'
-        && /^The user is in Asia\/Tokyo \(JST, UTC\+09:00\), where it is now \w{3} \d{4}-\d\d-\d\d \d\d:\d\d\. This machine runs on UTC \(UTC\+00:00\)/.test(text)
-        && again === null && same === null && fs.existsSync(path.join(dir, '19c00000-0000-0000-0000-000000000000.tz'))) {
-      ok('with a zone reported and the machine elsewhere, a conversation is told both once; with none reported, or the same zone, nothing');
-    } else bad(`none: ${JSON.stringify(none)}, told: ${JSON.stringify(told)}, again: ${JSON.stringify(again)}, same zone: ${JSON.stringify(same)}`);
-    if (compacted && compacted.hookEventName === 'SessionStart' && relayed === null && stillPrompt && off === null) {
-      ok('after a compaction too, unless the conversation is relaying; and nothing at all once the setting is off');
-    } else bad(`after compaction: ${JSON.stringify(compacted)}, relaying: ${JSON.stringify(relayed)}, `
-      + `message while relaying: ${JSON.stringify(stillPrompt)}, off: ${JSON.stringify(off)}`);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+  if (process.platform === 'win32') note('no time.tzset in Python on Windows, and the zone checks need it');
+  else {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-tz-'));
+    try {
+      const run = (tz, payload) => {
+        const r = cp.spawnSync('python3', [hook, dir], { input: JSON.stringify(payload), encoding: 'utf8',
+          env: Object.assign({}, process.env, { TZ: tz }) });
+        try { return JSON.parse(r.stdout).hookSpecificOutput; } catch (e) { return r.stdout.trim() || null; }
+      };
+      const prompt = { hook_event_name: 'UserPromptSubmit', session_id: '19c00000-0000-0000-0000-000000000000' };
+      const none = run('UTC', prompt);
+      fs.writeFileSync(path.join(dir, 'client-time-zone.json'), JSON.stringify({ timeZone: 'Asia/Tokyo' }) + '\n');
+      const told = run('UTC', prompt);
+      const again = run('UTC', prompt);
+      const same = run('Asia/Tokyo', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000001' }));
+      const transcript = path.join(dir, 't.jsonl');
+      fs.writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { role: 'assistant',
+        content: [{ type: 'text', text: '[relayed] hello' }] } }) + '\n');
+      const compacted = run('UTC', { hook_event_name: 'SessionStart', source: 'compact', transcript_path: transcript });
+      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ quietWhenReplyMatches: '^\\[relayed\\]' }));
+      const relayed = run('UTC', { hook_event_name: 'SessionStart', source: 'compact', transcript_path: transcript });
+      const stillPrompt = run('UTC', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000002' }));
+      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ tellTimeZone: false }));
+      const off = run('UTC', Object.assign({}, prompt, { session_id: '19c00000-0000-0000-0000-000000000003' }));
+      const text = told && told.additionalContext || '';
+      if (none === null && told && told.hookEventName === 'UserPromptSubmit'
+          && /^The user is in Asia\/Tokyo \(JST, UTC\+09:00\), where it is now \w{3} \d{4}-\d\d-\d\d \d\d:\d\d\. This machine runs on UTC \(UTC\+00:00\)/.test(text)
+          && again === null && same === null && fs.existsSync(path.join(dir, '19c00000-0000-0000-0000-000000000000.tz'))) {
+        ok('with a zone reported and the machine elsewhere, a conversation is told both once; with none reported, or the same zone, nothing');
+      } else bad(`none: ${JSON.stringify(none)}, told: ${JSON.stringify(told)}, again: ${JSON.stringify(again)}, same zone: ${JSON.stringify(same)}`);
+      if (compacted && compacted.hookEventName === 'SessionStart' && relayed === null && stillPrompt && off === null) {
+        ok('after a compaction too, unless the conversation is relaying; and nothing at all once the setting is off');
+      } else bad(`after compaction: ${JSON.stringify(compacted)}, relaying: ${JSON.stringify(relayed)}, `
+        + `message while relaying: ${JSON.stringify(stillPrompt)}, off: ${JSON.stringify(off)}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
@@ -4554,7 +4566,7 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
       encoding: 'utf8', input: JSON.stringify({ session_id: sess, hook_event_name: 'UserPromptSubmit' }) });
     let text = '';
     try { text = JSON.parse(r.stdout).hookSpecificOutput.additionalContext; } catch (_) { text = r.stdout + r.stderr; }
-    if (/To change a row: py -3 \S+plan-row\.py \S+ set <row>/.test(text)) ok('the row command in the block starts Python the same way the hooks found it');
+    if (/To change a row: py -3 ('[^']*plan-row\.py'|\S+plan-row\.py) ('[^']*'|\S+) set <row>/.test(text)) ok('the row command in the block starts Python the same way the hooks found it');
     else bad(`row command with a launcher: ${JSON.stringify(text.slice(0, 400))}`);
     /* The first row is written before any hook has run, so the skill itself names the launcher. */
     const skillOf = (d) => fs.readFileSync(path.join(d, pi.PLUGIN, 'skills', 'maintain', 'SKILL.md'), 'utf8');
@@ -4655,7 +4667,8 @@ console.log('\nthe work plan plugin after an uninstall and a reinstall');
 
   /* The disable command must be given the Claude Code installs to find the binary; without them it finds none and does
      nothing. A stand-in binary records the command. */
-  {
+  if (process.platform === 'win32') note('the stand-in binary is a shell script, which Windows cannot run as claude.exe');
+  else {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-disable-'));
     const bin = path.join(root, 'install', pi.BINARY);
     fs.mkdirSync(path.dirname(bin), { recursive: true });
@@ -4723,7 +4736,9 @@ console.log('\nevery call on the work plan view is one it has');
    the editor refuses to clear a name nobody declares, and that a scope is done only once. */
 console.log('\nsettings moved from their old names');
 {
-  const stub = path.join(os.tmpdir(), 'cce-vscode-rename-stub.js');
+  // A real path: on macOS the temporary folder is reached through a symbolic link, and a module required by two spellings
+  // of its path is loaded twice, leaving this test and the extension with two different stand-ins.
+  const stub = path.join(fs.realpathSync(os.tmpdir()), 'cce-vscode-rename-stub.js');
   fs.writeFileSync(stub, `
     class TreeItem { constructor(label, state) { this.label = label; this.collapsibleState = state; } }
     const store = { values: {}, refuseLegacyClear: false, refuseWrite: false, folders: [{ name: 'f', uri: {} }] };
@@ -5040,7 +5055,7 @@ console.log('\nwhat a tick and a change of setting cost');
   /* Nothing else runs extension.js itself, so a name used before its declaration or a throwing hook would only show in
      the editor. This runs it against a stand-in editor API, with a temporary home folder, through activation, a
      settings change, each timer once, the hooks the patched bundles call, an extensions change, and deactivation. */
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-activate-'));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cce-activate-')));
   try {
     const stub = path.join(home, 'vscode-stub.js');
     fs.writeFileSync(stub, `
@@ -5725,7 +5740,7 @@ console.log('\nconversations pinned in the session list');
         const partial = await pins.keep({ ids: new Set(['${A}']), days: 90, projectsDir: path.join(root, 'r'), now });
         fs.chmodSync(path.join(root, 'r', 'locked'), 0o755);
         process.stdout.write(JSON.stringify({ first, ages, soon, stale, second, written, short: age('q/one/${A}.jsonl'), empty, partial,
-          root: process.getuid ? process.getuid() === 0 : false }));
+          root: ${CANNOT_LOCK} }));
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     })().catch((e) => process.stdout.write(JSON.stringify({ error: e.message })));`;
   let k;
@@ -6365,7 +6380,7 @@ console.log('\ndeleting an archived conversation');
     } else bad(`the description was "${text}"`);
     const failed = del.remove(found);
     const left = [];
-    const walk = (d) => { for (const n of fs.readdirSync(d)) { const p = path.join(d, n); if (fs.statSync(p).isDirectory()) walk(p); else left.push(path.relative(root, p)); } };
+    const walk = (d) => { for (const n of fs.readdirSync(d)) { const p = path.join(d, n); if (fs.statSync(p).isDirectory()) walk(p); else left.push(path.relative(root, p).split(path.sep).join('/')); } };
     walk(root);
     const want = [`debug/${B}.txt`, `file-history/${B}/f@v1`, `plans/${B}.json`, `projects/-a/${B}.jsonl`, `projects/-a/${B}/subagents/agent-9.jsonl`].sort();
     if (!failed.length && JSON.stringify(left.sort()) === JSON.stringify(want) && !fs.existsSync(path.join(root, 'projects', '-a', A))) {
@@ -6417,7 +6432,7 @@ console.log('\ndeleting an archived conversation');
       try { all = del.findAll([A, B, 'not-an-id'], { root: root3, planDir: path.join(root3, 'plans') }); }
       finally { fs.readdirSync = realReaddir; }
       const walked = listed.filter((p) => p.startsWith(path.join(root3, 'projects')));
-      const kinds = (id) => all.get(id).map((f) => path.relative(root3, f.path)).sort();
+      const kinds = (id) => all.get(id).map((f) => path.relative(root3, f.path).split(path.sep).join('/')).sort();
       if (all.size === 2 && walked.length === 4 && new Set(walked).size === 4
         && JSON.stringify(kinds(A)) === JSON.stringify([`plans/${A}.json.lock`, `projects/-a/${A}.jsonl`])
         && JSON.stringify(kinds(B)) === JSON.stringify([`projects/-c/${B}.jsonl`])) {

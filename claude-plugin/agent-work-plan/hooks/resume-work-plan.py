@@ -35,7 +35,7 @@ sys.dont_write_bytecode = True
 # The script's folder on the import path: see inject-work-plan.py.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from plan_path import latest_reply_matches, open_tail, plan_file, settings
+from plan_path import latest_reply_matches, open_tail, plan_file, read_payload, settings
 
 
 def message(plan):
@@ -53,7 +53,7 @@ def message(plan):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = read_payload()
     except Exception:
         return 0
     if not isinstance(payload, dict):
@@ -71,7 +71,7 @@ def main():
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SessionStart",
         "additionalContext": message(plan),
-    }}, ensure_ascii=False))
+    }}))
     return 0
 
 

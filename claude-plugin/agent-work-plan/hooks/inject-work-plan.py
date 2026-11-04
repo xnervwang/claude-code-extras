@@ -35,8 +35,8 @@ sys.dont_write_bytecode = True
 # the import path, and plan_path is in it.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from plan_path import (OPEN_STATES, WAITING_ON, any_in, children, epoch, listed, launcher_quoted, plan_file, row_command,
-                       settings, write_turn)
+from plan_path import (OPEN_STATES, WAITING_ON, any_in, children, epoch, listed, launcher_quoted, plan_file,
+                       read_payload, row_command, settings, write_turn)
 
 GLYPH = {"discussing": "?", "todo": "o", "doing": ">", "waiting": "~", "parked": "=", "done": "+", "dropped": "x"}
 # Row cap for the injected block. Top-level rows are always drawn; only the rows under them are cut (see rows).
@@ -160,7 +160,7 @@ def counts(nodes, acc=None):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = read_payload()
     except Exception:
         return 0
     if not isinstance(payload, dict) or not settings()["enabled"]:

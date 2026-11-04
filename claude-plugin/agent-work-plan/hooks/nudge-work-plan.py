@@ -60,7 +60,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from changes import changes
 from plan_path import (NUDGED_SUFFIX, OFFERED_SUFFIX, SETTLED_SUFFIX, children, epoch, listed, open_tail, plan_file,
-                       row_command, settings, side_file, turn_began, write_quietly)
+                       read_payload, row_command, settings, side_file, turn_began, write_quietly)
 
 # Every threshold this uses is in plan_path.DEFAULTS, where the editor's settings can override it.
 
@@ -99,6 +99,12 @@ def spoke(row):
     return isinstance(content, str) and not content.lstrip().startswith("[Request interrupted")
 
 
+def spellings(path):
+    """Spellings of `path` in a raw transcript line. JSON doubles a Windows path's backslashes, and a model may write
+    the path with forward slashes."""
+    return {s for s in (path, json.dumps(path, ensure_ascii=False)[1:-1], path.replace("\\", "/")) if s}
+
+
 def turn_shape(tail, plan="", began=None):
     """Shape of the current turn: (start time in epoch seconds, tool calls, changes, user turns, whether a tool call
     went to the plan).
@@ -116,6 +122,7 @@ def turn_shape(tail, plan="", began=None):
     time and the reminder would never be able to fire at all.
     """
     started, tools, changes, turns, reached = began, 0, 0, 0, False
+    names = spellings(plan) if plan else set()
     in_turn = True
     for line in tail.lines(TURN_TAIL):
         used_tool = '"tool_use"' in line
@@ -139,7 +146,7 @@ def turn_shape(tail, plan="", began=None):
         if in_turn and used_tool:
             tools += 1
             changes += changed(row)
-            if plan and plan in line:
+            if any(n in line for n in names):
                 reached = True
     return started, tools, changes, turns, reached
 
@@ -326,7 +333,7 @@ def unrecorded_question(payload, path, tail):
 
 def main():
     try:
-        payload = json.load(sys.stdin)
+        payload = read_payload()
     except Exception:
         return 0
     path = plan_file(payload)
