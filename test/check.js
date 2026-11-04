@@ -5376,26 +5376,37 @@ console.log('\na panel whose bundle never arrives says so');
       ok('stateOf maps the icon key and session state to waiting, running, unread or idle');
     } else bad(`tab states: ${JSON.stringify(states)}`);
 
-    const waiting = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16z" fill="#D97757"/><circle r="4.5" fill="#3B82F6"/></svg>';
-    const green = tabdot.greenDot(waiting);
-    if (green === waiting.replace('#3B82F6', '#89d185') && tabdot.greenDot(waiting.replace('</svg>', '<circle fill="#3B82F6"/></svg>')) === ''
-        && tabdot.greenDot('<svg/>') === '') {
-      ok('greenDot turns the waiting icon\'s blue dot green, and gives up on an icon with no single blue fill');
-    } else bad(`green dot: ${JSON.stringify(green)}`);
+    const waiting = '<svg viewBox="0 0 24 24"><defs><mask id="m"><rect width="24" height="24" fill="white"/>'
+      + '<circle cx="19.5" cy="4.5" r="6.5" fill="black"/></mask></defs><path mask="url(#m)" d="M4 4h16v16z" fill="#D97757"/>'
+      + '<circle cx="19.5" cy="4.5" r="4.5" fill="#3B82F6"/></svg>';
+    const blue = tabdot.withDot(waiting, tabdot.BLUE), green = tabdot.withDot(waiting, tabdot.GREEN), red = tabdot.withDot(waiting, tabdot.RED);
+    const grown = (c) => waiting.replace('<circle cx="19.5" cy="4.5" r="6.5" fill="black"/>', '<circle cx="18.5" cy="5.5" r="6.5" fill="black"/>')
+      .replace('<circle cx="19.5" cy="4.5" r="4.5" fill="#3B82F6"/>', `<circle cx="18.5" cy="5.5" r="5.5" fill="${c}"/>`);
+    if (blue === grown('#3b82f6') && green === grown('#22c55e') && red === grown('#ef4444')
+        && tabdot.withDot(waiting.replace('</svg>', '<circle cx="1" cy="1" r="1" fill="#3B82F6"/></svg>'), tabdot.GREEN) === ''
+        && tabdot.withDot('<svg/>', tabdot.RED) === '') {
+      ok('withDot draws a larger dot in the given colour');
+    } else bad(`dots: ${JSON.stringify([blue, green, red])}`);
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-tabicon-'));
     const res = path.join(root, 'resources'), out = path.join(root, 'icons');
     fs.mkdirSync(res);
-    for (const [, name] of Object.entries(tabdot.FILES)) fs.writeFileSync(path.join(res, name), name === tabdot.FILES.waiting ? waiting : '<svg/>');
+    for (const name of Object.values(tabdot.FILES)) fs.writeFileSync(path.join(res, name), name === tabdot.FILES.waiting ? waiting : '<svg/>');
     const cache = new Map();
     const icons = tabdot.iconsFor(res, out, cache);
     const again = tabdot.iconsFor(res, out, cache);
-    if (icons && again === icons && icons.idle === path.join(res, tabdot.FILES.idle) && icons.waiting === path.join(res, tabdot.FILES.waiting)
-        && icons.unread === path.join(res, tabdot.FILES.unread) && path.dirname(icons.running) === out
-        && fs.readFileSync(icons.running, 'utf8') === green && tabdot.iconsFor(path.join(root, 'missing'), out, new Map()) === null) {
-      ok('iconsFor writes the green icon once and points the others at Claude Code\'s files');
+    if (icons && again === icons && icons.idle === path.join(res, tabdot.FILES.idle)
+        && [['waiting', blue], ['running', green], ['unread', red]].every(([st, svg]) => path.dirname(icons[st]) === out
+          && fs.readFileSync(icons[st], 'utf8') === svg)
+        && tabdot.iconsFor(path.join(root, 'missing'), out, new Map()) === null) {
+      ok('iconsFor writes the three dotted icons once');
     } else bad(`tab icons: ${JSON.stringify(icons)}`);
     fs.rmSync(root, { recursive: true, force: true });
+
+    const live = require('../src/webview').liveCss({}), off = require('../src/webview').liveCss({ enabled: false });
+    if (live.includes('[class*="sessionItem_"]{--app-status-busy:#22c55e;--app-status-unread:#ef4444;}') && !off.includes('sessionItem_')) {
+      ok('the session list\'s running and unread dots turn green and red');
+    } else bad('the live stylesheet does not colour the list\'s dots as expected');
 
     const T = 'Fix the build';
     const titles = tabdot.MARKS.map((m) => tabdot.withoutMark(T + m)).concat([tabdot.withoutMark(T), tabdot.withoutMark(undefined)]);
