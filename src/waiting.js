@@ -82,6 +82,18 @@ function merge(records) {
   return by;
 }
 
+/**
+ * A conversation's process ids from `claude agents`, in ascending order (two windows can hold one conversation). With
+ * claudeCode.claudeProcessWrapper set, these are the claude processes, not the wrapper.
+ */
+function pidsOf(records, sessionId) {
+  const out = new Set();
+  for (const r of records || []) {
+    if (r && r.sessionId === sessionId && Number.isInteger(r.pid) && r.pid > 0) out.add(r.pid);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
 /* So that /home/x and /local/home/x match when one is a symbolic link to the other. */
 const realPath = (p) => { try { return fs.realpathSync.native(p); } catch (_) { return path.resolve(p); } };
 const caseOf = process.platform === 'win32' ? (s) => s.toLowerCase() : (s) => s;
@@ -176,5 +188,5 @@ function reader() {
 }
 
 module.exports = {
-  parseAgents, listAgents, isDefaultName, merge, inFolders, transcriptTitles, planQuestions, reader,
+  parseAgents, listAgents, isDefaultName, merge, pidsOf, inFolders, transcriptTitles, planQuestions, reader,
 };

@@ -2,10 +2,18 @@
 // Copyright (c) 2026, Xnerv Wang
 // All rights reserved.
 
-// The session id, the directory the conversation started in, where its transcripts are kept, and their size.
+// The session id, the Claude process id, the directory the conversation started in, where its transcripts are kept,
+// and their size.
 // Fragment of the in-page script - see README.md in this folder.
 
   var INFO = null, INFOBOX = null, infoWired = false;
+  /*
+   * Process ids by session id, from `claude agents` (pidsOf in src/waiting.js). Claude Code does not give the page
+   * these, so the box asks this extension for them each time it opens. With an older host patch nothing answers, and
+   * the row says unknown.
+   */
+  var PROCS = {}, procsWired = false;
+  var PROC_WAIT_MS = 20000;
 
   var bytesFmt = function(n){
     if (typeof n !== 'number' || !isFinite(n) || n < 0) return '';
@@ -35,8 +43,19 @@
    */
   var bucketName = function(cwd){ return String(cwd).replace(/[^a-zA-Z0-9]/g, '-'); };
 
+  var procText = function(sid){
+    var p = sid && PROCS[sid];
+    if (!p) return '';
+    if (p.pids === undefined) return Date.now() - p.at > PROC_WAIT_MS ? 'unknown' : 'looking it up';
+    if (p.pids === null) return 'unknown';
+    return p.pids.length ? p.pids.join(', ') : 'none running';
+  };
+
   var infoRows = function(){
-    var rows = [['Session', sigValue('sessionId') || 'no session id yet']];
+    var sid = sigValue('sessionId');
+    var rows = [['Session', sid || 'no session id yet']];
+    var proc = procText(sid);
+    if (proc) rows.push(['Process', proc]);
     var cwd = sigValue('cwd');
     if (cwd) {
       rows.push(['Project', String(cwd)]);
@@ -76,6 +95,28 @@
   };
 
   var infoOpen = function(){ return !!(INFOBOX && INFOBOX.style.display === 'block'); };
+
+  var askProcess = function(){
+    var sid = sigValue('sessionId');
+    if (typeof sid !== 'string' || !sid) return;
+    PROCS[sid] = { at: Date.now() };
+    if (!procsWired) {
+      procsWired = true;
+      window.addEventListener('message', function(ev){
+        var d = ev && ev.data, m = d && d.type === 'from-extension' ? d.message : null;
+        if (!m || m.type !== 'cce_process' || typeof m.sessionId !== 'string' || !PROCS[m.sessionId]) return;
+        var pids = Array.isArray(m.pids) ? m.pids.filter(function(n){ return typeof n === 'number'; }) : null;
+        PROCS[m.sessionId] = { at: Date.now(), pids: pids };
+        if (infoOpen() && sigValue('sessionId') === m.sessionId) renderInfo();
+      });
+    }
+    try { acquireVsCodeApi().postMessage({ type: 'cce_process_ask', sessionId: sid }); }
+    catch (e) { PROCS[sid].pids = null; return; }
+    setTimeout(function(){
+      var p = PROCS[sid];
+      if (p && p.pids === undefined && infoOpen() && sigValue('sessionId') === sid) renderInfo();
+    }, PROC_WAIT_MS + 100);
+  };
   var closeInfo = function(){ if (INFOBOX) INFOBOX.style.display = 'none'; };
 
   var renderInfo = function(){
@@ -140,8 +181,8 @@
     INFO.type = 'button';
     INFO.setAttribute('data-cce-info', '1');
     INFO.textContent = String.fromCharCode(8505);   // information source
-    setLabel(INFO, 'About this conversation: its session id, the directory it started in, where its transcripts are '
-      + 'kept, and their size');
+    setLabel(INFO, 'About this conversation: its session id, process id, the directory it started in, where its '
+      + 'transcripts are kept, and their size');
     var proto = document.querySelector('button[class*="menuButton"]');
     if (proto) INFO.className = proto.className;
     else {
@@ -154,6 +195,7 @@
       ev.preventDefault(); ev.stopPropagation();
       if (infoOpen()) { closeInfo(); return; }
       ensureInfoBox();
+      askProcess();
       renderInfo();
       var r = INFO.getBoundingClientRect();
       INFOBOX.style.bottom = Math.max(8, window.innerHeight - r.top + 6) + 'px';

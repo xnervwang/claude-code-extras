@@ -702,9 +702,29 @@ function start(context, renamed) {
       if (!statesTimer) statesTimer = setTimeout(() => { statesTimer = 0; refreshConversations(false); }, 300);
     } catch (_) { /* the next update */ }
   };
+  /* The info box asks for its conversation's process id. `claude agents` is run for it unless the last run is under
+     half a minute old. */
+  let pidsAsk = null;
+  const freshAgents = () => {
+    if (agentsLast.records && Date.now() - agentsAt < 30000) return Promise.resolve(agentsLast);
+    if (!pidsAsk) {
+      pidsAsk = waiting.listAgents(pluginInstall.findClaude(claudeFolders()))
+        .then((r) => { if (r.records) { agentsLast = r; agentsAt = Date.now(); } return r; })
+        .finally(() => { pidsAsk = null; });
+    }
+    return pidsAsk;
+  };
+  globalThis.__cceProcessHook = (sessionId) => {
+    if (removed() || !enabled() || switchedOff().includes('footerInfo')) return;
+    freshAgents().then((r) => {
+      const reply = { type: 'cce_process', sessionId, pids: r.records ? waiting.pidsOf(r.records, sessionId) : null };
+      if (typeof globalThis.__cceToPanel === 'function') globalThis.__cceToPanel(sessionId, reply);
+    }).catch((e) => log.appendLine('process for the info box: ' + (e && e.message)));
+  };
   context.subscriptions.push({ dispose: () => {
     if (statesTimer) clearTimeout(statesTimer);
     if (globalThis.__cceStatesHook) delete globalThis.__cceStatesHook;
+    if (globalThis.__cceProcessHook) delete globalThis.__cceProcessHook;
   } });
 
   const courier = new answers.Courier({

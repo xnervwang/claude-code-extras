@@ -128,7 +128,7 @@ Verified against Claude Code 2.1.314 and 2.1.317.
 | **Background commands:** See a count such as `1 task` while a background build, test run or `sleep` timer runs, with the list one click away. | Footer |
 | **Tabs back after a restart:** Claude Code tabs that were open when the window closed but that VS Code did not restore, as can happen after the window lost its remote connection, are opened again when it starts. Tabs you closed while connected stay closed. | Editor tabs |
 | **Status dots:** a Claude Code tab's logo shows a green dot while Claude works and a red one when it finished while you were away, where Claude Code shows nothing and orange. The session list uses the same green and red. | Editor tabs, session list |
-| **Session information:** See the session ID, starting directory, transcript location and size; click a value to copy it. | Footer button |
+| **Session information:** See the session ID, Claude's process ID, starting directory, transcript location and size; click a value to copy it. | Footer button |
 | **Request limit for Claude Code tabs:** VS Code allows 32 requests in flight at once across all Claude Code tabs, and a tab can stay blank while it waits. If you agree, it is raised to 1000000 in VS Code's `service-worker.js`, including after updates; restart VS Code afterwards. On Linux, where VS Code added the limit, it asks every time. | VS Code's own files |
 
 With Claude Code's Focus view on, the tool calls are folded:

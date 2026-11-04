@@ -90,8 +90,9 @@ const EDITS = [
   },
   /*
    * Messages from a panel meant for this extension: the panel's time zone, a conversation pinned or unpinned in the
-   * session list, a text color chosen for conversations there, archived conversations to delete, and whether an answer
-   * from the Conversations tab was sent (src/page/91-answer.js).
+   * session list, a text color chosen for conversations there, archived conversations to delete, whether an answer
+   * from the Conversations tab was sent (src/page/91-answer.js), and the info box asking for its conversation's
+   * process id (src/page/80-session-info.js).
    *
    * Every message a panel sends passes through the one function that logs it, before anything decides what the message
    * is, and Claude Code itself ignores all of these types. A global is how each reaches this extension - both run in one
@@ -110,7 +111,9 @@ const EDITS = [
       + `else if(${msg}&&${msg}.type==="cce_delete_sessions"&&Array.isArray(${msg}.sessions)){`
       + `globalThis.__cceDeleteHook&&globalThis.__cceDeleteHook(${msg}.sessions)}`
       + `else if(${msg}&&${msg}.type==="cce_answer_result"&&typeof ${msg}.id==="string"){`
-      + `globalThis.__cceAnswerHook&&globalThis.__cceAnswerHook(${msg}.id,${msg}.sent===true,typeof ${msg}.reason==="string"?${msg}.reason:"")}}catch(e){}${rest}`,
+      + `globalThis.__cceAnswerHook&&globalThis.__cceAnswerHook(${msg}.id,${msg}.sent===true,typeof ${msg}.reason==="string"?${msg}.reason:"")}`
+      + `else if(${msg}&&${msg}.type==="cce_process_ask"&&typeof ${msg}.sessionId==="string"){`
+      + `globalThis.__cceProcessHook&&globalThis.__cceProcessHook(${msg}.sessionId)}}catch(e){}${rest}`,
   },
   /*
    * A conversation opened from the session list in the place asked for (src/page/86-open-in-tab-or-sidebar.js). The
@@ -140,7 +143,8 @@ const EDITS = [
    * window - and which of them are running in another window. This extension reopens the tabs VS Code did not bring back (src/droppedtabs.js). Also a way to tell every
    * panel that the conversations on disk changed, which makes the session list read them again, used after a delete.
    * And a way to hand an answer to the panel showing a conversation, in a tab or in the sidebar (src/answers.js): asked
-   * without text, it only says whether this window has such a panel.
+   * without text, it only says whether this window has such a panel. The same lookup sends the info box its process id
+   * (__cceToPanel).
    */
   {
     name: 'tab record at start',
@@ -156,6 +160,9 @@ const EDITS = [
       + 'if(!cceC&&this.sidebarComms&&this.sidebarChatShows?.()===cceId)cceC=this.sidebarComms;'
       + 'if(!cceC)return!1;if(cceText===void 0)return!0;'
       + 'cceC.send({type:"cce_answer",sessionId:cceId,text:cceText,id:cceKey});return!0},'
+      + 'globalThis.__cceToPanel=(cceId,cceMsg)=>{let cceP=this.sessionPanels.get(cceId),cceC=cceP?this.panelComms.get(cceP):void 0;'
+      + 'if(!cceC&&this.sidebarComms&&this.sidebarChatShows?.()===cceId)cceC=this.sidebarComms;'
+      + 'if(!cceC)return!1;cceC.send(cceMsg);return!0},'
       + 'this.reconcileRememberedTabSessions()',
   },
   /*

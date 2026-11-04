@@ -6944,6 +6944,14 @@ console.log('\nconversations');
     ok('two processes holding one conversation are one conversation, waiting if either is, busy if either is running a turn');
   } else bad(`merged ${JSON.stringify([...merged.values()])}`);
 
+  const pids = w.pidsOf([
+    { sessionId: S(1), pid: 4321 }, { sessionId: S(1), pid: 812 }, { sessionId: S(1), pid: 812 },
+    { sessionId: S(1), pid: '99' }, { sessionId: S(1), pid: -3 }, { sessionId: S(2), pid: 77 }, null,
+  ], S(1));
+  if (JSON.stringify(pids) === '[812,4321]' && JSON.stringify(w.pidsOf([{ sessionId: S(2), pid: 77 }], S(1))) === '[]') {
+    ok('pidsOf drops duplicates and other sessions, and sorts');
+  } else bad(`pidsOf ${JSON.stringify(pids)}`);
+
   const plans = {
     [S(2)]: { title: '', nodes: [
       { title: 'publish', state: 'waiting', since: now - 3 * DAY, asked: now - 3600e3, waitingOn: 'user', question: 'Publish 1.0.20 now?', note: 'n', detail: 'd', children: [] },
@@ -7279,6 +7287,35 @@ console.log('\nanswering from the Conversations tab');
         ['sidebar', { type: 'cce_answer', sessionId: 'B', text: 'yo', id: 'k2' }]])) {
       ok('the host gives an answer to the tab or the sidebar showing that conversation, and to nothing else');
     } else bad(`host answer hand-off: ${JSON.stringify([!!m, results, sentTo])}`);
+
+    const p = /globalThis\.__cceToPanel=(\(cceId,cceMsg\)=>\{.*?return!0\}),/.exec(code);
+    sentTo.length = 0;
+    let toPanel = null;
+    try { toPanel = p && new Function('return function(){ return ' + p[1] + '; }')().call(fake); } catch (_) { toPanel = null; }
+    const said = toPanel ? [toPanel('A', { type: 'cce_process', pids: [1] }), toPanel('B', { type: 'cce_process', pids: [] }),
+      toPanel('C', { type: 'cce_process', pids: null })] : [];
+    if (toPanel && JSON.stringify(said) === '[true,true,false]'
+      && JSON.stringify(sentTo) === JSON.stringify([['tab', { type: 'cce_process', pids: [1] }], ['sidebar', { type: 'cce_process', pids: [] }]])) {
+      ok('__cceToPanel sends only to the tab or sidebar showing the conversation');
+    } else bad(`host process hand-off: ${JSON.stringify([!!p, said, sentTo])}`);
+  }
+
+  {
+    const host = require('../src/host');
+    const edit = host.EDITS.find((e) => e.name === 'panel messages');
+    const fn = 'function eT($,J){let Q=`Received message from webview: ${bl0(J)}`;$.info(Q)}';
+    const r = require('../src/edits').applyEdits(fn, [edit]);
+    const asked = [];
+    const env = { bl0: (m) => JSON.stringify(m), out: null, __cceProcessHook: (id) => asked.push(id) };
+    env.globalThis = env;
+    vm.createContext(env);
+    if (!r.error) {
+      vm.runInContext(r.out + ';eT({info:(q)=>out=q},{type:"cce_process_ask",sessionId:"s1"});'
+        + 'eT({info:(q)=>out=q},{type:"cce_process_ask",sessionId:7});', env);
+    }
+    if (!r.error && JSON.stringify(asked) === '["s1"]' && /^Received message from webview: /.test(env.out)) {
+      ok('a cce_process_ask message reaches __cceProcessHook and is still logged');
+    } else bad(`process question: ${r.error || JSON.stringify([asked, env.out])}`);
   }
 
   /* The Answer view: a question shown with its draft, Ctrl+Enter's message sending it, and a sent one clearing the box. */
