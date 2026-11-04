@@ -7357,6 +7357,19 @@ console.log('\nanswering from the Conversations tab');
   }
 }
 
+console.log('\nthe workflows');
+{
+  const dir = path.join(__dirname, '..', '.github', 'workflows');
+  const bare = [];
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.yml'))) {
+    fs.readFileSync(path.join(dir, name), 'utf8').split('\n').forEach((line, i) => {
+      if (/^\s*if:/.test(line) && /steps\./.test(line) && !/(always|failure|success|cancelled)\(\)/.test(line)) bare.push(`${name}:${i + 1}`);
+    });
+  }
+  if (!bare.length) ok('every workflow if: that reads a step output names failure() or always()');
+  else bad(`a step condition that skips after a failure: ${bare.join(', ')}`);
+}
+
 console.log('\nVS Code\'s request limit for webview tabs');
 {
   /* test/webview-limit-check.js works through an asynchronous file system, so it runs as a child and reports back. */
