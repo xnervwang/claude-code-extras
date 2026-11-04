@@ -195,7 +195,7 @@ const EDITS = [
     to: (m, comms, view) => `onDidChangeVisibility(()=>{${comms}.notifyVisibilityChange(${view}.visible),this.updateSidebarActiveState(),this.broadcastSessionStates()}`,
   },
   /*
-   * The dot after a tab's title (src/tabdot.js says what it is for).
+   * The colour of a tab's icon (src/tabdot.js says what it is for).
    *
    * The host sets a tab's icon in applyTabIcon. Right after that, it passes the icon key and tabBadgeAnchor.state to
    * this extension through a global, as it does for the active conversation and the time zone: both run in one

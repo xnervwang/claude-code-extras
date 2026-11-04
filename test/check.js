@@ -5366,24 +5366,52 @@ console.log('\na panel whose bundle never arrives says so');
       } else bad(`after the pin messages: heard pins ${JSON.stringify(pins)}, zones ${JSON.stringify(heard)}, logged without a hook: ${unheard}`);
     }
   }
-  /* The unread dot after a tab's title: the host hands over the state it picked the icon for, this extension writes the
-     title. The title the host set is the base, so a dot of ours never piles up and goes when the state moves on. */
+  /* The colour of a tab's icon: the host hands over the state it picked the icon for and the conversation's state, and
+     this extension swaps the icon for the logo in that state's colour, made from the logo the host just set. */
   {
-    const { withDot, markFor, MARKS } = require('../src/tabdot');
+    const tabdot = require('../src/tabdot');
+    const states = [['pending', 'running'], ['pending', 'idle'], ['plain', 'running'], ['done', 'idle'], ['plain', 'idle'],
+      ['plain', undefined], ['done', 'waiting_input']].map(([i, r]) => tabdot.stateOf(i, r));
+    if (JSON.stringify(states) === JSON.stringify(['waiting', 'waiting', 'running', 'unread', 'idle', 'idle', 'unread'])) {
+      ok('stateOf maps the icon key and session state to waiting, running, unread or idle');
+    } else bad(`tab states: ${JSON.stringify(states)}`);
+
+    const logo = '<svg viewBox="0 0 24 24"><title>Claude</title><path d="M4 4h16v16z" fill="#D97757"/></svg>';
+    const made = Object.keys(tabdot.COLORS).map((st) => tabdot.recolor(logo, st));
+    if (made[0].includes('fill="#3b82f6"') && made[1].includes('fill="#89d185"') && made[2].includes('fill="#d97757"')
+        && !made[2].includes('fill-opacity') && made[3].includes('fill="#d97757" fill-opacity="0.5"')
+        && made.every((m) => m.includes('d="M4 4h16v16z"') && !/D97757/.test(m))
+        && tabdot.recolor(logo.replace('</svg>', '<path fill="#D97757"/></svg>'), 'idle') === ''
+        && tabdot.recolor('<svg/>', 'idle') === '' && tabdot.recolor(logo, 'other') === '') {
+      ok('recolor swaps the fill colour, and gives up on a logo with no single orange fill');
+    } else bad(`recoloured logos: ${JSON.stringify(made)}`);
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-tabicon-'));
+    const src = path.join(root, 'resources', tabdot.LOGO), out = path.join(root, 'icons');
+    fs.mkdirSync(path.dirname(src));
+    fs.writeFileSync(src, logo);
+    const cache = new Map();
+    const icons = tabdot.iconsFor(src, out, cache);
+    const again = tabdot.iconsFor(src, out, cache);
+    const files = icons ? Object.values(icons) : [];
+    if (icons && again === icons && files.length === 4 && files.every((f) => fs.existsSync(f) && path.dirname(f) === out)
+        && fs.readFileSync(icons.waiting, 'utf8') === tabdot.recolor(logo, 'waiting')
+        && tabdot.iconsFor(path.join(root, 'missing.svg'), out, new Map()) === null) {
+      ok('iconsFor writes the four icons once, and returns null for a missing logo');
+    } else bad(`tab icons: ${JSON.stringify(icons)}`);
+    fs.rmSync(root, { recursive: true, force: true });
+
     const T = 'Fix the build';
-    const got = [withDot(T, 'done', true), withDot(T + MARKS.done, 'done', true), withDot(T + MARKS.done, 'pending', true),
-      withDot(T + MARKS.pending, 'plain', true), withDot(T + ' \u25CF', 'plain', true), withDot(T + MARKS.done, 'done', false),
-      withDot(undefined, 'plain', true)];
-    const want = [T + MARKS.done, T + MARKS.done, T + MARKS.pending, T, T, T, ''];
-    if (JSON.stringify(got) === JSON.stringify(want) && MARKS.done !== MARKS.pending) {
-      ok('a tab gets one dot after its title in the colour of the dot on its icon, and loses it when the state moves on');
-    } else bad(`tab titles: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
-    const marks = [markFor('plain', 'running'), markFor('pending', 'running'), markFor('done', 'idle'), markFor('plain', 'idle'),
-      markFor('plain', undefined), withDot(T + MARKS.running, 'plain', true), withDot(T + MARKS.done, 'running', true)];
-    if (JSON.stringify(marks) === JSON.stringify(['running', 'pending', 'done', 'plain', 'plain', T, T + MARKS.running])
-        && new Set([MARKS.pending, MARKS.done, MARKS.running]).size === 3) {
-      ok('a running conversation gets a green mark after its tab title, unless it waits for you');
-    } else bad(`running marks: ${JSON.stringify(marks)}`);
+    const titles = tabdot.MARKS.map((m) => tabdot.withoutMark(T + m)).concat([tabdot.withoutMark(T), tabdot.withoutMark(undefined)]);
+    if (titles.every((t, i) => t === (i === titles.length - 1 ? '' : T))) {
+      ok('withoutMark strips an old mark from a tab title');
+    } else bad(`titles: ${JSON.stringify(titles)}`);
+
+    const live = require('../src/webview').liveCss({}), dark = require('../src/webview').liveCss({ enabled: false });
+    if (/\[class\*="sessionItem_"\] \[data-status-dot="idle"\]:not\(\[class\*="statusDotElsewhere_"\]\)\{background:#d97757 !important;opacity:0\.5/.test(live)
+        && !dark.includes('data-status-dot')) {
+      ok('the live stylesheet colours idle dots light orange only while the extension is on');
+    } else bad('the live stylesheet does not colour the idle dot as expected');
 
     const edit = host.EDITS.find((e) => e.name === 'tab dot');
     const method = 'class T{applyTabIcon(){if(!this.panelTab)return;let $=pick(this.lastRenameTabFlags,this.badge1,'
@@ -5410,9 +5438,10 @@ console.log('\na panel whose bundle never arrives says so');
     ok('the extension redraws on a reported zone and picks it up on every refresh');
   } else bad('extension.js does not read the reported time zone');
   if (/globalThis\.__cceTabDot = \(panel, state, run\) =>/.test(ext)
-      && /tabdot\.withDot\(panel\.title, tabdot\.markFor\(state, run\), enabled\(\) && !removed\(\)\)/.test(ext)) {
-    ok('the extension writes the tab dot, and only while it is on and not removed');
-  } else bad('extension.js does not handle the tab dot');
+      && /const set = enabled\(\) && !removed\(\) && panel\.iconPath && panel\.iconPath\.fsPath;/.test(ext)
+      && /icons\[tabdot\.stateOf\(state, run\)\]/.test(ext) && /panel\.title = title/.test(ext)) {
+    ok('the hook colours the icon only while the extension is on, and always strips old title marks');
+  } else bad('extension.js does not handle the tab icon');
   if (/globalThis\[host\.LOAD_WATCH_OFF\] = !cfg\(\)\.get\(LATENCY_ON_SETTING, true\)/.test(ext)
     && /affectsConfiguration\(LATENCY_ON_SETTING\)\) loadWatchOff\(\)/.test(ext)) {
     ok('the latency setting drives the watch, at activation and whenever it changes');
@@ -6218,7 +6247,7 @@ console.log('\ntabs VS Code did not restore');
   const dropped = require('../src/droppedtabs');
   const { applyEdits } = require('../src/edits');
   const id = (n) => `0000000${n}-0000-4000-8000-000000000000`;
-  const strip = (t) => require('../src/tabdot').withDot(t, 'plain', false);
+  const strip = (t) => require('../src/tabdot').withoutMark(t);
   const record = [
     { sessionId: id(1), title: 'Shown in a tab' },
     { sessionId: id(2), title: 'Restored, not yet matched' },

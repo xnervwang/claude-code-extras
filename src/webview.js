@@ -57,6 +57,7 @@ const vm = require('vm');
 const crypto = require('crypto');
 
 const { applyEdits, shapesOf } = require('./edits');
+const tabdot = require('./tabdot');
 
 const VERSION = 32;
 
@@ -121,6 +122,12 @@ const EDGE_CSS = `${USER_SELECTOR}{`
   + 'border-left:calc(3px * var(--cce-edge, 1) * var(--cce-on, 1)) solid '
   + 'var(--vscode-focusBorder, var(--vscode-textLink-foreground)) !important;'
   + 'padding-left:calc(6px + 2px * var(--cce-edge, 1) * var(--cce-on, 1)) !important;}';
+
+/* The session list's dot for an open conversation that is idle, in the lighter orange its tab's icon has
+   (src/tabdot.js); a hollow one means the conversation is open somewhere else. */
+const IDLE_DOT_CSS = `[class*="sessionItem_"] [data-status-dot="idle"]:not([class*="statusDotElsewhere_"]){`
+  + `background:${tabdot.COLORS.idle} !important;opacity:${tabdot.IDLE_OPACITY} !important;}`
+  + `[class*="sessionItem_"] [data-status-dot="idle"][class*="statusDotElsewhere_"]{border-color:${tabdot.COLORS.idle} !important;}`;
 
 /** A CSS colour the user typed, or '' when it is not a plain colour - nothing else may reach the stylesheet. */
 function safeColor(value) {
@@ -245,6 +252,7 @@ function liveCss(opts = {}) {
   /* Kept whenever anything is on: this one rule renders the attribute that carries the time, the sub-agent tag, the
      duration and the figures, so dropping it would switch off four things instead of one. */
   if (on) css += STAMP_CSS + '\n';
+  if (on) css += IDLE_DOT_CSS + '\n';
   /* Claude Code (2.1.284 and later) draws its own time on your messages and on replies with text: at the top right, in
      its own format, and on those two kinds only. Shown beside this script's, the same message carried two times in two
      places, and a reply's tool calls a third format - so while this script's times are on, Claude Code's are hidden and

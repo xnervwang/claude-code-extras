@@ -831,12 +831,19 @@ function start(context, renamed) {
   /* A panel can report before this activates, and then only the global above holds its zone. */
   writeClientZone();
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTzHook) delete globalThis.__cceTzHook; } });
-  /* The patched host hands over each editor tab's state as it picks the tab's icon; the title gets a coloured dot
-     (src/tabdot.js). */
+  /* The patched host hands over each editor tab's state as it picks the tab's icon; the icon is swapped for the logo
+     in that state's colour (src/tabdot.js). */
+  const tabIcons = new Map();
   globalThis.__cceTabDot = (panel, state, run) => {
     try {
-      const want = tabdot.withDot(panel.title, tabdot.markFor(state, run), enabled() && !removed());
-      if (panel.title !== want) panel.title = want;
+      const title = tabdot.withoutMark(panel.title);
+      if (panel.title !== title) panel.title = title;
+      const set = enabled() && !removed() && panel.iconPath && panel.iconPath.fsPath;
+      if (!set) return;
+      const icons = tabdot.iconsFor(path.join(path.dirname(set), tabdot.LOGO),
+        path.join(context.globalStorageUri.fsPath, 'tab-icons'), tabIcons);
+      const file = icons && icons[tabdot.stateOf(state, run)];
+      if (file) panel.iconPath = vscode.Uri.file(file);
     } catch (e) { /* never break the host's own icon update */ }
   };
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTabDot) delete globalThis.__cceTabDot; } });
@@ -953,7 +960,7 @@ function start(context, renamed) {
   const DROPPED_WAIT_MS = 10 * 60000, DROPPED_RECHECK_MS = 15000;
   const isClaudeTab = (t) => t.input instanceof vscode.TabInputWebview && String(t.input.viewType).includes('claudeVSCodePanel');
   const claudeLabels = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs.filter(isClaudeTab).map((t) => t.label));
-  const stripMark = (t) => tabdot.withDot(t, 'plain', false);
+  const stripMark = (t) => tabdot.withoutMark(t);
   const reopenTabs = async (list, why) => {
     const group = vscode.window.tabGroups.activeTabGroup, front = group && group.activeTab;
     const at = front ? group.tabs.indexOf(front) : -1, column = group && group.viewColumn;
