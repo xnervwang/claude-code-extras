@@ -197,14 +197,28 @@ const EDITS = [
   /*
    * The colour of a tab's icon (src/tabdot.js says what it is for).
    *
-   * The host sets a tab's icon in applyTabIcon. Right after that, it passes the icon key and tabBadgeAnchor.state to
-   * this extension through a global, as it does for the active conversation and the time zone: both run in one
-   * extension host process.
+   * applyTabIcon gets the icon from this extension through a global, passing the icon key, tabBadgeAnchor.state and
+   * the host's folder, and keeps its own only when none comes back. Setting the host's icon and then ours made the tab
+   * show the host's for a moment.
    */
   {
     name: 'tab dot',
-    re: /(let ([\w$]+)=[\w$]+\(this\.lastRenameTabFlags,this\.([\w$]+),[^;]*;this\.panelTab\.iconPath=[\w$]+\.Uri\.file\([\w$]+\.join\(this\.context\.extensionPath,"resources",[\w$]+\[\2\]\)\))\}/g,
-    to: (m, set, state, anchor) => `${set};try{globalThis.__cceTabDot&&globalThis.__cceTabDot(this.panelTab,${state},this.${anchor}&&this.${anchor}.state)}catch(e){}}`,
+    re: /(let ([\w$]+)=[\w$]+\(this\.lastRenameTabFlags,this\.([\w$]+),[^;]*;)this\.panelTab\.iconPath=([\w$]+\.Uri\.file\([\w$]+\.join\(this\.context\.extensionPath,"resources",[\w$]+\[\2\]\)\))\}/g,
+    to: (m, pick, state, anchor, icon) => `${pick}let cceIcon;try{cceIcon=globalThis.__cceTabIcon&&`
+      + `globalThis.__cceTabIcon(this.panelTab,${state},this.${anchor}&&this.${anchor}.state,`
+      + `this.context.extensionPath)}catch(cceE){}`
+      + `this.panelTab.iconPath=cceIcon||${icon}}`,
+  },
+  /*
+   * setupPanel sets the plain logo before applyTabIcon runs, so a new tab opened in full orange and dimmed a moment
+   * later. It asks for the idle icon here as well.
+   */
+  {
+    name: 'tab icon at setup',
+    re: /([\w$]+)=([\w$]+)\.Uri\.joinPath\(this\.extensionUri,"resources","claude-logo\.svg"\);([\w$]+)\.iconPath=\{light:\1,dark:\1\}/g,
+    to: (m, logo, vs, panel) => `${logo}=${vs}.Uri.joinPath(this.extensionUri,"resources","claude-logo.svg");let cceSetup;`
+      + `try{cceSetup=globalThis.__cceTabIcon&&globalThis.__cceTabIcon(${panel},"plain",void 0,this.extensionUri.fsPath)}`
+      + `catch(cceE){}${panel}.iconPath=cceSetup||{light:${logo},dark:${logo}}`,
   },
   /*
    * Pinned conversations are not archived for being inactive (src/sessionpins.js says how they are pinned).

@@ -9,10 +9,10 @@
  *
  * Claude Code's own icons put a small dot on the orange logo, and its dot for a finished turn is that same orange, so
  * it is hard to see. These icons are the plain logo with its fill changed. The logo is read from the running Claude
- * Code build, beside the icon the host has just set, so this extension ships no copy of it.
+ * Code build, whose folder the host passes, so this extension ships no copy of it.
  *
- * The patched host calls this each time it picks the tab's icon, with the icon key it picked ('pending', 'done' or
- * 'plain') and the session state ('idle', 'running' or 'waiting_input').
+ * The patched host asks for an icon each time it picks the tab's icon, with the icon key it picked ('pending', 'done'
+ * or 'plain') and the session state ('idle', 'running' or 'waiting_input').
  */
 const crypto = require('crypto');
 const fs = require('fs');

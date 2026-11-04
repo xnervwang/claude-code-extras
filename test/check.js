@@ -5420,27 +5420,48 @@ console.log('\na panel whose bundle never arrives says so');
     const r = edit ? applyEdits(method, [edit]) : { error: 'no such edit' };
     if (r.error) bad('the tab dot edit did not apply to the icon method\'s shape: ' + r.error);
     else {
-      const heard = [];
+      const heard = [], ours = { f: '/ours/green.svg' };
       const env = { pick: () => 'done', Pa1: { done: 'd.svg' }, N1: { Uri: { file: (f) => ({ f }) } }, z5: { join: (a, b, c) => [a, b, c].join('/') } };
       env.globalThis = env;
-      env.__cceTabDot = (panel, state, run) => heard.push([panel.title, state, run]);
+      env.__cceTabIcon = (panel, state, run, home) => { heard.push([panel.title, state, run, home]); return run === 'running' ? ours : undefined; };
       vm.createContext(env);
       vm.runInContext(r.out + ';var t=new T();t.panelTab={title:"Fix the build"};t.context={extensionPath:"/x"};t.applyTabIcon();'
-        + 't.badge1={state:"running"};t.applyTabIcon();var icon=t.panelTab.iconPath.f;', env);
-      if (JSON.stringify(heard) === '[["Fix the build","done",null],["Fix the build","done","running"]]'
-          && env.icon === '/x/resources/d.svg') {
-        ok('the patched host still sets the icon, then hands this extension the tab, its icon state and the conversation\'s state');
-      } else bad(`after the icon update: heard ${JSON.stringify(heard)}, icon ${env.icon}`);
+        + 'var first=t.panelTab.iconPath.f;t.badge1={state:"running"};t.applyTabIcon();var second=t.panelTab.iconPath;'
+        + 'globalThis.__cceTabIcon=function(){throw new Error("x")};t.applyTabIcon();var third=t.panelTab.iconPath.f;', env);
+      if (JSON.stringify(heard) === '[["Fix the build","done",null,"/x"],["Fix the build","done","running","/x"]]'
+          && env.first === '/x/resources/d.svg' && env.second === ours && env.third === '/x/resources/d.svg') {
+        ok('applyTabIcon falls back to its own icon when the hook gives none');
+      } else bad(`after the icon update: heard ${JSON.stringify(heard)}, icons ${env.first} ${JSON.stringify(env.second)} ${env.third}`);
+    }
+  }
+  {
+    const edit = host.EDITS.find((e) => e.name === 'tab icon at setup');
+    const method = 'class S{setupPanel(e){let a=1,l=V1.Uri.joinPath(this.extensionUri,"resources","claude-logo.svg");'
+      + 'e.iconPath={light:l,dark:l},e.ready=!0}}';
+    const r = edit ? applyEdits(method, [edit]) : { error: 'no such edit' };
+    if (r.error) bad('the tab icon at setup edit did not apply: ' + r.error);
+    else {
+      const asked = [], ours = { f: '/ours/idle.svg' };
+      const env = { V1: { Uri: { joinPath: (u, a, b) => ({ f: [u.fsPath, a, b].join('/') }) } } };
+      env.globalThis = env;
+      vm.createContext(env);
+      vm.runInContext(r.out + ';var s=new S();s.extensionUri={fsPath:"/x"};var p1={};s.setupPanel(p1);'
+        + 'globalThis.__cceTabIcon=function(p,st,run,home){asked.push([st,run,home]);return ours};var p2={};s.setupPanel(p2);', Object.assign(env, { asked, ours }));
+      if (env.p1.iconPath.light.f === '/x/resources/claude-logo.svg' && env.p1.ready && env.p2.iconPath === ours && env.p2.ready
+          && JSON.stringify(asked) === '[["plain",null,"/x"]]') {
+        ok('setupPanel starts a tab with the hook\'s idle icon');
+      } else bad(`setup icons: ${JSON.stringify([env.p1, env.p2, asked])}`);
     }
   }
   const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   if (/globalThis\.__cceTzHook = /.test(ext) && /workplan\.setTimeZone\(clientZone\(\)\);\s*const moved = workplan\.setFocus/.test(ext)) {
     ok('the extension redraws on a reported zone and picks it up on every refresh');
   } else bad('extension.js does not read the reported time zone');
-  if (/globalThis\.__cceTabDot = \(panel, state, run\) =>/.test(ext)
-      && /const set = enabled\(\) && !removed\(\) && panel\.iconPath && panel\.iconPath\.fsPath;/.test(ext)
-      && /icons\[tabdot\.stateOf\(state, run\)\]/.test(ext) && /panel\.title = title/.test(ext)) {
-    ok('the hook colours the icon only while the extension is on, and always strips old title marks');
+  if (/globalThis\.__cceTabIcon = \(panel, state, run, home\) =>/.test(ext)
+      && /if \(!enabled\(\) \|\| removed\(\) \|\| typeof home !== 'string'\) return undefined;/.test(ext)
+      && /icons\[tabdot\.stateOf\(state, run\)\]/.test(ext) && /panel\.title = title/.test(ext)
+      && /if \(!tabIconUris\.has\(file\)\) tabIconUris\.set\(file, vscode\.Uri\.file\(file\)\);/.test(ext)) {
+    ok('the hook reuses one Uri per icon file');
   } else bad('extension.js does not handle the tab icon');
   if (/globalThis\[host\.LOAD_WATCH_OFF\] = !cfg\(\)\.get\(LATENCY_ON_SETTING, true\)/.test(ext)
     && /affectsConfiguration\(LATENCY_ON_SETTING\)\) loadWatchOff\(\)/.test(ext)) {

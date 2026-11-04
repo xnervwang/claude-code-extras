@@ -831,22 +831,23 @@ function start(context, renamed) {
   /* A panel can report before this activates, and then only the global above holds its zone. */
   writeClientZone();
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTzHook) delete globalThis.__cceTzHook; } });
-  /* The patched host hands over each editor tab's state as it picks the tab's icon; the icon is swapped for the logo
-     in that state's colour (src/tabdot.js). */
-  const tabIcons = new Map();
-  globalThis.__cceTabDot = (panel, state, run) => {
+  /* The patched host asks for each tab's icon here (src/tabdot.js). VS Code sends an icon to the editor only when the
+     object changes, so each file keeps one Uri. */
+  const tabIcons = new Map(), tabIconUris = new Map();
+  globalThis.__cceTabIcon = (panel, state, run, home) => {
     try {
       const title = tabdot.withoutMark(panel.title);
       if (panel.title !== title) panel.title = title;
-      const set = enabled() && !removed() && panel.iconPath && panel.iconPath.fsPath;
-      if (!set) return;
-      const icons = tabdot.iconsFor(path.join(path.dirname(set), tabdot.LOGO),
+      if (!enabled() || removed() || typeof home !== 'string') return undefined;
+      const icons = tabdot.iconsFor(path.join(home, 'resources', tabdot.LOGO),
         path.join(context.globalStorageUri.fsPath, 'tab-icons'), tabIcons);
       const file = icons && icons[tabdot.stateOf(state, run)];
-      if (file) panel.iconPath = vscode.Uri.file(file);
-    } catch (e) { /* never break the host's own icon update */ }
+      if (!file) return undefined;
+      if (!tabIconUris.has(file)) tabIconUris.set(file, vscode.Uri.file(file));
+      return tabIconUris.get(file);
+    } catch (e) { return undefined; /* the host sets its own icon */ }
   };
-  context.subscriptions.push({ dispose: () => { if (globalThis.__cceTabDot) delete globalThis.__cceTabDot; } });
+  context.subscriptions.push({ dispose: () => { if (globalThis.__cceTabIcon) delete globalThis.__cceTabIcon; } });
   /*
    * Conversations pinned in the session list, kept from Claude Code's transcript cleanup (src/sessionpins.js). The
    * margin it keeps is days, so once every half hour is far more often than it needs; a pin gets a pass of its own a
