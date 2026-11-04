@@ -1,0 +1,69 @@
+# BSD 3-Clause License
+# Copyright (c) 2026, Xnerv Wang
+# All rights reserved.
+
+# This extension patches files of another extension and of VS Code itself, and where those files are, and whether they
+# can be written, differs between Linux, macOS and Windows. The tests workflow runs on Linux only and without either
+# install. This one installs the newest VS Code and the newest Claude Code on each of the three and runs the extension
+# there (test/vscode/run.js). It runs once a day as well as on each push, since either upstream can change without a
+# commit here.
+name: vscode
+
+on:
+  push:
+    # Try a change to this workflow on a ci/ branch first.
+    branches: [main, 'ci/**']
+  pull_request:
+  schedule:
+    - cron: '43 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Build the .vsix
+        shell: bash
+        run: |
+          vsix=$(bash build/pack.sh | tail -n 1)
+          mv "$vsix" extension.vsix
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vsix
+          path: extension.vsix
+
+  run:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Some checks compare source text, so no CRLF on Windows.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v8
+        with:
+          name: vsix
+      - name: Install the test runner
+        shell: bash
+        run: npm install --no-save --no-package-lock @vscode/test-electron@3
+      - name: Run in VS Code
+        if: runner.os == 'Linux'
+        shell: bash
+        run: xvfb-run -a node test/vscode/run.js extension.vsix
+      - name: Run in VS Code
+        if: runner.os != 'Linux'
+        shell: bash
+        run: node test/vscode/run.js extension.vsix
