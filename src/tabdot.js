@@ -4,7 +4,7 @@
 
 'use strict';
 /*
- * A coloured dot after the title of a Claude Code tab: the dot Claude Code puts on the tab's icon, or green while a
+ * A coloured mark after the title of a Claude Code tab: the dot Claude Code puts on the tab's icon, or green while a
  * turn runs, which the icon does not show.
  *
  * Claude Code marks two states on the icon: a blue dot while it waits for you - a permission to grant or a question to
@@ -19,10 +19,10 @@
  * 'waiting_input'). The title the host set last is the base: a dot of ours is taken off before deciding again.
  */
 // The small blue and small orange diamonds: one pair in two colours, and smaller than the circles, which fill a whole
-// line of text next to a title. There is no small green emoji, so running takes the green circle.
-const MARKS = { pending: ' \u{1F539}', done: ' \u{1F538}', running: ' \u{1F7E2}' };
+// line of text next to a title. There is no green diamond, so running takes the green book.
+const MARKS = { pending: ' \u{1F539}', done: ' \u{1F538}', running: ' \u{1F4D7}' };
 // Taken off as well as added, so a title written by an earlier build of this does not keep its mark.
-const ALL = [MARKS.pending, MARKS.done, MARKS.running, ' \u{1F535}', ' \u{1F7E0}', ' \u25CF'];
+const ALL = [MARKS.pending, MARKS.done, MARKS.running, ' \u{1F7E2}', ' \u{1F535}', ' \u{1F7E0}', ' \u25CF'];
 
 function markFor(icon, run) {
   if (icon === 'pending') return 'pending';

@@ -5382,7 +5382,7 @@ console.log('\na panel whose bundle never arrives says so');
       markFor('plain', undefined), withDot(T + MARKS.running, 'plain', true), withDot(T + MARKS.done, 'running', true)];
     if (JSON.stringify(marks) === JSON.stringify(['running', 'pending', 'done', 'plain', 'plain', T, T + MARKS.running])
         && new Set([MARKS.pending, MARKS.done, MARKS.running]).size === 3) {
-      ok('a running conversation gets a green dot after its tab title, unless it waits for you');
+      ok('a running conversation gets a green mark after its tab title, unless it waits for you');
     } else bad(`running marks: ${JSON.stringify(marks)}`);
 
     const edit = host.EDITS.find((e) => e.name === 'tab dot');
