@@ -831,11 +831,11 @@ function start(context, renamed) {
   /* A panel can report before this activates, and then only the global above holds its zone. */
   writeClientZone();
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTzHook) delete globalThis.__cceTzHook; } });
-  /* The patched host hands over each editor tab's state as it picks the tab's icon; the title gets the same coloured
-     dot the icon carries (src/tabdot.js). */
-  globalThis.__cceTabDot = (panel, state) => {
+  /* The patched host hands over each editor tab's state as it picks the tab's icon; the title gets a coloured dot
+     (src/tabdot.js). */
+  globalThis.__cceTabDot = (panel, state, run) => {
     try {
-      const want = tabdot.withDot(panel.title, state, enabled() && !removed());
+      const want = tabdot.withDot(panel.title, tabdot.markFor(state, run), enabled() && !removed());
       if (panel.title !== want) panel.title = want;
     } catch (e) { /* never break the host's own icon update */ }
   };

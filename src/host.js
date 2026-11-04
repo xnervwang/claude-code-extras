@@ -197,14 +197,14 @@ const EDITS = [
   /*
    * The dot after a tab's title (src/tabdot.js says what it is for).
    *
-   * The host picks a tab's icon in one method, each time the state behind it can change, and that state is all the dot
-   * needs. So the method hands it over right after setting the icon, through a global this extension shares with the
-   * host - both run in one extension host process, the same way the active conversation and the time zone do.
+   * The host sets a tab's icon in applyTabIcon. Right after that, it passes the icon key and tabBadgeAnchor.state to
+   * this extension through a global, as it does for the active conversation and the time zone: both run in one
+   * extension host process.
    */
   {
     name: 'tab dot',
-    re: /(this\.panelTab\.iconPath=[\w$]+\.Uri\.file\([\w$]+\.join\(this\.context\.extensionPath,"resources",[\w$]+\[([\w$]+)\]\)\))\}/g,
-    to: (m, set, state) => `${set};try{globalThis.__cceTabDot&&globalThis.__cceTabDot(this.panelTab,${state})}catch(e){}}`,
+    re: /(let ([\w$]+)=[\w$]+\(this\.lastRenameTabFlags,this\.([\w$]+),[^;]*;this\.panelTab\.iconPath=[\w$]+\.Uri\.file\([\w$]+\.join\(this\.context\.extensionPath,"resources",[\w$]+\[\2\]\)\))\}/g,
+    to: (m, set, state, anchor) => `${set};try{globalThis.__cceTabDot&&globalThis.__cceTabDot(this.panelTab,${state},this.${anchor}&&this.${anchor}.state)}catch(e){}}`,
   },
   /*
    * Pinned conversations are not archived for being inactive (src/sessionpins.js says how they are pinned).

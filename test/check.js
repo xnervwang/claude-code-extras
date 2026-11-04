@@ -5369,7 +5369,7 @@ console.log('\na panel whose bundle never arrives says so');
   /* The unread dot after a tab's title: the host hands over the state it picked the icon for, this extension writes the
      title. The title the host set is the base, so a dot of ours never piles up and goes when the state moves on. */
   {
-    const { withDot, MARKS } = require('../src/tabdot');
+    const { withDot, markFor, MARKS } = require('../src/tabdot');
     const T = 'Fix the build';
     const got = [withDot(T, 'done', true), withDot(T + MARKS.done, 'done', true), withDot(T + MARKS.done, 'pending', true),
       withDot(T + MARKS.pending, 'plain', true), withDot(T + ' \u25CF', 'plain', true), withDot(T + MARKS.done, 'done', false),
@@ -5378,9 +5378,16 @@ console.log('\na panel whose bundle never arrives says so');
     if (JSON.stringify(got) === JSON.stringify(want) && MARKS.done !== MARKS.pending) {
       ok('a tab gets one dot after its title in the colour of the dot on its icon, and loses it when the state moves on');
     } else bad(`tab titles: got ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
+    const marks = [markFor('plain', 'running'), markFor('pending', 'running'), markFor('done', 'idle'), markFor('plain', 'idle'),
+      markFor('plain', undefined), withDot(T + MARKS.running, 'plain', true), withDot(T + MARKS.done, 'running', true)];
+    if (JSON.stringify(marks) === JSON.stringify(['running', 'pending', 'done', 'plain', 'plain', T, T + MARKS.running])
+        && new Set([MARKS.pending, MARKS.done, MARKS.running]).size === 3) {
+      ok('a running conversation gets a green dot after its tab title, unless it waits for you');
+    } else bad(`running marks: ${JSON.stringify(marks)}`);
 
     const edit = host.EDITS.find((e) => e.name === 'tab dot');
-    const method = 'class T{applyTabIcon(){if(!this.panelTab)return;let $=pick();'
+    const method = 'class T{applyTabIcon(){if(!this.panelTab)return;let $=pick(this.lastRenameTabFlags,this.badge1,'
+      + '{isSessionUnread:this.isSessionUnread});'
       + 'this.panelTab.iconPath=N1.Uri.file(z5.join(this.context.extensionPath,"resources",Pa1[$]))}}';
     const r = edit ? applyEdits(method, [edit]) : { error: 'no such edit' };
     if (r.error) bad('the tab dot edit did not apply to the icon method\'s shape: ' + r.error);
@@ -5388,12 +5395,13 @@ console.log('\na panel whose bundle never arrives says so');
       const heard = [];
       const env = { pick: () => 'done', Pa1: { done: 'd.svg' }, N1: { Uri: { file: (f) => ({ f }) } }, z5: { join: (a, b, c) => [a, b, c].join('/') } };
       env.globalThis = env;
-      env.__cceTabDot = (panel, state) => heard.push([panel.title, state]);
+      env.__cceTabDot = (panel, state, run) => heard.push([panel.title, state, run]);
       vm.createContext(env);
       vm.runInContext(r.out + ';var t=new T();t.panelTab={title:"Fix the build"};t.context={extensionPath:"/x"};t.applyTabIcon();'
-        + 'var icon=t.panelTab.iconPath.f;', env);
-      if (JSON.stringify(heard) === '[["Fix the build","done"]]' && env.icon === '/x/resources/d.svg') {
-        ok('the patched host still sets the icon, then hands this extension the tab and its state');
+        + 't.badge1={state:"running"};t.applyTabIcon();var icon=t.panelTab.iconPath.f;', env);
+      if (JSON.stringify(heard) === '[["Fix the build","done",null],["Fix the build","done","running"]]'
+          && env.icon === '/x/resources/d.svg') {
+        ok('the patched host still sets the icon, then hands this extension the tab, its icon state and the conversation\'s state');
       } else bad(`after the icon update: heard ${JSON.stringify(heard)}, icon ${env.icon}`);
     }
   }
@@ -5401,7 +5409,8 @@ console.log('\na panel whose bundle never arrives says so');
   if (/globalThis\.__cceTzHook = /.test(ext) && /workplan\.setTimeZone\(clientZone\(\)\);\s*const moved = workplan\.setFocus/.test(ext)) {
     ok('the extension redraws on a reported zone and picks it up on every refresh');
   } else bad('extension.js does not read the reported time zone');
-  if (/globalThis\.__cceTabDot = \(panel, state\) =>/.test(ext) && /tabdot\.withDot\(panel\.title, state, enabled\(\) && !removed\(\)\)/.test(ext)) {
+  if (/globalThis\.__cceTabDot = \(panel, state, run\) =>/.test(ext)
+      && /tabdot\.withDot\(panel\.title, tabdot\.markFor\(state, run\), enabled\(\) && !removed\(\)\)/.test(ext)) {
     ok('the extension writes the tab dot, and only while it is on and not removed');
   } else bad('extension.js does not handle the tab dot');
   if (/globalThis\[host\.LOAD_WATCH_OFF\] = !cfg\(\)\.get\(LATENCY_ON_SETTING, true\)/.test(ext)
