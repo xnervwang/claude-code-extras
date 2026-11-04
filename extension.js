@@ -839,8 +839,8 @@ function start(context, renamed) {
       const title = tabdot.withoutMark(panel.title);
       if (panel.title !== title) panel.title = title;
       if (!enabled() || removed() || typeof home !== 'string') return undefined;
-      const icons = tabdot.iconsFor(path.join(home, 'resources', tabdot.LOGO),
-        path.join(context.globalStorageUri.fsPath, 'tab-icons'), tabIcons);
+      const icons = tabdot.iconsFor(path.join(home, 'resources'), path.join(context.globalStorageUri.fsPath, 'tab-icons'),
+        tabIcons);
       const file = icons && icons[tabdot.stateOf(state, run)];
       if (!file) return undefined;
       if (!tabIconUris.has(file)) tabIconUris.set(file, vscode.Uri.file(file));

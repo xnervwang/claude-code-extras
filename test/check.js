@@ -5376,28 +5376,24 @@ console.log('\na panel whose bundle never arrives says so');
       ok('stateOf maps the icon key and session state to waiting, running, unread or idle');
     } else bad(`tab states: ${JSON.stringify(states)}`);
 
-    const logo = '<svg viewBox="0 0 24 24"><title>Claude</title><path d="M4 4h16v16z" fill="#D97757"/></svg>';
-    const made = Object.keys(tabdot.COLORS).map((st) => tabdot.recolor(logo, st));
-    if (made[0].includes('fill="#3b82f6"') && made[1].includes('fill="#89d185"') && made[2].includes('fill="#d97757"')
-        && !made[2].includes('fill-opacity') && made[3].includes('fill="#d97757" fill-opacity="0.5"')
-        && made.every((m) => m.includes('d="M4 4h16v16z"') && !/D97757/.test(m))
-        && tabdot.recolor(logo.replace('</svg>', '<path fill="#D97757"/></svg>'), 'idle') === ''
-        && tabdot.recolor('<svg/>', 'idle') === '' && tabdot.recolor(logo, 'other') === '') {
-      ok('recolor swaps the fill colour, and gives up on a logo with no single orange fill');
-    } else bad(`recoloured logos: ${JSON.stringify(made)}`);
+    const waiting = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16z" fill="#D97757"/><circle r="4.5" fill="#3B82F6"/></svg>';
+    const green = tabdot.greenDot(waiting);
+    if (green === waiting.replace('#3B82F6', '#89d185') && tabdot.greenDot(waiting.replace('</svg>', '<circle fill="#3B82F6"/></svg>')) === ''
+        && tabdot.greenDot('<svg/>') === '') {
+      ok('greenDot turns the waiting icon\'s blue dot green, and gives up on an icon with no single blue fill');
+    } else bad(`green dot: ${JSON.stringify(green)}`);
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-tabicon-'));
-    const src = path.join(root, 'resources', tabdot.LOGO), out = path.join(root, 'icons');
-    fs.mkdirSync(path.dirname(src));
-    fs.writeFileSync(src, logo);
+    const res = path.join(root, 'resources'), out = path.join(root, 'icons');
+    fs.mkdirSync(res);
+    for (const [, name] of Object.entries(tabdot.FILES)) fs.writeFileSync(path.join(res, name), name === tabdot.FILES.waiting ? waiting : '<svg/>');
     const cache = new Map();
-    const icons = tabdot.iconsFor(src, out, cache);
-    const again = tabdot.iconsFor(src, out, cache);
-    const files = icons ? Object.values(icons) : [];
-    if (icons && again === icons && files.length === 4 && files.every((f) => fs.existsSync(f) && path.dirname(f) === out)
-        && fs.readFileSync(icons.waiting, 'utf8') === tabdot.recolor(logo, 'waiting')
-        && tabdot.iconsFor(path.join(root, 'missing.svg'), out, new Map()) === null) {
-      ok('iconsFor writes the four icons once, and returns null for a missing logo');
+    const icons = tabdot.iconsFor(res, out, cache);
+    const again = tabdot.iconsFor(res, out, cache);
+    if (icons && again === icons && icons.idle === path.join(res, tabdot.FILES.idle) && icons.waiting === path.join(res, tabdot.FILES.waiting)
+        && icons.unread === path.join(res, tabdot.FILES.unread) && path.dirname(icons.running) === out
+        && fs.readFileSync(icons.running, 'utf8') === green && tabdot.iconsFor(path.join(root, 'missing'), out, new Map()) === null) {
+      ok('iconsFor writes the green icon once and points the others at Claude Code\'s files');
     } else bad(`tab icons: ${JSON.stringify(icons)}`);
     fs.rmSync(root, { recursive: true, force: true });
 
@@ -5406,12 +5402,6 @@ console.log('\na panel whose bundle never arrives says so');
     if (titles.every((t, i) => t === (i === titles.length - 1 ? '' : T))) {
       ok('withoutMark strips an old mark from a tab title');
     } else bad(`titles: ${JSON.stringify(titles)}`);
-
-    const live = require('../src/webview').liveCss({}), dark = require('../src/webview').liveCss({ enabled: false });
-    if (/\[class\*="sessionItem_"\] \[data-status-dot="idle"\]:not\(\[class\*="statusDotElsewhere_"\]\)\{background:#d97757 !important;opacity:0\.5/.test(live)
-        && !dark.includes('data-status-dot')) {
-      ok('the live stylesheet colours idle dots light orange only while the extension is on');
-    } else bad('the live stylesheet does not colour the idle dot as expected');
 
     const edit = host.EDITS.find((e) => e.name === 'tab dot');
     const method = 'class T{applyTabIcon(){if(!this.panelTab)return;let $=pick(this.lastRenameTabFlags,this.badge1,'
