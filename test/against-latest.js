@@ -14,8 +14,9 @@
  * edit still matches exactly once. That failure is caught at runtime instead, by the marker the script raises in the
  * panel when it can no longer find any message.
  *
- * Exits non-zero when an edit does not match exactly once, or when a reply holds a child of a kind not seen before
- * (test/reply-shape.js); the workflow turns either into an issue.
+ * Exits 1 when an edit does not match exactly once, when test/reply-shape.js finds a new child in a reply element, or
+ * when test/todo-gate.js finds the built-in to-do tools on for current models; the workflow opens an issue for any of
+ * them.
  */
 const fs = require('fs');
 const os = require('os');
@@ -93,12 +94,13 @@ async function fetchPackage(url, dest) {
   await fetchPackage(url, vsix);
   console.log(`package is ${(fs.statSync(vsix).size / 1e6).toFixed(1)} MB`);
 
-  execFileSync('unzip', ['-q', vsix, 'extension/webview/index.js', 'extension/extension.js', '-d', work],
-    { stdio: ['ignore', 'ignore', 'inherit'] });
+  const cli = path.join(work, 'extension', 'resources', 'native-binary', 'claude');
+  execFileSync('unzip', ['-q', vsix, 'extension/webview/index.js', 'extension/extension.js',
+    'extension/resources/native-binary/claude', '-d', work], { stdio: ['ignore', 'ignore', 'inherit'] });
 
   const panel = path.join(work, 'extension', 'webview', 'index.js');
   const host = path.join(work, 'extension', 'extension.js');
-  for (const f of [panel, host]) {
+  for (const f of [panel, host, cli]) {
     if (!fs.existsSync(f)) throw new Error(`the package does not contain ${path.relative(work, f)}`);
   }
 
@@ -106,6 +108,12 @@ async function fetchPackage(url, dest) {
   let failed = false;
   try {
     execFileSync('node', [path.join(__dirname, 'check.js'), panel, host], { stdio: 'inherit' });
+  } catch (_) {
+    failed = true;
+  }
+  console.log('');
+  try {
+    execFileSync('node', [path.join(__dirname, 'todo-gate.js'), cli], { stdio: 'inherit' });
   } catch (_) {
     failed = true;
   }
@@ -117,10 +125,10 @@ async function fetchPackage(url, dest) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
   }
   if (failed) {
-    console.log(`\nA check failed against Claude Code ${version}: an edit no longer matches, or a reply holds a child not seen before.`);
+    console.log(`\nA check failed against Claude Code ${version}; the lines above say which.`);
     process.exit(1);
   }
-  console.log(`\nEvery edit still matches Claude Code ${version}, and a reply holds nothing new.`);
+  console.log(`\nAll checks pass against Claude Code ${version}.`);
 })().catch((err) => {
   console.error(`upstream check could not run: ${err.message}`);
   process.exit(2);

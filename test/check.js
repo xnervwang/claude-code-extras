@@ -7420,6 +7420,34 @@ console.log('\nanswering from the Conversations tab');
   }
 }
 
+/* The to-do tools gate (test/todo-gate.js), on stand-ins shaped like the 2.1.318 CLI and on any CLI installed here. */
+console.log('\nthe built-in to-do tools');
+{
+  const gate = require('./todo-gate');
+  const cli = (models) => Buffer.from('x'.repeat(5000) + `var Q=new Set([${models.map((m) => `"${m}"`).join(',')}]);`
+    + 'function f(e){return Q.has(e)}function a8(){let e=g();if(e===void 0||f(e))return!0;'
+    + 'return i.CLAUDE_CODE_ENABLE_TODO_TOOLS===!0}', 'latin1');
+  const old = gate.gateOf(cli(['claude-3-opus', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5']));
+  const back = gate.gateOf(cli(['claude-opus-4-7', 'claude-opus-5', 'claude-sonnet-5-5']));
+  const gone = gate.gateOf(Buffer.from('var Q=new Set(["claude-opus-4-7"]);function a8(){return!0}'));
+  if (old.models && old.models.length === 4 && !gate.currentOn(old.models).length) ok('gateOf finds the model list before the switch');
+  else bad(`to-do gate on the 2.1.318 shape: ${JSON.stringify(old)}`);
+  if (JSON.stringify(gate.currentOn(back.models || [])) === '["claude-opus-5","claude-sonnet-5-5"]') ok('currentOn flags 5.x models');
+  else bad(`to-do gate with 5.x models listed: ${JSON.stringify(back)}`);
+  if (gone.error) ok('gateOf reports a missing switch');
+  else bad(`to-do gate without the switch: ${JSON.stringify(gone)}`);
+  const real = Array.from(new Set(extensionsDirs())).flatMap((d) => webview.findInstalls(d))
+    .map((d) => path.join(d, 'resources', 'native-binary', process.platform === 'win32' ? 'claude.exe' : 'claude'))
+    .filter((f) => fs.existsSync(f));
+  if (!real.length) note('no Claude Code CLI installed here to read the to-do tools list from');
+  else {
+    const lists = real.map((f) => gate.gateOf(fs.readFileSync(f)));
+    const wrong = lists.filter((r) => r.error || gate.currentOn(r.models).length);
+    if (!wrong.length) ok(`in the ${real.length} installed CLI(s) no current model gets the built-in to-do tools`);
+    else bad(`installed CLI: ${JSON.stringify(wrong)}`);
+  }
+}
+
 console.log('\nthe workflows');
 {
   const dir = path.join(__dirname, '..', '.github', 'workflows');
