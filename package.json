@@ -352,7 +352,7 @@
         "claudeCodeWorkPlan.hideBackgroundSessions": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Leave sessions started with `claude --bg` out of Claude Code's session list. The agent map of the conversation that started one still lists it. Takes effect without a reload."
+          "markdownDescription": "Hide sessions started with `claude --bg` or `claude -p` from Claude Code's session list, and transcripts that have no messages. A `claude --bg` session still shows in the agent map of the conversation that started it. Takes effect without a reload."
         },
         "claudeCodeWorkPlan.recentClosedSessions": {
           "type": "integer",

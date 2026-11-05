@@ -67,7 +67,7 @@ See [How the work plan works](docs/how-the-work-plan-works.md) for the hooks, th
 
 Conversations is a tab in VS Code's panel, where the Terminal lives. VS Code keeps one tab per window, and you can drag it elsewhere like any view. Open it from the status bar, the work plan view's title-bar button, or the command "Work Plan for Claude Code: Show Conversations".
 
-The tab lists running conversations started in this window's workspace folders or folders under them. It does not list sessions started with `claude --bg`. Below the running conversations, a collapsed "Not running, with open rows" group holds stopped conversations whose plans were written in the last 7 days and still have open rows.
+The tab lists running conversations started in this window's workspace folders or folders under them. It does not list sessions started with `claude --bg` or `claude -p`. Below the running conversations, a collapsed "Not running, with open rows" group holds stopped conversations whose plans were written in the last 7 days and still have open rows.
 
 Each conversation has one row, titled as in Claude Code's session list. Its icon and first word show its state:
 
@@ -121,7 +121,7 @@ Verified against Claude Code 2.1.318.
 | **Session dates:** `11d · 09/05→09/16` adds a date span after Claude Code's last-active time. | Session list |
 | **Pinned conversations:** Click the pin at the start of a session-list row to keep that conversation from Claude Code's transcript cleanup (`cleanupPeriodDays`) and out of Archived sessions, as long as a window keeps connecting to its machine (see Known limits). | Session list |
 | **Text colors:** Right-click a conversation and choose **Text color** to give its title one of the colors of Claude Code's `/color`. The color shows wherever the conversation is listed. | Session list |
-| **Background sessions left out:** Sessions started with `claude --bg` are not listed. Turn off `claudeCodeWorkPlan.hideBackgroundSessions` to list them. | Session list |
+| **Background sessions left out:** The list skips sessions started with `claude --bg` or `claude -p`, and empty transcripts. Turn off `claudeCodeWorkPlan.hideBackgroundSessions` to see them. | Session list |
 | **Chimes:** A short sound when a turn finishes, permission is requested or Claude asks a question, played on the machine showing the panel; mute it in the footer. | Footer; machine showing the panel |
 | **Background sessions:** This conversation's `claude --bg` sessions, each state in its own colour and counted at the top, with what each waits for, its result, and the attach and logs commands. | Agents button in the footer and its map |
 | **Scheduled prompts:** See timers this conversation set through Claude Code's scheduled tasks, with each schedule, last-fired time and prompt. | Agents button in the footer and its map |
