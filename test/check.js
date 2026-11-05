@@ -331,8 +331,9 @@ console.log('\nwhat the page costs, in a browser');
       /* The Focus view tool clock's own text updates start no sweep, and its two forms are measured together: one
          layout per text change. */
       const clocked = harness.run(browser, { turns: 20, focus: true, busyClock: true });
-      if (!clocked.error && /^Bash \d+s$/.test(clocked.clockText) && clocked.idleSweeps === 0 && clocked.clockWrites > 0
-          && clocked.clockLayouts * 2 <= clocked.clockWrites) {
+      // Either form: which one shows depends on how wide the window is.
+      if (!clocked.error && /^Bash (\d+s|running for \d+s \(since [\d:]+\))$/.test(clocked.clockText) && clocked.idleSweeps === 0
+          && clocked.clockWrites > 0 && clocked.clockLayouts * 2 <= clocked.clockWrites) {
         ok(`the tool clock counting seconds starts no sweep, and lays the page out once per change (${clocked.clockLayouts} for ${clocked.clockWrites} text writes)`);
       } else bad('the tool clock while it counts: ' + (clocked.error || JSON.stringify({ text: clocked.clockText, sweeps: clocked.idleSweeps,
         writes: clocked.clockWrites, layouts: clocked.clockLayouts })));
