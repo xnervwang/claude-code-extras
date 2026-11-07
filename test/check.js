@@ -710,7 +710,8 @@ function checkRowIds(src, label) {
    before is a change in the panel nobody has checked that against, so it fails here - before the version record can
    call the build verified, and in the scheduled run against the marketplace before the update arrives. */
 const replyShape = require('./reply-shape');
-const KNOWN_REPLY_CHILDREN = ['time line', 'mod rows', 'blocks', 'actions'];
+// Refusal rows render only for a gateway refusal, in place of the blocks.
+const KNOWN_REPLY_CHILDREN = ['time line', 'mod rows', 'refusal', 'blocks', 'actions'];
 function checkReplyShape(src, label) {
   const r = replyShape.replyChildren(src);
   if (r.error) { bad(`${label}: what a reply holds could not be read: ${r.error}`); return; }
@@ -755,6 +756,13 @@ console.log('\nwhat a reply holds, read from a bundle');
   else bad(`a mod's rows read as "${kinds(rs.replyChildren(modded('V')))}"`);
   if (kinds(rs.replyChildren(modded('U'))) === 'time line, unknown, blocks') ok('but only when they come from the engineRow prop');
   else bad(`an ink call on another prop read as "${kinds(rs.replyChildren(modded('U')))}"`);
+  const refused = stamp + 'var M=function({message:Z,context:X,gatewayRefusal:L}){let G=L?.sentence===void 0?Z.content:[];'
+    + 'return R("div",{"data-testid":"assistant-message",children:[F(sA,{message:Z,context:X,placement:"response",busy:J.busy}),'
+    + 'L?.sentence!==void 0&&F(oc,{content:L.sentence}),L?.signInLabel!==void 0&&F(Ys,{children:L.signInLabel}),'
+    + 'G.map((W)=>F(B,{content:W})),Q.map((W)=>F(B,{content:W}))]})};';
+  if (kinds(rs.replyChildren(refused)) === 'time line, refusal, refusal, blocks, unknown') {
+    ok('a gateway refusal\'s rows are recognised, and so are the blocks it empties');
+  } else bad(`a reply with a refusal read as "${kinds(rs.replyChildren(refused))}"`);
 }
 
 console.log('\nedits');
