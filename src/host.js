@@ -144,7 +144,7 @@ const EDITS = [
    * panel that the conversations on disk changed, which makes the session list read them again, used after a delete.
    * And a way to hand an answer to the panel showing a conversation, in a tab or in the sidebar (src/answers.js): asked
    * without text, it only says whether this window has such a panel. The same lookup sends the info box its process id
-   * (__cceToPanel).
+   * (__cceToPanel). And a way to have every tab pick its icon again (__cceRefreshTabIcons).
    */
   {
     name: 'tab record at start',
@@ -156,6 +156,7 @@ const EDITS = [
       + 'globalThis.__cceSessionsElsewhere=()=>this.liveElsewhereSessions.map((cceL)=>cceL.sessionId),'
       + 'globalThis.__cceSessionsChanged=()=>{for(let cceC of this.allComms)try{cceC.sendSessionStoreChanged()}catch(e){}},'
       + 'globalThis.__cceSendSessionStates=()=>{try{this.broadcastSessionStates()}catch(e){}},'
+      + 'globalThis.__cceRefreshTabIcons=()=>{for(let cceC of this.allComms)try{cceC.refreshTabIcon()}catch(e){}},'
       + 'globalThis.__cceAnswer=(cceId,cceText,cceKey)=>{let cceP=this.sessionPanels.get(cceId),cceC=cceP?this.panelComms.get(cceP):void 0;'
       + 'if(!cceC&&this.sidebarComms&&this.sidebarChatShows?.()===cceId)cceC=this.sidebarComms;'
       + 'if(!cceC)return!1;if(cceText===void 0)return!0;'
@@ -174,13 +175,16 @@ const EDITS = [
    *
    * The same update also reaches this extension: each conversation's state as the host knows it and the replies not read
    * yet, for the Conversations view. It comes the moment something changes, where `claude agents` is asked every half
-   * minute.
+   * minute. The states pass through this extension first, which may mark an idle conversation running
+   * (__cceWithBackground in extension.js).
    */
   {
     name: 'session states say whether the sidebar is shown',
     re: /for\(let ([\w$]+) of this\.allComms\)\1\.sendSessionStates\(([^;]*?),\1===([\w$]+)\?void 0:([\w$]+)\)/g,
-    to: (m, c, args, side, ids) => `(()=>{try{globalThis.__cceStatesHook&&globalThis.__cceStatesHook(${args})}catch(cceE){}})();`
-      + `for(let ${c} of this.allComms)${c}.sendSessionStates(${args},${c}===${side}?void 0:${ids},`
+    to: (m, c, args, side, ids) => `let cceArgs=[${args}];try{let cceF=globalThis.__cceWithBackground;`
+      + 'if(typeof cceF==="function")cceArgs[0]=cceF(cceArgs[0])}catch(cceE){}'
+      + '(()=>{try{globalThis.__cceStatesHook&&globalThis.__cceStatesHook(...cceArgs)}catch(cceE){}})();'
+      + `for(let ${c} of this.allComms)${c}.sendSessionStates(...cceArgs,${c}===${side}?void 0:${ids},`
       + `${side}!==void 0&&[...this.webviews].some((cceV)=>cceV.comms===${side}&&cceV.isVisible()))`,
   },
   {
@@ -204,8 +208,8 @@ const EDITS = [
   /*
    * The colour of a tab's icon (src/tabdot.js says what it is for).
    *
-   * applyTabIcon gets the icon from this extension through a global, passing the icon key, tabBadgeAnchor.state and
-   * the host's folder, and keeps its own only when none comes back. Setting the host's icon and then ours made the tab
+   * applyTabIcon gets the icon from this extension through a global, passing the icon key, tabBadgeAnchor.state, the
+   * host's folder and the tab's session id, and keeps its own only when none comes back. Setting the host's icon and then ours made the tab
    * show the host's for a moment.
    */
   {
@@ -213,7 +217,7 @@ const EDITS = [
     re: /(let ([\w$]+)=[\w$]+\(this\.lastRenameTabFlags,this\.([\w$]+),[^;]*;)this\.panelTab\.iconPath=([\w$]+\.Uri\.file\([\w$]+\.join\(this\.context\.extensionPath,"resources",[\w$]+\[\2\]\)\))\}/g,
     to: (m, pick, state, anchor, icon) => `${pick}let cceIcon;try{cceIcon=globalThis.__cceTabIcon&&`
       + `globalThis.__cceTabIcon(this.panelTab,${state},this.${anchor}&&this.${anchor}.state,`
-      + `this.context.extensionPath)}catch(cceE){}`
+      + `this.context.extensionPath,this.${anchor}&&this.${anchor}.sessionId)}catch(cceE){}`
       + `this.panelTab.iconPath=cceIcon||${icon}}`,
   },
   /*

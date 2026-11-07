@@ -286,7 +286,44 @@ function collect(opts = {}) {
   return out;
 }
 
+/* Signal 0 only checks; EPERM still means the process exists. */
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
+}
+
+/*
+ * Job ids of busy `claude --bg` sessions, read from ~/.claude/sessions/<pid>.json, the files `claude agents` lists.
+ * Status "busy" is a turn in progress and "shell" a command still running. Records of dead processes are skipped.
+ */
+const BUSY = new Set(['busy', 'shell']);
+function busyJobs(dir = path.join(claudeDir(), 'sessions'), isAlive = alive) {
+  const out = new Set();
+  let names;
+  try { names = fs.readdirSync(dir).filter((n) => /^\d+\.json$/.test(n)); } catch (_) { return out; }
+  for (const n of names) {
+    let d;
+    try { d = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')); } catch (_) { continue; }
+    if (!d || d.kind !== 'bg' || !BUSY.has(d.status) || typeof d.jobId !== 'string' || !SHORT_ID.test(d.jobId)) continue;
+    if (Number.isInteger(d.pid) && isAlive(d.pid)) out.add(d.jobId);
+  }
+  return out;
+}
+
+/* Session ids of the conversations with a busy `claude --bg` session. */
+function working(opts = {}) {
+  const dir = opts.dir || planDir();
+  const busy = opts.busy || busyJobs(opts.sessions);
+  const out = new Set();
+  if (!busy.size) return out;
+  let names;
+  try { names = fs.readdirSync(dir).filter((n) => LINK_FILE.test(n)); } catch (_) { return out; }
+  for (const n of names) {
+    if (readLink(path.join(dir, n)).ids.some((id) => busy.has(id))) out.add(n.slice(0, -SUFFIX.length));
+  }
+  return out;
+}
+
 module.exports = {
-  scan, collect, readState,
+  scan, collect, readState, busyJobs, working,
   SUFFIX, LINK_FILE, MAX_SESSIONS, MAX_PER_SESSION, MAX_ENTRIES, PERSIST_EVERY,
 };

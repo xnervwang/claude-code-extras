@@ -853,12 +853,35 @@ function start(context, renamed) {
   context.subscriptions.push({ dispose: () => { if (globalThis.__cceTzHook) delete globalThis.__cceTzHook; } });
   /* The patched host asks for each tab's icon here (src/tabdot.js). VS Code sends an icon to the editor only when the
      object changes, so each file keeps one Uri. */
+  /*
+   * Show a conversation as running while a `claude --bg` session it started is busy. Claude Code does the same for a
+   * conversation's own background commands. Checked every ten seconds.
+   */
+  let bgWorking = new Set();
+  const readBgWorking = () => {
+    const next = removed() || !enabled() ? new Set() : background.working();
+    if (next.size === bgWorking.size && [...next].every((id) => bgWorking.has(id))) return;
+    bgWorking = next;
+    try { if (typeof globalThis.__cceRefreshTabIcons === 'function') globalThis.__cceRefreshTabIcons(); } catch (_) { /* next change */ }
+    try { if (typeof globalThis.__cceSendSessionStates === 'function') globalThis.__cceSendSessionStates(); } catch (_) { /* next change */ }
+  };
+  globalThis.__cceWithBackground = (infos) => (Array.isArray(infos) && bgWorking.size
+    ? infos.map((i) => (i && i.state === 'idle' && bgWorking.has(i.sessionId) ? Object.assign({}, i, { state: 'running' }) : i))
+    : infos);
+  const bgTimer = setInterval(() => {
+    try { readBgWorking(); } catch (e) { log.appendLine('busy background sessions: ' + (e && e.message)); }
+  }, 10000);
+  context.subscriptions.push({ dispose: () => {
+    clearInterval(bgTimer);
+    if (globalThis.__cceWithBackground) delete globalThis.__cceWithBackground;
+  } });
   const tabIcons = new Map(), tabIconUris = new Map();
-  globalThis.__cceTabIcon = (panel, state, run, home) => {
+  globalThis.__cceTabIcon = (panel, state, run, home, sessionId) => {
     try {
       const title = tabdot.withoutMark(panel.title);
       if (panel.title !== title) panel.title = title;
       if (!enabled() || removed() || typeof home !== 'string') return undefined;
+      if (run !== 'running' && bgWorking.has(sessionId)) run = 'running';
       const icons = tabdot.iconsFor(path.join(home, 'resources'), path.join(context.globalStorageUri.fsPath, 'tab-icons'),
         tabIcons);
       const file = icons && icons[tabdot.stateOf(state, run)];

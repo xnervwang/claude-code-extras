@@ -5127,7 +5127,7 @@ console.log('\nwhat a tick and a change of setting cost');
     delete env.CLAUDE_CONFIG_DIR;
     try { r = JSON.parse(cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 60000, env })); }
     catch (e) { r = { threw: e.message }; }
-    if (!r.threw && r.listeners === 1 && JSON.stringify(r.timers) === JSON.stringify([1000, 30000, 1800000]) && JSON.stringify(r.recent) === JSON.stringify(['abababab-1111-4222-8333-444444444444'])) {
+    if (!r.threw && r.listeners === 1 && JSON.stringify(r.timers) === JSON.stringify([1000, 10000, 30000, 1800000]) && JSON.stringify(r.recent) === JSON.stringify(['abababab-1111-4222-8333-444444444444'])) {
       ok('activation, a change of setting, every timer, the hooks and deactivation run against a stand-in editor without throwing');
     } else bad(`against a stand-in editor: ${JSON.stringify(r).slice(0, 600)}`);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
@@ -5448,12 +5448,12 @@ console.log('\na panel whose bundle never arrives says so');
       const heard = [], ours = { f: '/ours/green.svg' };
       const env = { pick: () => 'done', Pa1: { done: 'd.svg' }, N1: { Uri: { file: (f) => ({ f }) } }, z5: { join: (a, b, c) => [a, b, c].join('/') } };
       env.globalThis = env;
-      env.__cceTabIcon = (panel, state, run, home) => { heard.push([panel.title, state, run, home]); return run === 'running' ? ours : undefined; };
+      env.__cceTabIcon = (panel, state, run, home, sid) => { heard.push([panel.title, state, run, home, sid]); return run === 'running' ? ours : undefined; };
       vm.createContext(env);
       vm.runInContext(r.out + ';var t=new T();t.panelTab={title:"Fix the build"};t.context={extensionPath:"/x"};t.applyTabIcon();'
-        + 'var first=t.panelTab.iconPath.f;t.badge1={state:"running"};t.applyTabIcon();var second=t.panelTab.iconPath;'
+        + 'var first=t.panelTab.iconPath.f;t.badge1={state:"running",sessionId:"S1"};t.applyTabIcon();var second=t.panelTab.iconPath;'
         + 'globalThis.__cceTabIcon=function(){throw new Error("x")};t.applyTabIcon();var third=t.panelTab.iconPath.f;', env);
-      if (JSON.stringify(heard) === '[["Fix the build","done",null,"/x"],["Fix the build","done","running","/x"]]'
+      if (JSON.stringify(heard) === '[["Fix the build","done",null,"/x",null],["Fix the build","done","running","/x","S1"]]'
           && env.first === '/x/resources/d.svg' && env.second === ours && env.third === '/x/resources/d.svg') {
         ok('applyTabIcon falls back to its own icon when the hook gives none');
       } else bad(`after the icon update: heard ${JSON.stringify(heard)}, icons ${env.first} ${JSON.stringify(env.second)} ${env.third}`);
@@ -5482,7 +5482,8 @@ console.log('\na panel whose bundle never arrives says so');
   if (/globalThis\.__cceTzHook = /.test(ext) && /workplan\.setTimeZone\(clientZone\(\)\);\s*const moved = workplan\.setFocus/.test(ext)) {
     ok('the extension redraws on a reported zone and picks it up on every refresh');
   } else bad('extension.js does not read the reported time zone');
-  if (/globalThis\.__cceTabIcon = \(panel, state, run, home\) =>/.test(ext)
+  if (/globalThis\.__cceTabIcon = \(panel, state, run, home, sessionId\) =>/.test(ext)
+      && /if \(run !== 'running' && bgWorking\.has\(sessionId\)\) run = 'running';/.test(ext)
       && /if \(!enabled\(\) \|\| removed\(\) \|\| typeof home !== 'string'\) return undefined;/.test(ext)
       && /icons\[tabdot\.stateOf\(state, run\)\]/.test(ext) && /panel\.title = title/.test(ext)
       && /if \(!tabIconUris\.has\(file\)\) tabIconUris\.set\(file, vscode\.Uri\.file\(file\)\);/.test(ext)) {
@@ -6225,7 +6226,7 @@ console.log('\na hidden sidebar in open sessions');
   const { applyEdits } = require('../src/edits');
   const hedit = (name) => host.EDITS.find((e) => e.name === name);
   // The host: every update of the open conversations says whether the sidebar's conversation can be seen.
-  const loop = 'function b(){let z=this.sidebarComms,G=["S"];for(let K of this.allComms)K.sendSessionStates([],this.activeSessionId,["A"],[],[],K===z?void 0:G);return 1}';
+  const loop = 'function b(){let z=this.sidebarComms,G=["S"];for(let K of this.allComms)K.sendSessionStates([{sessionId:"A",state:"idle"}],this.activeSessionId,["A"],[],[],K===z?void 0:G);return 1}';
   const send = 'class C{constructor(){this.sent=[]}send(m){this.sent.push(m)}sendSessionStates($,J,Q,X,Y,W){let z={type:"request",channelId:"",requestId:l$(),request:{type:"session_states_update",sessions:$,activeSessionId:J,openSessionIds:Q,unreadSessionKeys:X,liveElsewhereSessions:Y,sidebarSessionIds:W}};this.send(z)}}';
   const vis = 'function r($,G){$.onDidChangeVisibility(()=>{G.notifyVisibilityChange($.visible),this.updateSidebarActiveState()},null,this.disposables)}';
   const lr = applyEdits(loop, [hedit('session states say whether the sidebar is shown')]);
@@ -6245,6 +6246,16 @@ console.log('\na hidden sidebar in open sessions');
     if (JSON.stringify(got) === JSON.stringify([[['S'], true], [['S'], false], [['S'], false]]) && sidebar.sent[0].request.sidebarSessionIds === undefined) {
       ok('the patched host sends whether the sidebar is shown with each update, false with no sidebar, and leaves the sidebar ids as they were');
     } else bad(`the session list was sent ${JSON.stringify(got)}`);
+    const hooked = [];
+    env.__cceStatesHook = (st) => hooked.push(st[0].state);
+    env.__cceWithBackground = (st) => st.map((x) => Object.assign({}, x, { state: 'running' }));
+    env.b.call(mgr);
+    env.__cceWithBackground = () => { throw new Error('x'); };
+    env.b.call(mgr);
+    const states = list.sent.slice(-2).map((m) => m.request.sessions[0].state);
+    if (JSON.stringify(states) === '["running","idle"]' && JSON.stringify(hooked) === '["running","idle"]') {
+      ok('session states go through __cceWithBackground, and are sent unchanged if it throws');
+    } else bad(`states sent ${JSON.stringify(states)}, heard ${JSON.stringify(hooked)}`);
     let handler = null, broadcasts = 0;
     env.r.call({ updateSidebarActiveState() {}, broadcastSessionStates() { broadcasts++; }, disposables: [] },
       { onDidChangeVisibility: (f) => { handler = f; }, visible: false }, { notifyVisibilityChange() {} });
@@ -6358,6 +6369,12 @@ console.log('\ntabs VS Code did not restore');
         && JSON.stringify(env.__cceSessionsElsewhere()) === '["w"]') {
       ok('the patched host hands over its tab record as read, before dropping missing tabs, and what is shown now in tabs, restored tabs, other windows and the sidebar');
     } else bad(`the host handed over ${JSON.stringify(env.__cceTabsAtStart)} and ${env.__cceSessionsShown && JSON.stringify(env.__cceSessionsShown())}`);
+    const asked = [];
+    vm.runInContext('var v=new V({});v.allComms=[{refreshTabIcon(){asked.push(1)}},{refreshTabIcon(){throw new Error("x")}},{refreshTabIcon(){asked.push(3)}}];'
+      + 'v.constructor;', Object.assign(env, { asked }));
+    try { env.__cceRefreshTabIcons(); } catch (_) { /* reported below */ }
+    if (JSON.stringify(asked) === '[1,3]') ok('__cceRefreshTabIcons refreshes every tab icon, even after one panel throws');
+    else bad(`refreshing tab icons reached ${JSON.stringify(asked)}`);
   }
   const extSrc = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
   if (/executeCommand\('claude-vscode\.editor\.open', t\.sessionId, undefined, undefined, undefined, t\.fullEditor,\s*\{ programmatic: 'pin-to-panel' \}\)/.test(extSrc)
@@ -6912,6 +6929,36 @@ console.log('\nbackground sessions left out of the session list');
     ok('background sessions are left out by default, a setting turns that off, and flipping it makes every panel read the list again');
   } else bad('the background-session setting is not wired as expected');
 }
+console.log('\nconversations whose background sessions are busy');
+{
+  const bgr = require('../src/background');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-busy-'));
+  try {
+    const sessions = path.join(root, 'sessions'), plans = path.join(root, 'plans');
+    fs.mkdirSync(sessions); fs.mkdirSync(plans);
+    const rec = (pid, o) => fs.writeFileSync(path.join(sessions, pid + '.json'), JSON.stringify(Object.assign({ pid }, o)));
+    rec(11, { kind: 'bg', jobId: 'aaaa1111', status: 'busy' });
+    rec(12, { kind: 'bg', jobId: 'bbbb2222', status: 'shell' });
+    rec(13, { kind: 'bg', jobId: 'cccc3333', status: 'idle' });
+    rec(14, { kind: 'interactive', jobId: 'dddd4444', status: 'busy' });
+    rec(15, { kind: 'bg', jobId: 'eeee5555', status: 'busy' });
+    fs.writeFileSync(path.join(sessions, 'notes.txt'), 'x');
+    const busy = bgr.busyJobs(sessions, (pid) => pid !== 15);
+    const S1 = '11111111-1111-4111-8111-111111111111', S2 = '22222222-2222-4222-8222-222222222222';
+    fs.writeFileSync(path.join(plans, S1 + bgr.SUFFIX), JSON.stringify({ ids: ['cccc3333', 'bbbb2222'], scannedTo: 1 }));
+    fs.writeFileSync(path.join(plans, S2 + bgr.SUFFIX), JSON.stringify({ ids: ['cccc3333', 'eeee5555'], scannedTo: 1 }));
+    const conv = bgr.working({ dir: plans, busy });
+    if (JSON.stringify([...busy].sort()) === '["aaaa1111","bbbb2222"]' && JSON.stringify([...conv]) === JSON.stringify([S1])) {
+      ok('busy bg sessions are found and mapped to the conversation that started them');
+    } else bad(`busy ${JSON.stringify([...busy])}, conversations ${JSON.stringify([...conv])}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  const ext = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
+  if (/i && i\.state === 'idle' && bgWorking\.has\(i\.sessionId\) \? Object\.assign\(\{\}, i, \{ state: 'running' \}\)/.test(ext)
+      && /globalThis\.__cceRefreshTabIcons\(\)/.test(ext) && /globalThis\.__cceSendSessionStates\(\)/.test(ext)) {
+    ok('an idle conversation with a busy bg session is reported as running');
+  } else bad('extension.js does not mark conversations whose background sessions are busy');
+}
+
 console.log('\nthe patch markers follow the code');
 {
   /* A marker that stays the same while what patching writes changes leaves the old patch in place, and every step
